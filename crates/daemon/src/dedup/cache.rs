@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{ HashMap, VecDeque };
 
 use crate::dedup::phash::hamming_distance;
 
@@ -6,6 +6,30 @@ pub struct DedupCache {
     hashes: VecDeque<u64>,
     max_size: usize,
     threshold: u32,
+}
+
+pub struct ChunkCache {
+    map: HashMap<u64, u64>,
+    max_size: usize,
+    threshold: u32,
+}
+
+impl ChunkCache {
+    pub fn new(max_size: usize, threshold: u32) -> Self {
+        Self {
+            map: HashMap::with_capacity(max_size),
+            max_size,
+            threshold,
+        }
+    }
+
+    pub fn add(&mut self, k: u64, v: u64) {
+        self.map.insert(k, v);
+    }
+
+    pub fn get(&self, hash: u64) -> Option<&u64> {
+        self.map.get(&hash)
+    }
 }
 
 impl DedupCache {
@@ -17,13 +41,11 @@ impl DedupCache {
         }
     }
 
-    pub fn add(&mut self, hash: u64) {
-        self.hashes.push_back(hash);
-    }
-
     pub fn should_skip(&mut self, new_hash: u64) -> bool {
         for &existing_hash in &self.hashes {
-            if hamming_distance(existing_hash, new_hash) <= self.threshold {
+            let distance = hamming_distance(existing_hash, new_hash);
+            println!("Distance : {}", distance);
+            if distance <= self.threshold {
                 return true;
             }
         }

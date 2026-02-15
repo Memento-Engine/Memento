@@ -1,29 +1,76 @@
--- 1. IMAGES TABLE
+-- ==========================================
+-- 1. FRAMES (The Timeline & Images)
+-- ==========================================
 CREATE TABLE IF NOT EXISTS frames (
-    id INTEGER PRIMARY KEY,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    file_path TEXT NOT NULL,
-    app_name TEXT,
-    window_title TEXT,
-    p_hash INTEGER
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- file_path TEXT NOT NULL,       -- Path to the saved screenshot (e.g., "images/frame_123.jpg")
+    app_name TEXT NOT NULL,        -- e.g., "Google Chrome"
+    window_title TEXT,             -- e.g., "Offer Letter - Gmail"
+    p_hash INTEGER                 -- Perceptual Hash for duplicate detection
 );
-CREATE INDEX IF NOT EXISTS idx_frames_hash ON frames(p_hash);
 
--- 2. CHUNKS TABLE
+CREATE INDEX IF NOT EXISTS idx_frames_created_at ON frames(captured_at);
+CREATE INDEX IF NOT EXISTS idx_frames_app_name ON frames(app_name);
+
+-- ==========================================
+-- 2. CHUNKS (The Structured Memory)
+-- ==========================================
 CREATE TABLE IF NOT EXISTS chunks (
-    id INTEGER PRIMARY KEY,
-    frame_id INTEGER,
-    text_content TEXT,
-    text_hash TEXT,
-    start_char_idx INTEGER,
-    end_char_idx INTEGER,
-    FOREIGN KEY(frame_id) REFERENCES frames(id)
-);
-CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(text_hash);
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL,
+    
+    text_content TEXT NOT NULL,    -- The clean text block
+    role TEXT NOT NULL,            -- 'content', 'meta', 'code', 'error'
+    
+    -- The "Visual" Link
+    bbox TEXT,                     -- JSON: {"x": 100, "y": 200, "w": 500, "h": 50}
+    text_hash INTEGER,
 
--- 3. VECTOR TABLE
--- Note: You must load the sqlite-vec extension before running this!
+    FOREIGN KEY(frame_id) REFERENCES frames(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_frame_id ON chunks(frame_id);
+
+-- ==========================================
+-- 2. Occurances 
+-- ==========================================
+CREATE TABLE IF NOT EXISTS occurances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER NOT NULL, -- Frame id could be differnent than chunk id because image taken from somewhere
+    chunk_id INTEGER NOT NULL,
+    
+    -- The "Visual" Link
+    bbox TEXT,                     -- JSON: {"x": 100, "y": 200, "w": 500, "h": 50}
+    
+    FOREIGN KEY(frame_id) REFERENCES frames(id) ON DELETE CASCADE
+);
+
+
+-- ==========================================
+-- 3. KEYWORD SEARCH INDEX (FTS5)
+-- ==========================================
+-- This enables "Google-like" fast text search.
+-- We use a "Contentless" or "External Content" table to save space.
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    text_content, 
+    content='chunks', 
+    content_rowid='id'
+);
+
+-- Triggers to keep FTS in sync with Chunks
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts(rowid, text_content) VALUES (new.id, new.text_content);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, text_content) VALUES('delete', old.id, old.text_content);
+END;
+
+-- ==========================================
+-- 4. VECTOR INDEX (Semantic Search)
+-- ==========================================
+-- Requires sqlite-vec extension
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
     chunk_id INTEGER PRIMARY KEY,
-    embedding float[768]  -- Assuming 768 dim (e.g., all-MiniLM-L6-v2)
+    embedding float[768]
 );

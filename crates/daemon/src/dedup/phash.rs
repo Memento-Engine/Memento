@@ -1,4 +1,6 @@
 use image::{DynamicImage, imageops::FilterType};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 pub fn compute_hash(img: &DynamicImage) -> u64 {
     // convert to grayscale
@@ -28,3 +30,30 @@ pub fn compute_hash(img: &DynamicImage) -> u64 {
 pub fn hamming_distance(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
+pub fn simhash(text: &str) -> u64 {
+    let mut bits = [0i32; 64];
+
+    for token in text.split_whitespace() {
+        let mut hasher = DefaultHasher::new();
+        token.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        for i in 0..64 {
+            if (hash >> i) & 1 == 1 {
+                bits[i] += 1;
+            } else {
+                bits[i] -= 1;
+            }
+        }
+    }
+
+    let mut result = 0u64;
+    for i in 0..64 {
+        if bits[i] > 0 {
+            result |= 1 << i;
+        }
+    }
+
+    result
+}
+

@@ -1,20 +1,41 @@
-use std::time::{ SystemTime, UNIX_EPOCH };
+use std::time::{ Duration, SystemTime, UNIX_EPOCH };
 
-use tokio::sync::mpsc::{ Sender, Receiver };
+use serde::Serialize;
+use sqlx::Sqlite;
+use tokio::sync::{ mpsc::{ Receiver, Sender } };
 use active_win_pos_rs::get_active_window;
 use image::DynamicImage;
+use windows::Media::Ocr::OcrEngine;
 use xcap::Monitor;
+use std::sync::Arc;
+use tracing::{ info, warn, debug, error };
+use crate::{
+    dedup::{ cache::DedupCache, phash::compute_hash },
+    ocr::{
+        self,
+        loader::load_engine,
+        ocr_filter::process_ocr_pipeline,
+        windows::{ OcrResultData, OcrWord },
+    },
+    pipeline::{
+        cloud_ocr::unstructured_chunking,
+        framer::process_image,
+        memory_process::{ ScreenMemory, process_screen_memory },
+    },
+};
+use sqlx::Pool;
+use chrono::{ DateTime, Utc };
 
-
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct WindowMetadata {
     app_name: String,
     window_title: String,
+    captured_at: DateTime<Utc>,
 }
 
 impl WindowMetadata {
     pub fn new(app_name: String, window_title: String) -> Self {
-        Self { app_name, window_title }
+        Self { app_name, window_title, captured_at: Utc::now() }
     }
 
     pub fn app_name(&self) -> &str {
@@ -26,7 +47,7 @@ impl WindowMetadata {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct MetaData {
     window_meta: WindowMetadata,
     file_name: String,
@@ -46,6 +67,7 @@ impl MetaData {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureMetaData {
     image: DynamicImage,
     image_meta_data: MetaData,
@@ -73,11 +95,13 @@ fn get_window_meta_data() -> WindowMetadata {
             WindowMetadata {
                 app_name: window.app_name,
                 window_title: window.title,
+                captured_at: Utc::now(),
             },
         Err(()) =>
             WindowMetadata {
                 app_name: "Unknown".to_string(),
                 window_title: "Unknown".to_string(),
+                captured_at: Utc::now(),
             },
     }
 }
@@ -108,20 +132,63 @@ fn current_timestamp() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis()
 }
 
-pub fn capture(tx: Sender<CaptureMetaData>) {
+pub async fn capture(mut cache: DedupCache, db_index: Pool<Sqlite>, tx: Sender<ScreenMemory>) {
     let primary_monitor = get_primary_monitor();
+    let ocr_engine = load_engine();
 
-    println!("Capturing screen: {}", primary_monitor.name().unwrap_or("Unknown Display".into()));
+    info!("Capturing screen: {}", primary_monitor.name().unwrap_or("Unknown Display".into()));
 
     loop {
-        println!("Watching Screen...");
-
         if let Ok(image_buffer) = primary_monitor.capture_image() {
             let capture_meta = build_capture_metadata(image_buffer);
 
-            if let Err(err) = tx.try_send(capture_meta) {
-                eprintln!("Channel full or disconnected: {:?}", err);
+            let hash: u64 = compute_hash(&capture_meta.image);
+
+            let mut should_skip = cache.should_skip(hash);
+
+            if should_skip {
+                info!("Cache hit...");
+                continue;
             }
+
+            // if !should_skip {
+            //     info!("Cache missed. Looking in the DB");
+            //     // Probably we should remove this. // TODO
+               
+            // }
+
+            // process the OCR
+            let ocr_result: OcrResultData = ocr_engine.process(&capture_meta.image).await;
+
+            let words: Vec<OcrWord> = ocr_result.lines
+                .iter()
+                .flat_map(|line| line.words.clone())
+                .collect();
+
+            let paragraphs = process_ocr_pipeline(
+                words,
+                capture_meta.image.width() as usize,
+                capture_meta.image.height() as usize
+            );
+
+            let memory = process_screen_memory(
+                paragraphs,
+                capture_meta.image_meta_data.window_meta.app_name,
+                capture_meta.image_meta_data.window_meta.window_title,
+                hash
+            );
+
+
+            info!("Memory : {:#?}", memory);
+
+            match tx.send(memory).await {
+                Ok(()) => info!("Result was sent."),
+                Err(e) => {
+                    eprint!("error : {:#?}", e);
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 }
