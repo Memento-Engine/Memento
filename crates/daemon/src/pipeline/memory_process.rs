@@ -2,7 +2,7 @@ use chrono::{ DateTime, Utc };
 use regex::Regex;
 use serde::Serialize;
 
-use crate::ocr::ocr_filter::LineInfo;
+use crate::{ocr::ocr_filter::LineInfo, pipeline::capture::CapturedWindow};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ScreenMemory {
@@ -20,6 +20,18 @@ pub struct ScreenMemory {
     pub tags: Vec<String>,
 
     pub p_hash: u64,
+
+    /// Window position and size on screen for coordinate transformation
+    pub window_x: i32,
+    pub window_y: i32,
+    pub window_width: u32,
+    pub window_height: u32,
+
+    pub process_id: i32,
+    pub is_focused: bool,
+    /// Browser URL captured atomically with the screenshot to prevent timing mismatches
+    pub browser_url: Option<String>,
+    pub image_path : String
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -60,9 +72,7 @@ impl BlockRole {
 
 pub fn process_screen_memory(
     raw_paragraphs: Vec<LineInfo>,
-    app_name: String,
-    window_title: String,
-    hash: u64
+    captured_window : CapturedWindow
 ) -> ScreenMemory {
     let mut clean_blocks = Vec::new();
     let mut inferred_tags = Vec::new();
@@ -140,11 +150,19 @@ pub fn process_screen_memory(
     // For now, let's keep them distinct to preserve list structures.
 
     ScreenMemory {
-        p_hash: hash,
+        p_hash: captured_window.image_hash,
+        browser_url : captured_window.browser_url,
+        is_focused : captured_window.is_focused,
+        process_id : captured_window.process_id,
+        window_height : captured_window.window_height,
+        window_width : captured_window.window_width,
+        window_x : captured_window.window_x,
+        window_y : captured_window.window_y,
         timestamp: chrono::Utc::now(),
-        app_name,
-        window_title,
+        app_name : captured_window.app_name,
+        window_title : captured_window.window_name,
         text_blocks: clean_blocks,
         tags: inferred_tags,
+        image_path : captured_window.image_path
     }
 }

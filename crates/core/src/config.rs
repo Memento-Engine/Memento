@@ -30,6 +30,10 @@ fn config_file () -> PathBuf {
 }
 
 
+pub fn memories_dir() -> PathBuf {
+    base_dir().join("memories")
+}
+
 pub fn get_setup_state() -> SetupState {
     let config_exists = config_file().exists();
     let model_exists = model_dir().exists();

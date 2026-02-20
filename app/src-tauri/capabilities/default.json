@@ -1,10 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "default permissions",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    {
+      "identifier": "fs:default",
+      "allow": [
+        {
+          "path": "C:/Users/pavan/Pictures/Screenshots/**"
+        }
+      ]
+    }
   ]
 }

@@ -4,11 +4,22 @@
 CREATE TABLE IF NOT EXISTS frames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- file_path TEXT NOT NULL,       -- Path to the saved screenshot (e.g., "images/frame_123.jpg")
-    app_name TEXT NOT NULL,        -- e.g., "Google Chrome"
-    window_title TEXT,             -- e.g., "Offer Letter - Gmail"
-    p_hash INTEGER                 -- Perceptual Hash for duplicate detection
+
+    app_name TEXT NOT NULL,
+    window_title TEXT,
+    process_id INTEGER,
+    is_focused BOOLEAN,
+    browser_url TEXT,
+
+    window_x INTEGER,
+    window_y INTEGER,
+    window_width INTEGER,
+    window_height INTEGER,
+
+    image_path TEXT,
+    p_hash INTEGER
 );
+
 
 CREATE INDEX IF NOT EXISTS idx_frames_created_at ON frames(captured_at);
 CREATE INDEX IF NOT EXISTS idx_frames_app_name ON frames(app_name);
@@ -72,5 +83,5 @@ END;
 -- Requires sqlite-vec extension
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
     chunk_id INTEGER PRIMARY KEY,
-    embedding float[768]
+    embedding float[384]
 );

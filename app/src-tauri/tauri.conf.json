@@ -1,24 +1,27 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "personal",
+  "productName": "Memento AI",
   "version": "0.1.0",
-  "identifier": "com.pavan.personal",
+  "identifier": "com.pavan.memento-ai",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "devUrl": "http://localhost:3000",
+    "beforeDevCommand": "cd frontend && npm run dev",
+    "frontendDist": "../frontend/out"
   },
   "app": {
     "windows": [
       {
-        "title": "personal",
+        "title": "tauri-app",
         "width": 800,
         "height": 600
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["C:/Users/pavan/Pictures/Screenshots/**"]
+      }
     }
   },
   "bundle": {

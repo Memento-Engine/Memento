@@ -1,8 +1,8 @@
 use std::collections::{ HashMap, VecDeque };
 
-use crate::dedup::phash::hamming_distance;
+use crate::cache::phash::hamming_distance;
 
-pub struct DedupCache {
+pub struct FramesCache {
     hashes: VecDeque<u64>,
     max_size: usize,
     threshold: u32,
@@ -32,7 +32,7 @@ impl ChunkCache {
     }
 }
 
-impl DedupCache {
+impl FramesCache {
     pub fn new(max_size: usize, threshold: u32) -> Self {
         Self {
             hashes: VecDeque::with_capacity(max_size),
@@ -44,7 +44,6 @@ impl DedupCache {
     pub fn should_skip(&mut self, new_hash: u64) -> bool {
         for &existing_hash in &self.hashes {
             let distance = hamming_distance(existing_hash, new_hash);
-            println!("Distance : {}", distance);
             if distance <= self.threshold {
                 return true;
             }

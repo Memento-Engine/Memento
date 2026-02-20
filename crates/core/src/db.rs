@@ -3,20 +3,24 @@ use sqlx::migrate::MigrateDatabase;
 use sqlx::sqlite::{ SqliteConnectOptions, SqlitePool, SqlitePoolOptions };
 use std::time::Duration;
 use sqlx::pool::PoolConnection;
-use tracing::{ warn, info, error, debug };
+use tracing::{ warn, debug };
 use libsqlite3_sys::sqlite3_auto_extension;
 use sqlite_vec::sqlite3_vec_init;
-use sqlx::{ sqlite::SqliteRow, Row, QueryBuilder, Sqlite, Result, FromRow };
+use sqlx::{ QueryBuilder, Sqlite, Result, FromRow };
+use serde::{ Serialize, Deserialize };
+use std::fmt::Debug;
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SearchQuery {
     pub app_name: Option<String>,
     pub window_name: Option<String>,
     pub browser_url: Option<String>,
-    pub focused: bool,
     pub query: String,
+    pub semantic_query: Option<String>,
     pub key_words: Option<Vec<String>>,
     pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     pub entities: Option<Vec<String>>,
+    pub embedding: Option<Vec<f32>>,
 }
 
 pub struct DatabaseManager {
@@ -29,12 +33,26 @@ pub struct ImmediateTx {
 }
 
 // Ensure your result struct can be mapped automatically
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct SearchResult {
-    pub captured_at: DateTime<Utc>, // sqlx maps SQLite strings/ints to DateTime automatically
+    pub captured_at: DateTime<Utc>,
+    // sqlx maps SQLite strings/ints to DateTime automatically
+
     pub app_name: String,
     pub window_title: String,
     pub text_content: String,
+    pub browser_url: String,
+
+    pub process_id: i32,
+
+    pub window_x: i32,
+    pub window_y: i32,
+    pub window_width: i32,
+    pub window_height: i32,
+
+    pub chunk_id : i32,
+
+    pub image_path: String,
     // Optional: Include distance if you want to see the score
     // pub distance: f32,
 }
@@ -166,22 +184,49 @@ impl DatabaseManager {
         &self,
         app_name: &str,
         window_title: &str,
-        p_hash: u64,
-        captured_at: DateTime<Utc>
+        process_id: i32,
+        is_focused: bool,
+        browser_url: Option<&str>,
+        window_x: i32,
+        window_y: i32,
+        window_width: i32,
+        window_height: i32,
+        image_path: &str,
+        p_hash: u64
     ) -> Result<i64, sqlx::Error> {
-        let id = sqlx
+        let result = sqlx
             ::query(
-                "INSERT INTO frames (app_name, window_title, p_hash, captured_at)
-         VALUES (?1, ?2, ?3, ?4)"
+                r#"
+    INSERT INTO frames (
+        app_name,
+        window_title,
+        process_id,
+        is_focused,
+        browser_url,
+        window_x,
+        window_y,
+        window_width,
+        window_height,
+        image_path,
+        p_hash
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    "#
             )
             .bind(app_name)
             .bind(window_title)
-            .bind(p_hash as i64) // sqlite INTEGER = i64
-            .bind(captured_at)
-            .execute(&self.pool).await
-            ? // IMPORTANT
-            .last_insert_rowid();
-        Ok(id)
+            .bind(process_id)
+            .bind(is_focused)
+            .bind(browser_url)
+            .bind(window_x)
+            .bind(window_y)
+            .bind(window_width)
+            .bind(window_height)
+            .bind(image_path)
+            .bind(p_hash as i64)
+            .execute(&self.pool).await?;
+
+        Ok(result.last_insert_rowid())
     }
 
     pub async fn insert_into_vec_chunks(&self, chunk_id: i64, embedding: Vec<f32>) {
@@ -194,148 +239,90 @@ impl DatabaseManager {
             .unwrap();
     }
 
-    pub async fn perform_search_test(
-        &self,
-        _search: SearchQuery,
-        _query_embedding: Vec<f32>
-    ) -> Result<()> {
-        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
-            "SELECT * FROM frames WHERE app_name = "
-        );
-        qb.push_bind("Google Chrome");
-
-        // 1. Use .build() instead of .build_query_as()
-        // This returns a raw query that doesn't try to map to a struct.
-        let query = qb.build();
-
-        // 2. Fetch the rows as generic SqliteRow objects
-        let rows = query.fetch_all(&self.pool).await?;
-
-        // 3. Log the results dynamically
-        info!("Found {} rows matching 'Google Chrome'", rows.len());
-
-        for row in rows {
-            // You can access columns by name or index safely.
-            // This won't crash even if some columns are missing from your struct.
-            let id: i64 = row.get("id");
-            let app: String = row.get("app_name");
-            let title: Option<String> = row.get("window_title");
-
-            info!("Row -> ID: {}, App: {}, Title: {:?}", id, app, title);
-        }
-
-        Ok(())
-    }
-
-    pub async fn debug_search(&self, query_embedding: Vec<f32>) -> Result<()> {
-        // 1. Convert embedding
-        let embedding_json = serde_json
-            ::to_string(&query_embedding)
-            .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
-
-        // 2. Simple Direct Query
-        // We select the top 5 closest rows, NO MATTER how bad the match is.
-        let sql =
-            "
-        SELECT 
-            c.id,
-            c.text_content,
-            vec_distance_cosine(v.embedding, ?) as distance
-        FROM vec_chunks v
-        JOIN chunks c ON v.chunk_id = c.id
-        ORDER BY distance ASC
-        LIMIT 5
-    ";
-
-        let rows = sqlx::query(sql).bind(embedding_json).fetch_all(&self.pool).await?;
-
-        println!("--- DEBUG SEARCH RESULTS ---");
-        if rows.is_empty() {
-            println!("CRITICAL: No rows returned. 'vec_chunks' table might be empty!");
-        }
-
-        for row in rows {
-            let id: i64 = row.get("id");
-            let text: String = row.get("text_content");
-            let dist: f32 = row.get("distance");
-            println!("ID: {}, Dist: {:.4} | Text: {:.50}...", id, dist, text);
-        }
-        println!("----------------------------");
-        Ok(())
-    }
-
     pub async fn perform_search(
         &self,
-        search: SearchQuery,
-        query_embedding: Vec<f32>
+        search: SearchQuery
     ) -> Result<Vec<SearchResult>> {
-        // 1. Prepare Data
+        // 1. Prepare Embedding JSON
         let embedding_json = serde_json
-            ::to_string(&query_embedding)
+            ::to_string(&search.embedding)
             .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
 
-        // FIX: Add Wildcards (*) so "microservice" matches "microservices"
-        let keywords = search.key_words
+        // 2. Prepare Keywords (Add Wildcards)
+        // specific keywords like "searched" might fail if exact, so we use prefixes (e.g. "search*")
+        let keywords_str = search.key_words
             .as_ref()
-            .map(|k|
-                k
-                    .iter()
-                    .map(|w| format!("{}*", w))
+            .map(|k| {
+                k.iter()
+                    .filter(|w| !w.trim().is_empty()) // Remove empty keywords
+                    .map(|w| format!("{}*", w)) // Add wildcard
                     .collect::<Vec<_>>()
                     .join(" OR ")
-            )
-            .unwrap_or_else(|| "".to_string());
+            })
+            .unwrap_or_default();
 
-        // 2. Start Query Builder (The CTE starts here)
+        // 3. Start Query Builder with CTE
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             "WITH matches AS (
-                -- A. Vector Search Candidates
-                SELECT 
-                    chunk_id as id, 
-                    vec_distance_cosine(embedding, "
+            -- A. Vector Search (Relaxed Threshold)
+            SELECT 
+                chunk_id as id, 
+                vec_distance_cosine(embedding, "
         );
 
         qb.push_bind(embedding_json);
-        // FIX: Ensure threshold is loose enough (0.65)
-        qb.push(") as distance FROM vec_chunks WHERE distance < 0.65 ");
 
-        // 3. Add Keyword Search (Only if keywords exist)
-        if !keywords.is_empty() {
+        // NOTE: We relax the threshold to 0.80.
+        // 0.65 is often too strict for short text chunks.
+        qb.push(") as distance FROM vec_chunks WHERE distance < 0.80 ");
+
+        // 4. Add Keyword Search (Union) if keywords exist
+        if !keywords_str.is_empty() {
             qb.push(" UNION ALL ");
-            // We give FTS matches a 'better' distance (-1.0) so they sort first
+            // Give FTS matches a 'better' distance (-1.0) so they sort first
             qb.push("SELECT rowid as id, -1.0 as distance FROM chunks_fts WHERE chunks_fts MATCH ");
-            qb.push_bind(keywords);
+            qb.push_bind(keywords_str);
         }
 
         qb.push(
             ") 
-            -- 4. Main Selection (Join the temporary 'matches' to real tables)
-            SELECT 
-                f.captured_at, 
-                f.app_name, 
-                f.window_title, 
-                c.text_content,
-                MIN(m.distance) as best_score -- Remove duplicates if found by both engines
-            FROM matches m
-            JOIN chunks c ON m.id = c.id
-            JOIN frames f ON c.frame_id = f.id
-            WHERE 1=1 "
+        -- 5. Main Selection
+        SELECT 
+            f.captured_at, 
+            f.app_name, 
+            f.window_title, 
+            f.process_id,
+            f.is_focused,
+            f.browser_url,
+            f.window_x,
+            f.window_y,
+            f.window_width,
+            f.window_height,
+            f.image_path,
+            c.text_content,
+            c.id as chunk_id,
+            MIN(m.distance) as best_score -- Deduplicate if found by both engines
+        FROM matches m
+        JOIN chunks c ON m.id = c.id
+        JOIN frames f ON c.frame_id = f.id
+        WHERE 1=1 "
         );
 
-        // 5. Apply Metadata Filters
+        // 6. Apply Metadata Filters (App Name)
         if let Some(app) = &search.app_name {
+            // We use LOWER() for case-insensitive matching
             qb.push(" AND LOWER(f.app_name) LIKE ");
             qb.push_bind(format!("%{}%", app.to_lowercase()));
         }
 
+        // 7. Apply Metadata Filters (Window Name)
         if let Some(win) = &search.window_name {
             qb.push(" AND LOWER(f.window_title) LIKE ");
             qb.push_bind(format!("%{}%", win.to_lowercase()));
         }
 
+        // 8. Apply Time Range
         if let Some((start, end)) = search.time_range {
-            // We cast both the DB column and the input binding to standard format
-            // This ignores nanoseconds and timezone differences (Z vs +00:00)
             qb.push(" AND datetime(f.captured_at) BETWEEN datetime(");
             qb.push_bind(start.to_rfc3339());
             qb.push(") AND datetime(");
@@ -343,16 +330,18 @@ impl DatabaseManager {
             qb.push(") ");
         }
 
-        // 6. Order & Limit
-        qb.push(" GROUP BY c.id ORDER BY best_score ASC, f.captured_at DESC LIMIT 20");
+        // 9. Order & Limit
+        // Sort by score (ascending, so -1.0 first, then 0.1, etc.)
+        // Then by time (most recent first)
+        qb.push(" GROUP BY c.id ORDER BY best_score ASC, f.captured_at DESC LIMIT 50");
 
-        // 7. Execute
-        // If this still returns zero, your filters (App Name / Time) do not match the data.
+        // 10. Execute
         let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
 
         Ok(results)
     }
-
+    
+    
     pub async fn insert_into_chunks(
         &self,
         frame_id: i64,
