@@ -17,6 +17,8 @@ import useReferenceContext from "@/hooks/useReferenceContext";
 
 import { JetBrains_Mono } from "next/font/google";
 import KeyboardProvider from "@/providers/KeyboardProvider";
+import ChatProvider from "@/providers/ChatProvider";
+import LeftSidebar from "@/components/layout/Sidebar";
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -34,9 +36,11 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} ${studioFeixen.variable}`}
     >
       <body className="bg-background text-foreground">
-        <ReferenceProvider>
-          <LayoutContent>{children}</LayoutContent>
-        </ReferenceProvider>
+        <ChatProvider>
+          <ReferenceProvider>
+            <LayoutContent>{children}</LayoutContent>
+          </ReferenceProvider>
+        </ChatProvider>
       </body>
     </html>
   );
@@ -54,13 +58,13 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       >
         <KeyboardProvider />
         <div className="flex h-screen w-screen overflow-hidden ">
-          <Nothing />
+          <LeftSidebar />
 
           <main className="flex-1 flex flex-col overflow-hidden bg-background">
             <div className="flex-1 overflow-y-auto">{children}</div>
           </main>
 
-          {referenceMeta && <RightSidebar />}
+          <RightSidebar />
         </div>
       </ThemeProvider>
     </SidebarProvider>

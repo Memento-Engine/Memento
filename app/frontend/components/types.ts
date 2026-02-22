@@ -1,20 +1,29 @@
+import { app } from "@tauri-apps/api";
 import { InferUITools, UIMessage, tool } from "ai";
-import { z } from "zod";
+import { string, z } from "zod";
 
 // Thinking schema
-const thinkingSchema = z.object({
-  title: z.string(),
-
-  message: z.string(),
-
-  status: z.enum([
-    "running",     // currently executing
-    "completed",   // finished step
-    "final",       // pipeline finished
-  ]),
-
+export const StepSearchResultsSchema = z.object({
+  app_name: z.string(),
+  window_name: z.string(),
+  image_path: z.string(),
+  captured_at: z.string(),
 });
 
+export const thinkingSchema = z.object({
+  title: z.string(),
+  status: z.enum([
+    "running", // currently executing
+    "completed", // finished step
+    "final", // pipeline finished
+  ]),
+
+  results: z.array(StepSearchResultsSchema).optional().nullable(),
+  message: z.string().optional().nullable(),
+  queries: z.array(z.string()).nullable().optional(),
+});
+
+export type ThinkingStep = z.infer<typeof thinkingSchema>;
 
 // Citation schema
 const citationSchema = z.object({
@@ -41,14 +50,17 @@ const dataSchemas = {
   citation: citationSchema,
 };
 
-
 export type MyDataPart = {
   [K in keyof typeof dataSchemas]: z.infer<(typeof dataSchemas)[K]>;
 };
 
 export type MementoUIMessage = UIMessage<
-  never,        // no metadata
-  MyDataPart,   // custom data channels
-  never       // tools
+  never, // no metadata
+  MyDataPart, // custom data channels
+  never // tools
 >;
 
+export type chatRequest = {
+  message_id: string;
+  chat_history: MementoUIMessage[];
+};

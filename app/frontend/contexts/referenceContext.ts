@@ -9,7 +9,6 @@ export interface ReferenceMeta {
   text_content: string;
   browser_url: string;
 
-  process_id: number;
 
   window_x: number;
   window_y: number;

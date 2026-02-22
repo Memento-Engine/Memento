@@ -11,6 +11,7 @@ import {
 import { AutosizeTextarea } from "./ChatHome"; // Ensure this path is correct
 import { Button } from "./ui/button";
 import { useState } from "react";
+import { useTypewriter } from "@/hooks/useTypeWriter";
 
 export interface ChatInputProps {
   handleSend: (query: string) => void;
@@ -27,7 +28,7 @@ export default function ChatInput({
         <AutosizeTextarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Browse your memories..."
+          placeholder={"Ask followup..."}
           className="text-base py-2 px-3 placeholder:text-slate-400 max-h-60 bg-transparent"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

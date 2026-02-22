@@ -1,11 +1,12 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
-import { visit } from 'unist-util-visit'
-import type { Node, Position } from 'unist'
-import type { Code, Paragraph, Parent, Text } from 'mdast'
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+import { visit } from "unist-util-visit";
+import type { Node, Position } from "unist";
+import type { Code, Paragraph, Parent, Text } from "mdast";
+import { formatDistanceToNow } from "date-fns";
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
+  return twMerge(clsx(inputs));
 }
 
 /**
@@ -15,24 +16,29 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function disableIndentedCodeBlockPlugin() {
   return (tree: Node) => {
-    visit(tree, 'code', (node: Code, index, parent: Parent | undefined) => {
+    visit(tree, "code", (node: Code, index, parent: Parent | undefined) => {
       // Convert indented code blocks (nodes without lang or meta property)
       // to plain text
       // Check if the parent exists so we can replace the node safely
-      if (!node.lang && !node.meta && parent && typeof index === 'number') {
-        const nodePosition: Position | undefined = node.position
+      if (!node.lang && !node.meta && parent && typeof index === "number") {
+        const nodePosition: Position | undefined = node.position;
         const textNode: Text = {
-          type: 'text',
+          type: "text",
           value: node.value,
-          position: nodePosition
-        }
+          position: nodePosition,
+        };
         const paragraphNode: Paragraph = {
-          type: 'paragraph',
+          type: "paragraph",
           children: [textNode],
-          position: nodePosition
-        }
-        parent.children[index] = paragraphNode
+          position: nodePosition,
+        };
+        parent.children[index] = paragraphNode;
       }
-    })
-  }
+    });
+  };
 }
+
+export const renderDate = (dateString: string): string => {
+  const date = new Date(dateString);
+  return formatDistanceToNow(date, { addSuffix: true });
+};

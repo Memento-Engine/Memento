@@ -20,12 +20,12 @@ export function SidebarSettings() {
   const { setTheme } = useTheme();
 
   return (
-    <SidebarFooter className="mt-auto border-t bg-sidebar p-2">
+    <SidebarFooter className="mt-auto">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
-            className="w-full cursor-pointer justify-start gap-3 rounded-md px-3 py-2 text-sm hover:bg-background"
+            className="w-full cursor-pointer justify-start gap-3 rounded-md px-3 py-2 text-sm"
           >
             <Settings size={18} />
             Settings

@@ -2,23 +2,25 @@ mod pipeline;
 mod cache;
 mod ocr;
 mod embedding;
-mod algorithms;
 mod query;
 mod ui_events;
-
+mod server;
+mod llms;
 use std::sync::Arc;
 use crate::{
     cache::cache::{ ChunkCache, FramesCache },
     embedding::engine::EmbeddingModel,
-    ui_events::start_listener,
     ocr::windows::WindowsOcr,
     pipeline::{
         capture::{ CapturedWindow, continues_capture_windows },
         memory_process::ScreenMemory,
         ocr_processing::{ process_chunks, process_ocr },
     },
+    server::{ app_state::AppState, server::start_server },
+    ui_events::start_listener,
 };
-use app_core::{ config::database_dir, db::{ DatabaseManager } };
+use app_core::{ config::database_dir, db::{ DatabaseManager, SearchQuery } };
+use chrono::{ DateTime, Utc };
 use tracing_subscriber;
 use tokio::sync::{ Mutex, mpsc };
 use tracing::{ error, info, warn, debug };
@@ -68,6 +70,14 @@ async fn main() {
             panic!("Database init failed");
         })
     );
+
+    let app_db_clone = db.clone();
+    let app_state = Arc::new(AppState {
+        db: app_db_clone,
+        embeddingModel : embedding_engine.clone()
+    });
+
+    let app_clone = app_state.clone();
 
     let embedding_clone = embedding_engine.clone();
 
@@ -156,8 +166,10 @@ async fn main() {
     // });
 
     // Ipc Server Listening
-   
 
     // Prevent program from exiting
+
+    start_server(app_clone).await;
+
     tokio::signal::ctrl_c().await.unwrap();
 }

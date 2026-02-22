@@ -16,6 +16,7 @@ import { MermaidError } from "@/components/MermaidError";
 import { Button } from "./ui/button";
 import { Link2Icon } from "lucide-react";
 import { SourceBadge } from "./SourceBadge";
+import { normalize } from "path";
 
 interface MarkdownProps {
   content: string;
@@ -81,17 +82,58 @@ const normalizeLatex = (input: string): string => {
 // =============================
 // SOURCE TOKEN CONVERTER
 // =============================
-
-const convertSourceTokens = (input: string): string => {
-  return input.replace(
-    /\[\[source:(.*?)\]\]/g,
-    (_, id) => `[${id}](memory://${id})`,
+function Citation({ ids }: { ids: string[] }) {
+  return (
+    <span className="citation">
+      {ids.map((id) => (
+        <button key={id}>{id}</button>
+      ))}
+    </span>
   );
-};
+}
+function renderWithCitations(text: string) {
+  const parts = [];
+  const regex = /\[\[(.*?)\]\]/g;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const start = match.index;
+    const end = regex.lastIndex;
+
+    // Push text before citation
+    if (start > lastIndex) {
+      parts.push(text.slice(lastIndex, start));
+    }
+
+    // Extract citation numbers
+    const ids = [...match[0].matchAll(/\[(\d+)\]/g)].map((m) => m[1]);
+
+    parts.push(<Citation key={start} ids={ids} />);
+
+    lastIndex = end;
+  }
+
+  // Push remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts;
+}
 
 // =============================
 // COMPONENT
 // =============================
+
+function preprocessCitations(text: string) {
+  return text.replace(/\[\[(.*?)\]\]/g, (match) => {
+    const ids = [...match.matchAll(/\[(\d+)\]/g)].map((m) => m[1]).join(",");
+
+    return `[${ids}](memory://${ids})`;
+  });
+}
 
 function RenderMarkdownComponent({
   content,
@@ -104,25 +146,21 @@ function RenderMarkdownComponent({
   // preprocess content
   const processedContent = useMemo(() => {
     const normalized = normalizeLatex(content);
-    return convertSourceTokens(normalized);
+    return preprocessCitations(normalized);
   }, [content]);
 
   const mergedComponents = useMemo(
     () => ({
       ...components,
 
-      p: ({ children, className }: any) => (
-        <p className={cn("my-4 leading-7", className)}>{children}</p>
-      ),
-
       a: ({ href, children, className }: any) => {
+        const text = String(children);
+
         // MEMORY LINK
         if (href?.startsWith("memory://")) {
           const chunkId = href.replace("memory://", "");
-
           return <SourceBadge id={chunkId} onClick={onMemoryClick} />;
         }
-
         // NORMAL LINK
         return (
           <a
@@ -141,15 +179,11 @@ function RenderMarkdownComponent({
       },
 
       ul: ({ children, className }: any) => (
-        <ul className={cn("my-4 list-disc pl-6 space-y-1", className)}>
-          {children}
-        </ul>
+        <ul className={cn("list-disc pl-6", className)}>{children}</ul>
       ),
 
       ol: ({ children, className }: any) => (
-        <ol className={cn("my-4 list-decimal pl-6 space-y-1", className)}>
-          {children}
-        </ol>
+        <ol className={cn("list-decimal pl-6", className)}>{children}</ol>
       ),
     }),
     [components, onMemoryClick],

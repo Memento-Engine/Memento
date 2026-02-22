@@ -26,6 +26,7 @@ import {
 import { redirect } from "next/navigation";
 import { SidebarSettings } from "../LeftSidebarSettings";
 import Image from "next/image";
+import { cn } from "@/lib/utils";
 
 const techTopics: string[] = [
   "What are microservices?",
@@ -33,7 +34,7 @@ const techTopics: string[] = [
   "Vector databases explained",
 ];
 
-function Nothing(): React.ReactElement {
+function LeftSidebar(): React.ReactElement {
   const { toggleSidebar, state } = useSidebar();
   const isCollapsed = state === "collapsed";
 
@@ -44,7 +45,9 @@ function Nothing(): React.ReactElement {
   return (
     <Sidebar
       collapsible="icon"
-      className="h-screen border-r flex flex-col"
+      className={cn(
+        "border-r m-2 h-[calc(100vh-1rem)] border overflow-hidden rounded-xl bg-white flex flex-col",
+      )}
     >
       {/* 1. HEADER */}
       <SidebarHeader className="py-3 ">
@@ -73,17 +76,17 @@ function Nothing(): React.ReactElement {
           {/* New Chat Item */}
           <SidebarMenuItem onClick={goToHome} className="group/menuitem">
             <SidebarMenuButton
-              className={`w-full cursor-pointer ${
+              className={`w-full cursor-pointer [&_svg]:size-6 ${
                 isCollapsed ? "justify-center" : "px-3"
               }`}
             >
               <SquarePen className="w-4 h-4 shrink-0" />
 
               {!isCollapsed && (
-                <span className="group-data-[collapsible=icon]:hidden font-sans flex justify-between items-center w-full">
+                <span className="group-data-[collapsible=icon]:hidden font-normal text-sm flex justify-between items-center w-full">
                   <span className="font-feixen">New chat</span>
 
-                  <span className="opacity-0 group-hover/menuitem:opacity-100 font-feixen text-xs text-muted-background/50 transition-opacity">
+                  <span className="opacity-0 group-hover/menuitem:opacity-100 text-xs text-muted-background/50 transition-opacity">
                     Ctrl + Shift + O
                   </span>
                 </span>
@@ -102,9 +105,9 @@ function Nothing(): React.ReactElement {
 
               {!isCollapsed && (
                 <span className="group-data-[collapsible=icon]:hidden flex justify-between items-center w-full">
-                  <span className="font-feixen">Search chats</span>
+                  <span className="text-sm">Search chats</span>
 
-                  <span className="opacity-0 group-hover/menuitem:opacity-100 font-feixen text-xs text-muted-foreground/50 transition-opacity">
+                  <span className="opacity-0 group-hover/menuitem:opacity-100 text-xs text-muted-background/50 transition-opacity">
                     Ctrl + K
                   </span>
                 </span>
@@ -123,8 +126,8 @@ function Nothing(): React.ReactElement {
             <SidebarMenu>
               {techTopics.map((topic: string, i: number) => (
                 <SidebarMenuItem className="group/view" key={i}>
-                  <SidebarMenuButton className="px-3  flex justify-between items-center cursor-pointer py-3 text-sm rounded-md hover:bg-background">
-                    <span className="truncate">{topic}</span>
+                  <SidebarMenuButton className="px-3  flex justify-between items-center cursor-pointer py-3 text-sm  rounded-md">
+                    <span className="truncate font-normal">{topic}</span>
                     <Ellipsis className="opacity-0 group-hover/view:opacity-100" />
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -140,4 +143,4 @@ function Nothing(): React.ReactElement {
   );
 }
 
-export default Nothing;
+export default LeftSidebar;

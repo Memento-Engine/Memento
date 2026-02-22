@@ -5,6 +5,7 @@ import { Plus, ArrowUp } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import React, { useState } from "react";
+import { useTypewriter } from "@/hooks/useTypeWriter";
 
 export interface AutosizeTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
 
@@ -52,7 +53,10 @@ export default function ChatHome({
   handleSend,
 }: ChatHomeProps): React.ReactElement {
   const [query, setQuery] = useState<string>("");
-
+  const placeholder = useTypewriter({
+    base: "Hey, When did I search about ",
+    endings: ["quantum computers?", "GOAT Movie?", "linux securities?"],
+  });
   return (
     <div className="flex flex-col w-full items-center bg-white dark:bg-background justify-center min-h-[85vh] px-4">
       {/* Brand */}
@@ -74,7 +78,7 @@ export default function ChatHome({
               }
             }}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Browse your memories..."
+            placeholder={`${placeholder}|`}
             className="text-lg py-2 px-3 dark:text-black placeholder:text-slate-400 max-h-48"
           />
 

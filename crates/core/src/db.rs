@@ -9,6 +9,7 @@ use sqlite_vec::sqlite3_vec_init;
 use sqlx::{ QueryBuilder, Sqlite, Result, FromRow };
 use serde::{ Serialize, Deserialize };
 use std::fmt::Debug;
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SearchQuery {
@@ -23,6 +24,19 @@ pub struct SearchQuery {
     pub embedding: Option<Vec<f32>>,
 }
 
+// Intermediate Struct for getting struct from rewritten query
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StructuredQuery {
+    pub app_name: Option<String>,
+    pub window_name: Option<String>,
+    pub browser_url: Option<String>,
+    pub query: String,
+    pub semantic_query: Option<String>,
+    pub key_words: Option<Vec<String>>,
+    pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub entities: Option<Vec<String>>,
+}
+
 pub struct DatabaseManager {
     pub pool: SqlitePool,
 }
@@ -32,6 +46,14 @@ pub struct ImmediateTx {
     committed: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GroupedSearchResult {
+    pub app_name: String,
+    pub window_title: String,
+    pub browser_url: String,
+    pub text_contents: Vec<String>,
+    pub frame_id: i32,
+}
 // Ensure your result struct can be mapped automatically
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct SearchResult {
@@ -50,13 +72,32 @@ pub struct SearchResult {
     pub window_width: i32,
     pub window_height: i32,
 
-    pub chunk_id : i32,
+    pub chunk_id: i32,
+    pub frame_id: i32,
 
     pub image_path: String,
     // Optional: Include distance if you want to see the score
     // pub distance: f32,
 }
 
+pub fn group_results(results: Vec<SearchResult>) -> Vec<GroupedSearchResult> {
+    let mut map: HashMap<String, GroupedSearchResult> = HashMap::new();
+
+    for r in results {
+        let entry = map.entry(r.image_path.clone()).or_insert_with(|| GroupedSearchResult {
+            app_name: r.app_name,
+            window_title: r.window_title,
+            browser_url: r.browser_url,
+            text_contents: Vec::new(),
+            frame_id: r.frame_id,
+        });
+
+        // Only push text content (multiple per image)
+        entry.text_contents.push(r.text_content);
+    }
+
+    map.into_values().collect()
+}
 impl ImmediateTx {
     /// Access the underlying connection for executing queries.
     pub fn conn(&mut self) -> &mut PoolConnection<Sqlite> {
@@ -239,10 +280,159 @@ impl DatabaseManager {
             .unwrap();
     }
 
-    pub async fn perform_search(
-        &self,
-        search: SearchQuery
-    ) -> Result<Vec<SearchResult>> {
+    pub async fn perform_shallow_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
+        let embedding_json = serde_json
+            ::to_string(&search.embedding)
+            .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
+
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+            "
+    SELECT 
+        f.id as frame_id,
+        f.captured_at, 
+        f.app_name, 
+        f.window_title, 
+        f.process_id,
+        f.is_focused,
+        f.browser_url,
+        f.window_x,
+        f.window_y,
+        f.window_width,
+        f.window_height,
+        f.image_path,
+        c.text_content,
+        c.id as chunk_id,
+        vec_distance_cosine(v.embedding, "
+        );
+
+        qb.push_bind(embedding_json.clone());
+
+        qb.push(
+            ") as score
+    FROM chunks c
+    JOIN frames f ON c.frame_id = f.id
+    JOIN vec_chunks v ON v.chunk_id = c.id
+    WHERE vec_distance_cosine(v.embedding, "
+        );
+
+        qb.push_bind(embedding_json.clone());
+
+        qb.push(") < 0.65
+    ORDER BY score ASC
+    LIMIT 20
+");
+
+        let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
+
+        Ok(results)
+    }
+
+    pub async fn perform_deep_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
+        let embedding_json = serde_json
+            ::to_string(&search.embedding)
+            .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
+
+        let keywords_str = search.key_words
+            .as_ref()
+            .map(|k| {
+                k.iter()
+                    .filter(|w| !w.trim().is_empty())
+                    .map(|w| format!("{}*", w))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            })
+            .unwrap_or_default();
+
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+            r#"
+        WITH
+
+        -- 1️⃣ Semantic Retrieval (High Recall)
+        vector_matches AS (
+            SELECT
+                chunk_id as id,
+                vec_distance_cosine(embedding, 
+        "#
+        );
+
+        qb.push_bind(embedding_json);
+
+        qb.push(
+            r#") as semantic_score
+        FROM vec_chunks
+        WHERE semantic_score < 0.90
+        LIMIT 150
+        ),
+
+        -- 2️⃣ Keyword Retrieval
+        keyword_matches AS (
+        "#
+        );
+
+        if !keywords_str.is_empty() {
+            qb.push(
+                "SELECT rowid as id, 1.0 as keyword_hit FROM chunks_fts WHERE chunks_fts MATCH "
+            );
+            qb.push_bind(keywords_str);
+        } else {
+            qb.push("SELECT NULL as id, 0.0 as keyword_hit WHERE 1=0");
+        }
+
+        qb.push(
+            r#"
+        ),
+
+        combined AS (
+            SELECT id,
+                   MIN(semantic_score) as semantic_score,
+                   MAX(keyword_hit) as keyword_hit
+            FROM (
+                SELECT id, semantic_score, 0.0 as keyword_hit FROM vector_matches
+                UNION ALL
+                SELECT id, 0.5 as semantic_score, keyword_hit FROM keyword_matches
+            )
+            GROUP BY id
+        )
+
+        SELECT
+            f.id as frame_id,
+            f.captured_at,
+            f.app_name,
+            f.window_title,
+            f.process_id,
+            f.is_focused,
+            f.browser_url,
+            f.window_x,
+            f.window_y,
+            f.window_width,
+            f.window_height,
+            f.image_path,
+            c.text_content,
+            c.id as chunk_id,
+
+            -- 3️ FINAL SCORE (Deep Ranking)
+            (
+                (1 - semantic_score) * 0.7
+                + keyword_hit * 0.05
+                + CASE WHEN f.is_focused = 1 THEN 0.05 ELSE 0 END
+                + (1.0 / (1 + (julianday('now') - julianday(f.captured_at)))) * 0.2
+            ) as final_score
+
+        FROM combined
+        JOIN chunks c ON combined.id = c.id
+        JOIN frames f ON c.frame_id = f.id
+
+        ORDER BY final_score DESC
+        LIMIT 50
+        "#
+        );
+
+        let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
+
+        Ok(results)
+    }
+
+    pub async fn perform_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
         // 1. Prepare Embedding JSON
         let embedding_json = serde_json
             ::to_string(&search.embedding)
@@ -288,6 +478,7 @@ impl DatabaseManager {
             ") 
         -- 5. Main Selection
         SELECT 
+            f.id as frame_id,
             f.captured_at, 
             f.app_name, 
             f.window_title, 
@@ -340,8 +531,7 @@ impl DatabaseManager {
 
         Ok(results)
     }
-    
-    
+
     pub async fn insert_into_chunks(
         &self,
         frame_id: i64,

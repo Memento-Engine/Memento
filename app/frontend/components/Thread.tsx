@@ -1,7 +1,6 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect } from "react";
 import { Bot } from "lucide-react";
-
 import ChatInput from "./ChatInput";
 import {
   Conversation,
@@ -9,66 +8,37 @@ import {
   ConversationScrollButton,
 } from "./conversation";
 import MessageItem from "./MessageItem";
-import { UIMessage } from "ai";
-import { invoke } from "@tauri-apps/api/core";
-
-import { listen } from "@tauri-apps/api/event";
-import { MementoUIMessage } from "./types";
-import { conversation } from "@/mock";
-import { Thinking } from "./Thinking";
-import ImageSearchGrid from "./ImageSearchGrid";
+import useChatContext from "@/hooks/useChatContext";
+import { StepThinking } from "./StepThinking";
 
 export default function Thread(): React.ReactElement {
-  const [messages, setMessages] = useState<MementoUIMessage[]>([]);
-
-  const currentTextRef = useRef<string>("");
-
-  useEffect(() => {
-    const unlistenPromise = listen("model-token", (event) => {
-      const token = event.payload as string;
-
-      currentTextRef.current += token;
-
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-
-        return [
-          ...prev.slice(0, -1),
-          {
-            ...last,
-            parts: [{ type: "text", text: currentTextRef.current }],
-          },
-        ];
-      });
-    });
-
-    return () => {
-      unlistenPromise.then((unlisten) => unlisten());
-    };
-  }, []);
+  const { messages, sendMessage } = useChatContext();
 
   const handleSend = async (query: string) => {
     if (!query.trim()) return;
+    console.log("got query fromhandle send", query);
+    await sendMessage(query);
   };
 
-  return (
-    // 1. CONTAINER: Use h-screen to fill the Tauri window.
-    // Remove 'items-center' so the chat can stretch full width.
-    <div className="flex flex-col w-full h-screen bg-background overflow-hidden">
-      {/* 2. CHAT AREA: Conversation should be the direct flex child. 
-          It handles the scrolling internally. */}
-      <Conversation className="flex-1">
-        {/* 3. CONTENT WIDTH: Control the "reading width" here with mx-auto */}
-        <ConversationContent className="mx-auto w-full md:w-4/5 xl:w-4/6 px-4 py-6">
-          {conversation.map((m, index) => (
-            <div className="flex flex-col gap-4">
+  useEffect((): void => {
+    console.log("Messages : ", messages);
+  }, [messages]);
 
-              {m.role == "assistant" && (
-                <>
-                  <Thinking parts={m.parts} />
-                  <ImageSearchGrid />
-                </>
-              )}
+  return (
+    <div className="flex flex-col w-full h-screen bg-base overflow-hidden">
+      <Conversation className="flex-1">
+        <ConversationContent className="mx-auto w-full md:w-4/5 xl:w-4/6 px-4 py-6">
+          {messages.map((m, index) => (
+            <div className="flex flex-col gap-4">
+              {m.role === "assistant" &&
+                (() => {
+                  const steps = m.parts
+                    .filter((p) => p.type === "data-thinking")
+                    .map((p) => p.data);
+
+                  return <StepThinking
+                   steps={steps} />;
+                })()}
 
               <MessageItem
                 key={m.id}
@@ -97,7 +67,6 @@ export default function Thread(): React.ReactElement {
         <div className="mx-auto w-full md:w-4/5 xl:w-4/6">
           <ChatInput
             handleSend={(q) => {
-              console.log("got the query", q);
               handleSend(q);
             }}
           />

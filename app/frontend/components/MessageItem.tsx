@@ -1,6 +1,6 @@
 import { extractFilesFromPrompt, FileMetadata } from "@/lib/fileMetadata";
 import type { UIMessage, ChatStatus } from "ai";
-import { Paperclip } from "lucide-react";
+import { Paperclip, RefreshCwIcon } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -35,6 +35,8 @@ const CHAT_STATUS = {
 } as const;
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Thinking } from "./Thinking";
+import { cn } from "@/lib/utils";
+import { Button } from "./ui/button";
 
 export default function MessageItem({
   message,
@@ -48,7 +50,9 @@ export default function MessageItem({
   assistant,
   showAssistant,
 }: MessageItemProps): React.ReactElement {
-  const isStreaming = isLastMessage && status === CHAT_STATUS.STREAMING;
+  console.log("is Last message", isLastMessage);
+  console.log("chat statut", CHAT_STATUS.STREAMING);
+  const isStreaming = isLastMessage ;
 
   const { setReferenceMeta } = useReferenceContext();
 
@@ -89,6 +93,7 @@ export default function MessageItem({
     part: { type: "text"; text: string },
     partIndex: number,
   ) => {
+    console.log("error", part.text, part.type);
     if (!part.text || part.text.trim() === "") {
       return null;
     }
@@ -108,10 +113,9 @@ export default function MessageItem({
       return null;
     }
 
-    
-  // const url = convertFileSrc(
-  //   "C:/Users/pavan/Pictures/Screenshots/testOne.png"
-  // );
+    // const url = convertFileSrc(
+    //   "C:/Users/pavan/Pictures/Screenshots/testOne.png"
+    // );
 
     return (
       <div key={`${message.id}-${partIndex}`} className="w-full">
@@ -145,19 +149,19 @@ export default function MessageItem({
             </div>
           </div>
         ) : (
-            <RenderMarkdown
-              onMemoryClick={(id: string) => {
-                if (Array.isArray(message.metadata)) {
-                  const meta: ReferenceMeta = message.metadata.find(
-                    (m) => m.chunk_id == id,
-                  );
-                  setReferenceMeta(meta);
-                }
-              }}
-              content={part.text}
-              isStreaming={isStreaming && isLastPart}
-              messageId={message.id}
-            />
+          <RenderMarkdown
+            onMemoryClick={(id: string) => {
+              if (Array.isArray(message.metadata)) {
+                const meta: ReferenceMeta = message.metadata.find(
+                  (m) => m.chunk_id == id,
+                );
+                setReferenceMeta(meta);
+              }
+            }}
+            content={part.text}
+            isStreaming={isStreaming && isLastPart}
+            messageId={message.id}
+          />
         )}
       </div>
     );
@@ -192,6 +196,46 @@ export default function MessageItem({
           {/* {onDelete && status !== CHAT_STATUS.STREAMING && (
             <DeleteMessageDialog onDelete={handleDelete} />
           )} */}
+        </div>
+      )}
+
+      {/* Message actions for assistant messages (non-tool) */}
+      {message.role === "assistant" && (
+        <div className="flex items-center gap-2 text-muted-foreground text-xs mt-1">
+          <div
+            className={cn("flex items-center gap-1", isStreaming && "hidden")}
+          >
+            <CopyButton text={getFullTextContent()} />
+
+            {onEdit && !isStreaming && (
+              <EditMessageDialog
+                message={getFullTextContent()}
+                onSave={handleEdit}
+              />
+            )}
+
+            {/* {onDelete && !isStreaming && (
+                  <DeleteMessageDialog onDelete={handleDelete} />
+                )} */}
+
+            {onRegenerate && !isStreaming && isLastMessage && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                // onClick={handleRegenerate}
+                title="Regenerate response"
+              >
+                <RefreshCwIcon size={16} />
+              </Button>
+            )}
+          </div>
+
+          {/* <TokenSpeedIndicator
+                streaming={isStreaming}
+                metadata={
+                  message.metadata as Record<string, unknown> | undefined
+                }
+              /> */}
         </div>
       )}
     </div>
