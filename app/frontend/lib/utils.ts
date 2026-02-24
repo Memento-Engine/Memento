@@ -42,3 +42,9 @@ export const renderDate = (dateString: string): string => {
   const date = new Date(dateString);
   return formatDistanceToNow(date, { addSuffix: true });
 };
+
+export const toCamelCase = (str: string): string => {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+};
+
+

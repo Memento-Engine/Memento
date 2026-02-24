@@ -52,7 +52,8 @@ pub struct GroupedSearchResult {
     pub window_title: String,
     pub browser_url: String,
     pub text_contents: Vec<String>,
-    pub frame_id: i32,
+    pub captured_at : DateTime<Utc>,
+    pub source_id: i32, // Source ID is chunk id
 }
 // Ensure your result struct can be mapped automatically
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -89,7 +90,8 @@ pub fn group_results(results: Vec<SearchResult>) -> Vec<GroupedSearchResult> {
             window_title: r.window_title,
             browser_url: r.browser_url,
             text_contents: Vec::new(),
-            frame_id: r.frame_id,
+            source_id: r.chunk_id,
+            captured_at : r.captured_at
         });
 
         // Only push text content (multiple per image)

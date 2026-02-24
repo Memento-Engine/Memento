@@ -26,12 +26,12 @@ export const thinkingSchema = z.object({
 export type ThinkingStep = z.infer<typeof thinkingSchema>;
 
 // Citation schema
-const citationSchema = z.object({
-  sourceId: z.string().min(1),
+export const citationSchema = z.object({
+  sourceId: z.number().min(1),
   appName: z.string().min(1),
   windowName: z.string().min(1),
   capturedAt: z.string().min(1),
-  url: z.string().min(1),
+  url: z.string().optional().nullable(),
 
   bbox: z.object({
     x: z.number(),
@@ -45,9 +45,14 @@ const citationSchema = z.object({
   imagePath: z.string(),
 });
 
+export const citationsSchema = z.array(citationSchema);
+
+export type Citation = z.infer<typeof citationSchema>;
+export type Citations = z.infer<typeof citationsSchema>;
+
 const dataSchemas = {
   thinking: thinkingSchema,
-  citation: citationSchema,
+  citations: citationsSchema,   // plural
 };
 
 export type MyDataPart = {

@@ -2,10 +2,15 @@
 
 import {
   chatRequest,
+  Citation,
+  citationSchema,
+  citationsSchema,
   MementoUIMessage,
   thinkingSchema,
 } from "@/components/types";
 import { ChatContext } from "@/contexts/chatContext";
+import { toCamelCase } from "@/lib/utils";
+import { data } from "framer-motion/client";
 import { useEffect, useState } from "react";
 
 interface ChatProviderProps {
@@ -43,8 +48,37 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     }
   }
 
+  function normalizeCitation(data: any): Citation {
+    return {
+      sourceId: data.source_id,
+      appName: data.app_name,
+      windowName: data.window_name,
+      capturedAt: data.captured_at,
+      url: data.url,
+
+      bbox: {
+        x: data.bbox.x,
+        y: data.bbox.y,
+        width: data.bbox.width,
+        height: data.bbox.height,
+        textStart: data.bbox.text_start,
+        textEnds: data.bbox.text_ends,
+      },
+
+      imagePath: data.image_path,
+    };
+  }
+
+  function getNormalizedCitations(rawCitations: any[]): Citation[] {
+    let cleanedCitations: Citation[] = [];
+    for (let rawCitation of rawCitations) {
+      cleanedCitations.push(normalizeCitation(rawCitation));
+    }
+
+    return cleanedCitations;
+  }
+
   async function handleSseEvent(eventChunk: string) {
-    console.log("HANDLE EVENT AT:", Date.now());
     const parsedEvent = parseSSEEvent(eventChunk);
     if (!parsedEvent) return;
 
@@ -123,7 +157,76 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
         break;
       }
-      case "citation":
+      case "citations":
+        console.log("Clenaed Citations: ", getNormalizedCitations(data));
+
+        const parsedCitations = citationsSchema.safeParse(
+          getNormalizedCitations(data),
+        );
+
+        if (!parsedCitations.success) {
+          console.log(
+            "Failed to parse the Citations schema",
+            parsedCitations.error,
+          );
+          return;
+        }
+        setMessages((prev) => {
+          try {
+            const lastMessage = prev[prev.length - 1];
+
+            // 1. If no assistant message, create a brand new one
+            if (!lastMessage || lastMessage.role !== "assistant") {
+              // SAFE ID GENERATION FALLBACK
+              const safeId =
+                typeof crypto.randomUUID === "function"
+                  ? crypto.randomUUID()
+                  : Date.now().toString() +
+                    Math.random().toString(36).substring(2);
+
+              return [
+                ...prev,
+                {
+                  id: safeId,
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "data-citations",
+                      data: parsedCitations.data,
+                    },
+                  ],
+                },
+              ];
+            }
+
+            // 2. If we are appending, clone and update
+            const updatedMessages = [...prev];
+            const updatedMessage = { ...lastMessage };
+            const updatedParts = [...updatedMessage.parts];
+
+            const lastPart = updatedParts[updatedParts.length - 1];
+
+            if (lastPart && lastPart.type === "data-citations") {
+              updatedParts[updatedParts.length - 1] = {
+                ...lastPart,
+                data: parsedCitations.data,
+              };
+            } else {
+              updatedParts.push({
+                type: "data-citations",
+                data: parsedCitations.data,
+              });
+            }
+
+            updatedMessage.parts = updatedParts;
+            updatedMessages[updatedMessages.length - 1] = updatedMessage;
+
+            return updatedMessages;
+          } catch (error) {
+            console.error("Error inside state updater:", error);
+            return prev; // Return previous state to avoid UI crashes
+          }
+        });
         break;
 
       case "token": {

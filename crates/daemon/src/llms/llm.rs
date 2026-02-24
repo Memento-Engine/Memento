@@ -3,9 +3,7 @@ use reqwest::Client;
 use serde_json::json;
 use crate::llms::{
     prompts::{
-        PROMPT_FOR_GETTING_ANS,
-        PROMPT_FOR_STRUCTURED_QUERY,
-        QUERY_ANALYSIS_AND_EXECUTION_PROMPT,
+        CONVERSATIONAL_PROMPT, PROMPT_FOR_GETTING_ANS, PROMPT_FOR_STRUCTURED_QUERY, QUERY_ANALYSIS_AND_EXECUTION_PROMPT
     },
     types::ExecutionPlan,
 };
@@ -64,7 +62,6 @@ pub async fn query_rewriter_classifier_model(
         &raw_response // fallback if no brackets found
     };
 
-    info!("Clean Json : {}", clean_json);
 
     let plan: ExecutionPlan = serde_json::from_str(clean_json)?;
 
@@ -121,18 +118,19 @@ pub async fn call_llm_streaming<F, Fut>(
     for r in results {
         let text_joined = r.text_contents.join("\n - ");
 
+        // Source_id means chunk_id
         memories.push_str(
             &format!(
                 r#"
             Frame:
-            - frame_id: {}
+            - source_id: {}
             - app_name: {}
             - window_title: {}
             - browser_url: {}
             - text_contents:
             - {}
             "#,
-                r.frame_id,
+                r.source_id,
                 r.app_name,
                 r.window_title,
                 r.browser_url,
@@ -154,6 +152,79 @@ pub async fn call_llm_streaming<F, Fut>(
                 "content": format!(
                     "<memories>\n{}\n</memories>\n\nUser Question:\n{}",
                     memories, query
+                )
+            }
+        ],
+        "temperature": 0.2
+    });
+
+    let res = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", *OPENROUTER_API_KEY))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await?;
+
+    let mut stream = res.bytes_stream();
+
+    // -------------------------------------
+    // Streaming Loop
+    // -------------------------------------
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let text = String::from_utf8_lossy(&chunk);
+
+        for line in text.split('\n') {
+            // OpenRouter streaming uses SSE format
+            if !line.starts_with("data: ") {
+                continue;
+            }
+
+            let data = line.trim_start_matches("data: ");
+
+            if data == "[DONE]" {
+                return Ok(());
+            }
+
+            let json: serde_json::Value = match serde_json::from_str(data) {
+                Ok(v) => v,
+                Err(_) => {
+                    continue;
+                }
+            };
+
+            if let Some(token) = json["choices"][0]["delta"]["content"].as_str() {
+                on_token(token.to_string()).await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn call_llm_streaming_for_conversational<F, Fut>(
+    query: &str,
+    mut on_token: F
+)
+    -> Result<(), Box<dyn std::error::Error>>
+    where F: FnMut(String) -> Fut + Send, Fut: Future<Output = ()> + Send
+{
+    let client = Client::new();
+
+    let body =
+        json!({
+        "model": "deepseek/deepseek-chat",
+        "stream": true,
+        "messages": [
+            {
+                "role": "system",
+                "content": CONVERSATIONAL_PROMPT
+            },
+            {
+                "role": "user",
+                "content": format!(
+                    "User Question:\n{}",
+                    query
                 )
             }
         ],

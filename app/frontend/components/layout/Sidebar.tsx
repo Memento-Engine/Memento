@@ -46,7 +46,7 @@ function LeftSidebar(): React.ReactElement {
     <Sidebar
       collapsible="icon"
       className={cn(
-        "border-r m-2 h-[calc(100vh-1rem)] border overflow-hidden rounded-xl bg-white flex flex-col",
+        "border-r m-4 h-[calc(100vh-2rem)] border overflow-hidden rounded-xl bg-white flex flex-col",
       )}
     >
       {/* 1. HEADER */}

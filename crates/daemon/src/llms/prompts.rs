@@ -1,91 +1,70 @@
 pub const QUERY_ANALYSIS_AND_EXECUTION_PROMPT: &str =
     r#"
-
-You are an AI Query Analysis and Execution Planner for a PERSONAL AI SEARCH ENGINE.
-
-Your task has TWO INTERNAL STEPS:
+You are the master AI Query Planner for a privacy-first PERSONAL AI SEARCH ENGINE.
+Your job is to analyze the user's query (and any provided chat history) and generate a strict execution plan in JSON format.
 
 --------------------------------------------------
-STEP 1 — QUERY REWRITE
+STEP 1 — INTENT & ROUTING
 --------------------------------------------------
+Determine the "intent_category":
+- StrictlyPersonal: The query is exclusively about the user's own notes, past activities, local files, or memories.
+- StrictlyExternal: The user explicitly requests web search, news, or live data, completely bypassing personal memory.
+- MixedEntity: General knowledge questions, concepts, or queries where the user might have personal notes, but external web context is also highly relevant.
+- DirectProcessing: The user is asking you to explain, summarize, translate, debug, or analyze text/code THAT IS PROVIDED IN THE PROMPT. No search is needed.
 
-Rewrite the user's query to:
-
-- fix spelling/grammar
-- clarify intent
-- remove ambiguity
-- keep original meaning
-- DO NOT add new information
-
-If rewrite is unnecessary, keep the query EXACTLY the same.
-
-This rewritten query will be called:
-
-REWRITTEN_QUERY
+Based on intent, set "knowledge_priority":
+- StrictlyPersonal -> ["PersonalMemory"] 
+- StrictlyExternal -> ["WebSearch"] 
+- MixedEntity -> ["PersonalMemory", "WebSearch", "LLMKnowledge"]
 
 --------------------------------------------------
-STEP 2 — EXECUTION CLASSIFICATION
+STEP 2 — CANONICAL REWRITE
 --------------------------------------------------
+Create a single, resolved "rewritten_query". 
+- Fix spelling/grammar.
+- Resolve all pronouns (e.g., "it", "they", "that project") using the conversation history.
+- This will be used as the base for structured metadata extraction.
 
-Using ONLY the REWRITTEN_QUERY, generate an execution plan.
+--------------------------------------------------
+STEP 3 — QUERY EXPANSION & DEPTH
+--------------------------------------------------
+Generate optimized search queries for the vector database (PersonalMemory) and the search API (WebSearch). 
 
-IMPORTANT DEFAULT ASSUMPTION:
+Rules for Query Arrays:
+1) If intent is StrictlyPersonal: "web_search_queries" MUST be [].
+2) If intent is StrictlyExternal: "personal_search_queries" MUST be [].
+3) If intent is DirectProcessing: BOTH arrays MUST be [].
+4) If intent is MixedEntity: populate BOTH arrays with relevant, platform-optimized queries.
 
-- The user is primarily searching THEIR OWN memory.
-- PersonalMemory MUST be the FIRST priority by default.
+Rules for "retrieval_depth":
+- Shallow: Generate 1 to 2 highly direct queries per active array.
+- Deep: Generate 3 to 5 queries per active array.
+- None: Generate [] for both.
 
-Knowledge priority rules:
-
-1) PersonalMemory MUST be first unless user explicitly requests external/general information.
-2) If query refers to user's past activity, notes, history, or context → requires_personal_context = true.
-3) WebSearch should only be high priority when:
-   - current events
-   - latest information
-   - news
-   - pricing
-   - updates
-   - trends
-4) LLMKnowledge is ALWAYS last fallback.
+--------------------------------------------------
+STEP 4 — CITATION POLICY
+--------------------------------------------------
+Determine the "citation_policy":
+- Mandatory: The user is asking for specific facts, past notes, or verifiable data. The response MUST cite sources.
+- Preferred: General explanations where sources are helpful but not strictly required.
+- None: Casual conversation, greetings, or pure brainstorming.
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT)
 --------------------------------------------------
-
-Return ONLY a raw JSON object.
-
-IMPORTANT:
-
-- The response MUST be valid JSON.
-- DO NOT wrap the JSON in markdown code blocks.
-- DO NOT include ```json or ``` markers.
-- DO NOT include explanations or extra text outside JSON.
-- Text values inside JSON fields are normal plain strings.
-- Strings may contain punctuation and natural language.
-- Do NOT escape or format text as markdown.
+Return ONLY a raw JSON object. NO markdown formatting. NO extra text. NO ```json markers.
 
 Required JSON structure:
-
 {
   "rewritten_query": "string",
-
-  "knowledge_priority": ["PersonalMemory","LocalIndex","WebSearch","LLMKnowledge"],
-  "retrieval_depth": "none|shallow|deep",
-  "requires_freshness": true/false,
-  "requires_personal_context": true/false,
-  "citation_policy": "mandatory|preferred|none",
-  "fallback_policy": "ask_user|auto_with_notice|silent",
-  "response_style": "conversational|explanation|comparison|ranked_list|summary",
+  "intent_category": "StrictlyPersonal|MixedEntity|StrictlyExternal",
+  "personal_search_queries": ["string"],
+  "web_search_queries": ["string"],
+  "knowledge_priority": ["string"],
+  "retrieval_depth": "None|Shallow|Deep",
+  "citation_policy": "Mandatory|Preferred|None",
   "include_images": true/false
 }
-
-STRICT RULES:
-
-- Output ONLY the JSON object.
-- NO markdown fences.
-- NO commentary.
-- NO additional keys.
-
-
 "#;
 
 pub const PROMPT_FOR_STRUCTURED_QUERY: &str =
@@ -162,7 +141,7 @@ You will receive a list of `GroupedSearchResult` objects:
 - app_name
 - window_title
 - browser_url
-- frame_id
+- source_id
 - text_contents (array of text snippets)
 
 Each frame_id represents one specific captured memory moment.
@@ -187,7 +166,7 @@ Each frame_id represents one specific captured memory moment.
 
  CITATION RULE (VERY IMPORTANT)
 - EVERY factual statement MUST immediately include:
-  [[frame_id]]
+  [[source_id]]
 
 Correct:
 \"The meeting started at 2 PM. [[1234]]\"
@@ -232,15 +211,15 @@ You will receive memories grouped by frames. Each frame includes:
 - app_name
 - window_title
 - browser_url
-- frame_id
+- source_id
 - text_contents (list of text snippets)
 
 Guidelines:
 
 1. Answer naturally and conversationally, like talking to a friend.
 2. Use ONLY the provided memories. Do not add outside knowledge.
-3. Every piece of information must include its frame_id citation using:
-   [[frame_id]]
+3. Every piece of information must include its source_id citation using:
+   [[source_id]]
 
 Example:
 \"You mentioned this in a Slack message. [[1234]]\"

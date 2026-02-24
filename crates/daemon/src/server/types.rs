@@ -21,7 +21,7 @@ pub enum ThinkingStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Citation {
-    pub source_id: String,
+    pub source_id: i64,
     pub app_name: String,
     pub window_name: String,
     pub captured_at: String,

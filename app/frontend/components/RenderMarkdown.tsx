@@ -17,6 +17,7 @@ import { Button } from "./ui/button";
 import { Link2Icon } from "lucide-react";
 import { SourceBadge } from "./SourceBadge";
 import { normalize } from "path";
+import { Citation } from "./types";
 
 interface MarkdownProps {
   content: string;
@@ -25,6 +26,7 @@ interface MarkdownProps {
   isUser?: boolean;
   isStreaming?: boolean;
   messageId?: string;
+  citationMap: Map<number, Citation>;
 }
 
 // =============================
@@ -80,50 +82,6 @@ const normalizeLatex = (input: string): string => {
 };
 
 // =============================
-// SOURCE TOKEN CONVERTER
-// =============================
-function Citation({ ids }: { ids: string[] }) {
-  return (
-    <span className="citation">
-      {ids.map((id) => (
-        <button key={id}>{id}</button>
-      ))}
-    </span>
-  );
-}
-function renderWithCitations(text: string) {
-  const parts = [];
-  const regex = /\[\[(.*?)\]\]/g;
-
-  let lastIndex = 0;
-  let match;
-
-  while ((match = regex.exec(text)) !== null) {
-    const start = match.index;
-    const end = regex.lastIndex;
-
-    // Push text before citation
-    if (start > lastIndex) {
-      parts.push(text.slice(lastIndex, start));
-    }
-
-    // Extract citation numbers
-    const ids = [...match[0].matchAll(/\[(\d+)\]/g)].map((m) => m[1]);
-
-    parts.push(<Citation key={start} ids={ids} />);
-
-    lastIndex = end;
-  }
-
-  // Push remaining text
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return parts;
-}
-
-// =============================
 // COMPONENT
 // =============================
 
@@ -141,6 +99,7 @@ function RenderMarkdownComponent({
   isUser,
   components,
   messageId,
+  citationMap,
   onMemoryClick,
 }: MarkdownProps & { onMemoryClick?: (id: string) => void }) {
   // preprocess content
@@ -159,7 +118,16 @@ function RenderMarkdownComponent({
         // MEMORY LINK
         if (href?.startsWith("memory://")) {
           const chunkId = href.replace("memory://", "");
-          return <SourceBadge id={chunkId} onClick={onMemoryClick} />;
+          console.log("ChunkId", chunkId);
+          console.log("typeof ChunkId", typeof chunkId);
+          const parsedIntChunkId = Number(chunkId);
+          return (
+            <SourceBadge
+              title={citationMap.get(parsedIntChunkId)?.windowName ?? ""}
+              capturedAt={citationMap.get(parsedIntChunkId)?.capturedAt ?? ""}
+              id={parsedIntChunkId}
+            />
+          );
         }
         // NORMAL LINK
         return (
