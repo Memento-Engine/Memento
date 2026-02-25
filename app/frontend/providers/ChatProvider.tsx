@@ -3,14 +3,15 @@
 import {
   chatRequest,
   Citation,
-  citationSchema,
   citationsSchema,
   MementoUIMessage,
   thinkingSchema,
 } from "@/components/types";
-import { ChatContext } from "@/contexts/chatContext";
-import { toCamelCase } from "@/lib/utils";
-import { data } from "framer-motion/client";
+import {
+  AssistantStatus,
+  ChatContext,
+  TRANSITIONS,
+} from "@/contexts/chatContext";
 import { useEffect, useState } from "react";
 
 interface ChatProviderProps {
@@ -19,6 +20,24 @@ interface ChatProviderProps {
 
 export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
+  const [assistantStatus, setAssistantStatus] =
+    useState<AssistantStatus>("Idle");
+
+  const transitionStatus = (nextState: AssistantStatus): boolean => {
+    const allowedNextStates = TRANSITIONS[assistantStatus];
+
+    if (allowedNextStates.includes(nextState)) {
+      if (nextState === "Finished" || nextState === "Error") {
+        setAssistantStatus("Idle");
+      } else {
+        setAssistantStatus(nextState);
+      }
+      return true;
+    }
+
+    console.warn(`Blocked transition from ${assistantStatus} to ${nextState}`);
+    return false;
+  };
 
   const BASE_URL = "http://localhost:9090/api/v1";
 
@@ -90,6 +109,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
     switch (type) {
       case "thinking": {
+        transitionStatus("Thinking");
         const parsedThinking = thinkingSchema.safeParse(data);
 
         if (!parsedThinking.success) {
@@ -97,6 +117,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
             "Failed to parse the thinking schema",
             parsedThinking.error,
           );
+          transitionStatus("Error");
           return;
         }
 
@@ -231,6 +252,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
       case "token": {
         const token: string = data?.text ?? "";
+        transitionStatus("Streaming");
 
         setMessages((prev) => {
           try {
@@ -277,6 +299,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
             return updatedMessages;
           } catch (error) {
             console.error("Error inside state updater:", error);
+            transitionStatus("Error");
             return prev; // Return previous state to avoid UI crashes
           }
         });
@@ -285,6 +308,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
       case "done":
         console.log("Stream Done");
+        transitionStatus("Finished");
         break;
 
       default:
@@ -295,6 +319,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
   const sendMessage = async (message: string): Promise<void> => {
     console.log("Message from chat input", message);
+    transitionStatus("LocalPending");
     try {
       const currentChat: MementoUIMessage = {
         id: "12",
@@ -306,6 +331,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         ],
         role: "user",
       };
+
       const filtered_messages = messages.map((m) => ({
         ...m,
         parts: m.parts.filter((p) => p.type === "text"),
@@ -350,12 +376,14 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       }
     } catch (err: unknown) {
       console.log("err while sending the message: ", err);
+      transitionStatus("Error");
+    } finally {
     }
   };
 
   useEffect((): void => {
-    console.log("Messages in providerse", messages);
-  }, [messages]);
+    console.log("Ai Assistant status", assistantStatus);
+  }, [assistantStatus]);
 
   return (
     <ChatContext.Provider
@@ -365,6 +393,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         isMessagesLoaded: false,
         messages,
         rewrite: () => {},
+        assistantStatus,
+        makeTransition: transitionStatus,
       }}
     >
       {children}

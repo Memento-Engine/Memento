@@ -12,6 +12,7 @@ import { AutosizeTextarea } from "./ChatHome"; // Ensure this path is correct
 import { Button } from "./ui/button";
 import { useState } from "react";
 import { useTypewriter } from "@/hooks/useTypeWriter";
+import { cn } from "@/lib/utils";
 
 export interface ChatInputProps {
   handleSend: (query: string) => void;
@@ -23,13 +24,13 @@ export default function ChatInput({
   const [query, setQuery] = useState<string>("");
 
   return (
-    <div className="border rounded-xl">
+    <div className="border rounded-xl dark:bg-[#0a0a0a]">
       <div className="w-full p-2">
         <AutosizeTextarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder={"Ask followup..."}
-          className="text-base py-2 px-3 placeholder:text-slate-400 max-h-60 bg-transparent"
+          placeholder="Ask followup..."
+          className={cn("text-base py-2 dark:bg-[#0a0a0a]  px-3  max-h-60 ")}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -39,6 +40,11 @@ export default function ChatInput({
               handleSend(message);
               setQuery("");
             }
+          }}
+          onClick={(): void => {
+            const message = query; // snapshot
+            handleSend(message);
+            setQuery("");
           }}
         />
 

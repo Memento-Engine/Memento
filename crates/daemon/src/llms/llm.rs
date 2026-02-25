@@ -1,16 +1,20 @@
-use app_core::db::{ GroupedSearchResult, StructuredQuery };
+use app_core::db::{ GroupedSearchResult, StructuredQuery, group_results };
 use reqwest::Client;
 use serde_json::json;
 use crate::llms::{
     prompts::{
-        CONVERSATIONAL_PROMPT, PROMPT_FOR_GETTING_ANS, PROMPT_FOR_STRUCTURED_QUERY, QUERY_ANALYSIS_AND_EXECUTION_PROMPT
+        CONVERSATIONAL_PROMPT,
+        SYSTEM_PROMPT_FOR_ANS,
+        PROMPT_FOR_STRUCTURED_QUERY,
+        QUERY_ANALYSIS_AND_EXECUTION_PROMPT,
     },
-    types::ExecutionPlan,
+    types::{ ExecutionPlan, GatheredContext, WebAction },
 };
 use once_cell::sync::Lazy;
 use dotenv::dotenv;
 use futures_util::StreamExt;
 use tracing::{ info };
+use std::future::Future;
 
 static OPENROUTER_API_KEY: Lazy<String> = Lazy::new(|| {
     dotenv().ok();
@@ -62,7 +66,6 @@ pub async fn query_rewriter_classifier_model(
         &raw_response // fallback if no brackets found
     };
 
-
     let plan: ExecutionPlan = serde_json::from_str(clean_json)?;
 
     Ok(plan)
@@ -102,10 +105,8 @@ pub async fn modal_for_structured_query(
     Ok(structured_query)
 }
 
-use std::future::Future;
-pub async fn call_llm_streaming<F, Fut>(
+pub async fn call_llm_streaming_for_conversational<F, Fut>(
     query: &str,
-    results: Vec<GroupedSearchResult>,
     mut on_token: F
 )
     -> Result<(), Box<dyn std::error::Error>>
@@ -113,31 +114,6 @@ pub async fn call_llm_streaming<F, Fut>(
 {
     let client = Client::new();
 
-    let mut memories = String::new();
-
-    for r in results {
-        let text_joined = r.text_contents.join("\n - ");
-
-        // Source_id means chunk_id
-        memories.push_str(
-            &format!(
-                r#"
-            Frame:
-            - source_id: {}
-            - app_name: {}
-            - window_title: {}
-            - browser_url: {}
-            - text_contents:
-            - {}
-            "#,
-                r.source_id,
-                r.app_name,
-                r.window_title,
-                r.browser_url,
-                text_joined
-            )
-        );
-    }
     let body =
         json!({
         "model": "deepseek/deepseek-chat",
@@ -145,13 +121,13 @@ pub async fn call_llm_streaming<F, Fut>(
         "messages": [
             {
                 "role": "system",
-                "content": PROMPT_FOR_GETTING_ANS
+                "content": CONVERSATIONAL_PROMPT
             },
             {
                 "role": "user",
                 "content": format!(
-                    "<memories>\n{}\n</memories>\n\nUser Question:\n{}",
-                    memories, query
+                    "User Question:\n{}",
+                    query
                 )
             }
         ],
@@ -202,8 +178,123 @@ pub async fn call_llm_streaming<F, Fut>(
     Ok(())
 }
 
-pub async fn call_llm_streaming_for_conversational<F, Fut>(
+pub fn build_content(query_history: &str, context: &GatheredContext) -> String {
+    let mut content = String::new();
+
+    // =========================
+    // QUERY HISTORY
+    // =========================
+    if !query_history.is_empty() {
+        content.push_str("=== CONVERSATION HISTORY ===\n\n");
+        content.push_str(query_history);
+        content.push_str("\n\n");
+    }
+
+    // =========================
+    // PERSONAL MEMORY
+    // =========================
+    if !context.personal_results.is_empty() {
+        let grouped_results = group_results(&context.personal_results);
+        content.push_str("=== PERSONAL MEMORY ===\n\n");
+
+        for (i, r) in grouped_results.iter().enumerate() {
+            content.push_str(
+                &format!(
+                    "[Memory {}]\n\
+                 Source Id: {}\n\
+                 App: {}\n\
+                 Window: {}\n\
+                 URL: {}\n\
+                 Captured At: {}\n",
+                    i + 1,
+                    r.source_id,
+                    r.app_name,
+                    r.window_title,
+                    r.browser_url,
+                    r.captured_at
+                )
+            );
+
+            content.push_str("Content:\n");
+
+            for text in &r.text_contents {
+                content.push_str(&format!("- {}\n", text));
+            }
+
+            content.push('\n');
+        }
+    }
+
+    // =========================
+    // WEB RESULTS
+    // =========================
+    if !context.web_results.is_empty() {
+        content.push_str("=== WEB RESULTS ===\n\n");
+
+        for tavily in &context.web_results {
+            content.push_str(&format!("Search Query: {}\n\n", tavily.query));
+
+            for (i, result) in tavily.results.iter().enumerate() {
+                content.push_str(
+                    &format!(
+                        "[Result {}]\n\
+                     Title: {}\n\
+                     URL: {}\n\
+                     Score: {}\n\
+                     Content:\n{}\n\n",
+                        i + 1,
+                        result.title,
+                        result.url,
+                        result.score,
+                        result.content
+                    )
+                );
+            }
+        }
+    }
+
+    content
+}
+
+fn build_system_prompt(context: &GatheredContext) -> String {
+    let mut system_prompt = String::from(SYSTEM_PROMPT_FOR_ANS);
+
+    if let Some(action) = context.final_action.as_ref() {
+        match action {
+            WebAction::Offer => {
+                if context.personal_results.is_empty() {
+                    system_prompt.push_str(
+                        "\nINSTRUCTION: No personal memories found. Inform the user and offer web search."
+                    );
+                } else {
+                    system_prompt.push_str(
+                        "\nINSTRUCTION: Answer using personal memories. Then offer web search for additional info."
+                    );
+                }
+            }
+
+            WebAction::Return => {
+                if context.personal_results.is_empty() {
+                    system_prompt.push_str(
+                        "\nINSTRUCTION: Inform user no personal records were found."
+                    );
+                }
+            }
+
+            WebAction::Auto => {
+                system_prompt.push_str(
+                    "\nINSTRUCTION: Combine personal memories and web results. Distinguish citations clearly."
+                );
+            }
+        }
+    }
+
+    system_prompt
+}
+
+pub async fn call_llm_streaming<F, Fut>(
     query: &str,
+    context: GatheredContext,
     mut on_token: F
 )
     -> Result<(), Box<dyn std::error::Error>>
@@ -211,25 +302,25 @@ pub async fn call_llm_streaming_for_conversational<F, Fut>(
 {
     let client = Client::new();
 
+    let system_prompt = build_system_prompt(&context);
+    let query_content = build_content(query, &context);
+
     let body =
         json!({
-        "model": "deepseek/deepseek-chat",
-        "stream": true,
-        "messages": [
-            {
-                "role": "system",
-                "content": CONVERSATIONAL_PROMPT
-            },
-            {
-                "role": "user",
-                "content": format!(
-                    "User Question:\n{}",
-                    query
-                )
-            }
-        ],
-        "temperature": 0.2
-    });
+    "model": "deepseek/deepseek-chat",
+    "stream": true,
+    "messages": [
+        {
+            "role": "system",
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": query_content
+        }
+    ],
+    "temperature": 0.2
+});
 
     let res = client
         .post("https://openrouter.ai/api/v1/chat/completions")

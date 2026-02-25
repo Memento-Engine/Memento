@@ -2,7 +2,7 @@
 
 import { extractFilesFromPrompt, FileMetadata } from "@/lib/fileMetadata";
 import type { ChatStatus } from "ai";
-import { Paperclip, RefreshCwIcon } from "lucide-react";
+import { Loader2, Paperclip, RefreshCwIcon } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -35,6 +35,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Citation, MementoUIMessage } from "./types";
 import { StepThinking } from "./StepThinking";
+import useChatContext from "@/hooks/useChatContext";
+import MementoBreathing from "./MementoBreathing";
+import ThinkingBubble from "./ThinkingBubble";
 
 export default function MessageItem({
   message,
@@ -48,9 +51,8 @@ export default function MessageItem({
   assistant,
   showAssistant,
 }: MessageItemProps): React.ReactElement {
-  console.log("is Last message", isLastMessage);
-  console.log("chat statut", CHAT_STATUS.STREAMING);
-  const isStreaming = isLastMessage;
+  const { assistantStatus } = useChatContext();
+  const isStreaming: boolean = isLastMessage && assistantStatus == "Streaming";
 
   const citationMap = new Map<number, Citation>();
   for (const part of message.parts) {
@@ -172,26 +174,32 @@ export default function MessageItem({
   };
 
   const renderStepThinking = (): React.ReactElement => {
-    if (message.role === "assistant") {
+    if (message.role === "assistant" && isLastMessage) {
       const steps = message.parts
         .filter((p) => p.type === "data-thinking")
         .map((p) => p.data);
 
-      if (steps.length == 0 && isStreaming)
-        return (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <p className="text-sm animate-pulse duration-[2000ms] ease-in-out">
-              Thinking...
-            </p>
-          </div>
-        );
       return <StepThinking steps={steps} />;
     }
     return <></>;
   };
+
+  const renderAssistantDraft = () => {
+    if (isLastMessage) {
+      switch (assistantStatus) {
+        case "LocalPending":
+          return <ThinkingBubble />;
+
+        default:
+          return null;
+      }
+    }
+    return null;
+  };
   return (
     <>
       {renderStepThinking()}
+
       <div className="w-full mb-4">
         {message.parts.map((part, i) => {
           switch (part.type) {
@@ -225,24 +233,19 @@ export default function MessageItem({
 
         {/* Message actions for assistant messages (non-tool) */}
         {message.role === "assistant" && (
-          <div className="flex items-center gap-2 text-muted-foreground text-xs mt-1">
+          <div className="flex items-center gap-2 text-muted-foreground text-xs mt-2">
             <div
-              className={cn("flex items-center gap-1", isStreaming && "hidden")}
+              className={cn(
+                "flex items-center gap-1",
+                (assistantStatus === "LocalPending" ||
+                  assistantStatus === "Thinking" ||
+                  assistantStatus === "Streaming") &&
+                  "hidden",
+              )}
             >
               <CopyButton text={getFullTextContent()} />
 
-              {onEdit && !isStreaming && (
-                <EditMessageDialog
-                  message={getFullTextContent()}
-                  onSave={handleEdit}
-                />
-              )}
-
-              {/* {onDelete && !isStreaming && (
-                  <DeleteMessageDialog onDelete={handleDelete} />
-                )} */}
-
-              {onRegenerate && !isStreaming && isLastMessage && (
+              {!isStreaming && isLastMessage && (
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -253,16 +256,10 @@ export default function MessageItem({
                 </Button>
               )}
             </div>
-
-            {/* <TokenSpeedIndicator
-                streaming={isStreaming}
-                metadata={
-                  message.metadata as Record<string, unknown> | undefined
-                }
-              /> */}
           </div>
         )}
       </div>
+      {renderAssistantDraft()}
     </>
   );
 }

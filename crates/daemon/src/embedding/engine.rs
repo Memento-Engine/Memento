@@ -30,7 +30,8 @@ pub struct CrossEncoder {
 
 impl CrossEncoder {
     pub fn new() -> Result<Self> {
-        let model = TextRerank::try_new(RerankInitOptions::new(RerankerModel::BGERerankerBase))?;
+        println!("Loading reranker V2M3");
+        let model = TextRerank::try_new(RerankInitOptions::new(RerankerModel::JINARerankerV1TurboEn))?;
 
         Ok(Self { model })
     }

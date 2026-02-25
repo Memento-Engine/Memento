@@ -1,18 +1,22 @@
-'use client';
+"use client";
 
 import ChatHome from "@/components/ChatHome";
-import Thread from "@/components/Thread";
+import ParticleBackground from "@/components/ParticleBackground";
+import useChatContext from "@/hooks/useChatContext";
 import { useRouter } from "next/navigation";
-
 
 export default function Home() {
   const router = useRouter();
+  const { sendMessage } = useChatContext();
   return (
-    <div className="flex min-h-screen items-center justify-center  font-sans light:bg-white dark:bg-background">
+    <div className="  flex min-h-screen items-center justify-center bg-background">
+      <ParticleBackground />
+
       <ChatHome
         handleSend={(query: string): void => {
           router.push("/chat/123");
           console.log(query);
+          sendMessage(query);
         }}
       />
     </div>

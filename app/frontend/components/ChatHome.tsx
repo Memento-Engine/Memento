@@ -1,31 +1,46 @@
 "use client";
+
+import React, { useState } from "react";
+import Image from "next/image";
 import { Button } from "./ui/button";
 import { Plus, ArrowUp } from "lucide-react";
-
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import React, { useState } from "react";
 import { useTypewriter } from "@/hooks/useTypeWriter";
+
+// ================= AUTOSIZE TEXTAREA =================
 
 export interface AutosizeTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
 
-const AutosizeTextarea = React.forwardRef<
+export const AutosizeTextarea = React.forwardRef<
   HTMLTextAreaElement,
   AutosizeTextareaProps
 >(({ className, ...props }, ref) => {
   const textAreaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
+  const MAX_HEIGHT = 192; // same as max-h-48
+
   const setHeight = () => {
-    if (textAreaRef.current) {
-      textAreaRef.current.style.height = "auto";
-      textAreaRef.current.style.height = `${textAreaRef.current.scrollHeight}px`;
-    }
+    const el = textAreaRef.current;
+    if (!el) return;
+
+    // reset height
+    el.style.height = "auto";
+
+    // new height with limit
+    const newHeight = Math.min(el.scrollHeight, MAX_HEIGHT);
+
+    el.style.height = `${newHeight}px`;
+
+    // enable scroll only after limit
+    el.style.overflowY = el.scrollHeight > MAX_HEIGHT ? "auto" : "hidden";
   };
 
-  React.useImperativeHandle(
-    ref,
-    () => textAreaRef.current as HTMLTextAreaElement,
-  );
+  React.useImperativeHandle(ref, () => textAreaRef.current!);
+
+  React.useEffect(() => {
+    setHeight();
+  });
 
   return (
     <Textarea
@@ -36,77 +51,99 @@ const AutosizeTextarea = React.forwardRef<
         props.onChange?.(e);
       }}
       className={cn(
-        "min-h-[40px] resize-none overflow-hidden border-none focus-visible:ring-0 shadow-none",
+        "min-h-[40px] max-h-48 resize-none overflow-y-auto border-none bg-background focus-visible:ring-0 shadow-none custom-scrollbar leading-tight",
         className,
       )}
     />
   );
 });
+
 AutosizeTextarea.displayName = "AutosizeTextarea";
 
-export { AutosizeTextarea };
+// ================= CHAT HOME =================
 
 interface ChatHomeProps {
   handleSend: (query: string) => void;
 }
+
 export default function ChatHome({
   handleSend,
 }: ChatHomeProps): React.ReactElement {
-  const [query, setQuery] = useState<string>("");
+  const [query, setQuery] = useState("");
+
   const placeholder = useTypewriter({
     base: "Hey, When did I search about ",
     endings: ["quantum computers?", "GOAT Movie?", "linux securities?"],
   });
-  return (
-    <div className="flex flex-col w-full items-center bg-white dark:bg-background justify-center min-h-[85vh] px-4">
-      {/* Brand */}
-      <h1 className="text-4xl font-mono  tracking-[0.09em] font-semibold dark:text-white text-slate-900 mb-6 tracking-tight">
-        Memento AI
-      </h1>
 
-      {/* The Perplexity Bar Container */}
-      <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-sm focus-within:ring-1 focus-within:ring-slate-300 transition-all overflow-hidden">
+  return (
+    <div className="flex flex-col w-full items-center bg-background justify-center min-h-screen px-4">
+      {/* ===== BRAND ===== */}
+
+      <div className="flex items-center justify-center gap-3 mb-6">
+        <Image
+          src="/blackLogo.svg"
+          alt="logo"
+          className="dark:invert shrink-0"
+          width={55}
+          height={55}
+        />
+
+        <h1 className="text-4xl tracking-[0.1em] text-primary font-semibold">
+          Memento
+        </h1>
+      </div>
+
+      {/* ===== INPUT BOX ===== */}
+
+      <div
+        className="
+  relative
+  w-full
+  max-w-2xl
+  bg-background
+  dark:bg-[#0a0a0a]
+  border
+  rounded-2xl
+  shadow-sm
+  overflow-hidden
+  z-1
+"
+      >
         <div className="flex flex-col p-2">
-          {/* Expanding Textarea */}
           <AutosizeTextarea
             value={query}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault(); // VERY important
+                e.preventDefault();
                 handleSend(query);
                 setQuery("");
               }
             }}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`${placeholder}|`}
-            className="text-lg py-2 px-3 dark:text-black placeholder:text-slate-400 max-h-48"
+            className="text-lg py-2 px-3 dark:bg-[#0a0a0a] placeholder:text-sm placeholder:font-medium dark:placeholder:text-muted"
           />
 
-          {/* Bottom Toolbar inside the bar */}
+          {/* ===== TOOLBAR ===== */}
+
           <div className="flex items-center justify-between px-1 pt-2 pb-1">
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 text-slate-500 rounded-full"
+                className="h-9 w-9 rounded-full"
               >
                 <Plus size={20} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 text-xs font-medium text-slate-500 rounded-full hover:bg-slate-100"
-              >
-                Focus
               </Button>
             </div>
 
             <Button
-              onClick={(): void => handleSend(query)}
+              onClick={() => handleSend(query)}
               size="icon"
-              className="h-9 w-9 rounded-full bg-slate-900 hover:bg-slate-800"
+              className="h-9 w-9 rounded-full"
             >
-              <ArrowUp size={20} className="text-white" />
+              <ArrowUp size={20} />
             </Button>
           </div>
         </div>

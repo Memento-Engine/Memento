@@ -52,11 +52,11 @@ pub struct GroupedSearchResult {
     pub window_title: String,
     pub browser_url: String,
     pub text_contents: Vec<String>,
-    pub captured_at : DateTime<Utc>,
+    pub captured_at: DateTime<Utc>,
     pub source_id: i32, // Source ID is chunk id
 }
 // Ensure your result struct can be mapped automatically
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct SearchResult {
     pub captured_at: DateTime<Utc>,
     // sqlx maps SQLite strings/ints to DateTime automatically
@@ -81,21 +81,21 @@ pub struct SearchResult {
     // pub distance: f32,
 }
 
-pub fn group_results(results: Vec<SearchResult>) -> Vec<GroupedSearchResult> {
+pub fn group_results(results: &Vec<SearchResult>) -> Vec<GroupedSearchResult> {
     let mut map: HashMap<String, GroupedSearchResult> = HashMap::new();
 
     for r in results {
         let entry = map.entry(r.image_path.clone()).or_insert_with(|| GroupedSearchResult {
-            app_name: r.app_name,
-            window_title: r.window_title,
-            browser_url: r.browser_url,
+            app_name: r.app_name.clone(),
+            window_title: r.window_title.clone(),
+            browser_url: r.browser_url.clone(),
             text_contents: Vec::new(),
             source_id: r.chunk_id,
-            captured_at : r.captured_at
+            captured_at: r.captured_at,
         });
 
         // Only push text content (multiple per image)
-        entry.text_contents.push(r.text_content);
+        entry.text_contents.push(r.text_content.clone());
     }
 
     map.into_values().collect()
@@ -435,86 +435,49 @@ impl DatabaseManager {
     }
 
     pub async fn perform_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
-        // 1. Prepare Embedding JSON
         let embedding_json = serde_json
             ::to_string(&search.embedding)
             .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
 
-        // 2. Prepare Keywords (Add Wildcards)
-        // specific keywords like "searched" might fail if exact, so we use prefixes (e.g. "search*")
         let keywords_str = search.key_words
             .as_ref()
             .map(|k| {
                 k.iter()
-                    .filter(|w| !w.trim().is_empty()) // Remove empty keywords
-                    .map(|w| format!("{}*", w)) // Add wildcard
+                    .filter(|w| !w.trim().is_empty())
+                    .map(|w| format!("\"{}\"*", w))
                     .collect::<Vec<_>>()
                     .join(" OR ")
             })
             .unwrap_or_default();
-
-        // 3. Start Query Builder with CTE
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
-            "WITH matches AS (
-            -- A. Vector Search (Relaxed Threshold)
-            SELECT 
-                chunk_id as id, 
-                vec_distance_cosine(embedding, "
+            r#"
+WITH
+
+-- 0️⃣ Metadata Filtering FIRST
+filtered_chunks AS (
+    SELECT
+        c.id,
+        c.text_content,
+        f.*
+    FROM chunks c
+    JOIN frames f ON c.frame_id = f.id
+    WHERE 1=1
+"#
         );
 
-        qb.push_bind(embedding_json);
-
-        // NOTE: We relax the threshold to 0.80.
-        // 0.65 is often too strict for short text chunks.
-        qb.push(") as distance FROM vec_chunks WHERE distance < 0.80 ");
-
-        // 4. Add Keyword Search (Union) if keywords exist
-        if !keywords_str.is_empty() {
-            qb.push(" UNION ALL ");
-            // Give FTS matches a 'better' distance (-1.0) so they sort first
-            qb.push("SELECT rowid as id, -1.0 as distance FROM chunks_fts WHERE chunks_fts MATCH ");
-            qb.push_bind(keywords_str);
-        }
-
-        qb.push(
-            ") 
-        -- 5. Main Selection
-        SELECT 
-            f.id as frame_id,
-            f.captured_at, 
-            f.app_name, 
-            f.window_title, 
-            f.process_id,
-            f.is_focused,
-            f.browser_url,
-            f.window_x,
-            f.window_y,
-            f.window_width,
-            f.window_height,
-            f.image_path,
-            c.text_content,
-            c.id as chunk_id,
-            MIN(m.distance) as best_score -- Deduplicate if found by both engines
-        FROM matches m
-        JOIN chunks c ON m.id = c.id
-        JOIN frames f ON c.frame_id = f.id
-        WHERE 1=1 "
-        );
-
-        // 6. Apply Metadata Filters (App Name)
+        // Metadata filter: App Name
         if let Some(app) = &search.app_name {
-            // We use LOWER() for case-insensitive matching
             qb.push(" AND LOWER(f.app_name) LIKE ");
             qb.push_bind(format!("%{}%", app.to_lowercase()));
         }
 
-        // 7. Apply Metadata Filters (Window Name)
+        // Metadata filter: Window Title
         if let Some(win) = &search.window_name {
             qb.push(" AND LOWER(f.window_title) LIKE ");
             qb.push_bind(format!("%{}%", win.to_lowercase()));
         }
 
-        // 8. Apply Time Range
+        // Metadata filter: Time range
         if let Some((start, end)) = search.time_range {
             qb.push(" AND datetime(f.captured_at) BETWEEN datetime(");
             qb.push_bind(start.to_rfc3339());
@@ -523,12 +486,91 @@ impl DatabaseManager {
             qb.push(") ");
         }
 
-        // 9. Order & Limit
-        // Sort by score (ascending, so -1.0 first, then 0.1, etc.)
-        // Then by time (most recent first)
-        qb.push(" GROUP BY c.id ORDER BY best_score ASC, f.captured_at DESC LIMIT 50");
+        qb.push(
+            r#"
+),
 
-        // 10. Execute
+-- 1️ Semantic Retrieval (ONLY on filtered chunks)
+vector_matches AS (
+    SELECT
+        v.chunk_id as id,
+        vec_distance_cosine(v.embedding,
+"#
+        );
+
+        qb.push_bind(embedding_json);
+
+        qb.push(
+            r#") as semantic_score
+    FROM vec_chunks v
+    JOIN filtered_chunks fc ON fc.id = v.chunk_id
+    ORDER BY semantic_score ASC
+    LIMIT 150
+),
+
+-- 2️ Keyword Retrieval (ONLY filtered)
+keyword_matches AS (
+"#
+        );
+
+        if !keywords_str.is_empty() {
+            qb.push(
+                "SELECT rowid as id, 1.0 as keyword_hit FROM chunks_fts 
+         WHERE chunks_fts MATCH "
+            );
+            qb.push_bind(keywords_str);
+            qb.push(" AND rowid IN (SELECT id FROM filtered_chunks)");
+        } else {
+            qb.push("SELECT NULL as id, 0.0 as keyword_hit WHERE 1=0");
+        }
+
+        qb.push(
+            r#"
+),
+
+combined AS (
+    SELECT id,
+           MIN(semantic_score) as semantic_score,
+           MAX(keyword_hit) as keyword_hit
+    FROM (
+        SELECT id, semantic_score, 0.0 as keyword_hit FROM vector_matches
+        UNION ALL
+        SELECT id, 0.5 as semantic_score, keyword_hit FROM keyword_matches
+    )
+    GROUP BY id
+)
+
+SELECT
+    f.id as frame_id,
+    f.captured_at,
+    f.app_name,
+    f.window_title,
+    f.process_id,
+    f.is_focused,
+    f.browser_url,
+    f.window_x,
+    f.window_y,
+    f.window_width,
+    f.window_height,
+    f.image_path,
+    c.text_content,
+    c.id as chunk_id,
+
+    (
+        (1 - semantic_score) * 0.7
+        + keyword_hit * 0.3
+        + CASE WHEN f.is_focused = 1 THEN 0.3 ELSE 0 END
+        + (1.0 / (1 + (julianday('now') - julianday(f.captured_at)))) * 0.2
+    ) as final_score
+
+FROM combined
+JOIN chunks c ON combined.id = c.id
+JOIN frames f ON c.frame_id = f.id
+
+ORDER BY final_score DESC
+LIMIT 50
+"#
+        );
         let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
 
         Ok(results)

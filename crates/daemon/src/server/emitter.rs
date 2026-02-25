@@ -22,6 +22,7 @@ impl EventEmitter {
 
         let event = CustomEvent {
             event_type,
+            // These are the real payload
             r#type,
             payload,
         };
