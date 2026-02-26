@@ -5,3 +5,4 @@ pub mod embedding;
 pub mod query;
 pub mod ui_events;
 pub mod llms;
+pub mod server;

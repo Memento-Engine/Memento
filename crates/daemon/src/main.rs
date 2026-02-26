@@ -9,7 +9,7 @@ mod llms;
 use std::sync::Arc;
 use crate::{
     cache::cache::{ ChunkCache, FramesCache },
-    embedding::engine::EmbeddingModel,
+    embedding::engine::{CrossEncoder, EmbeddingModel},
     ocr::windows::WindowsOcr,
     pipeline::{
         capture::{ CapturedWindow, continues_capture_windows },
@@ -56,6 +56,16 @@ async fn main() {
         })
     );
 
+    let cross_encoder: Arc<std::sync::Mutex<CrossEncoder>> = Arc::new(
+        std::sync::Mutex::new(match CrossEncoder::new() {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to initialize the embedding Model : {:#?}", e);
+                return;
+            }
+        })
+    );
+
     let db_path = database_dir();
     let db_path_str = match db_path.to_str() {
         Some(p) => p,
@@ -74,7 +84,8 @@ async fn main() {
     let app_db_clone = db.clone();
     let app_state = Arc::new(AppState {
         db: app_db_clone,
-        embeddingModel : embedding_engine.clone()
+        embeddingModel : embedding_engine.clone(),
+        crossEncoder : cross_encoder.clone()
     });
 
     let app_clone = app_state.clone();

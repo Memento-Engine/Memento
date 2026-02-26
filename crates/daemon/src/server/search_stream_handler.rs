@@ -2,6 +2,7 @@ use app_core::db::{ SearchQuery, group_results };
 use axum::{ extract::{ Json, State }, response::{ Sse, sse::{ Event, KeepAlive } } };
 use chrono::{ DateTime, Utc };
 use futures::stream::Stream;
+use rdev::EventType;
 use windows::Win32::NetworkManagement::NetManagement::NELOG_NetLogonFailedToInitializeAuthzRm;
 use std::{ convert::Infallible, sync::Arc, time::Duration };
 use tokio::sync::mpsc;
@@ -18,11 +19,12 @@ use crate::{
             modal_for_structured_query,
             query_rewriter_classifier_model,
         },
-        types::{ CitationPolicy, ExecutionStrategy, KnowledgeSource },
+        types::{ CitationPolicy, ExecutionStrategy, GatheredContext, KnowledgeSource, WebAction },
     },
     server::{
         app_state::AppState,
-        emitter::EventEmitter,
+        emitter::{ self, EventEmitter },
+        search_web::search_web,
         types::{
             BBox,
             ChatMessage,
@@ -75,6 +77,8 @@ pub async fn search_stream_handler(
             formatted
         };
 
+        let original_user_query = &chat_history[chat_history.len() - 1].parts[0].text;
+
         info!("user Query : {}", user_query);
 
         // --------------------------
@@ -99,8 +103,10 @@ pub async fn search_stream_handler(
         // Now wrap into Arc if needed
         let plan = Arc::new(plan);
 
-        let citation_plan = plan.clone();
+        let web_plan = plan.clone();
         let emitter_clone = emitter.clone();
+
+        let mut context = GatheredContext::default();
 
         match execution_strategy {
             ExecutionStrategy::DirectResponse => {
@@ -120,6 +126,22 @@ pub async fn search_stream_handler(
                 for knowledge_priority in sources {
                     match knowledge_priority {
                         KnowledgeSource::PersonalMemory => {
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: "Searching through your memories...".to_string(),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: "Understanding your request...".to_string(),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
                             let structured_query = match
                                 modal_for_structured_query(&search_query).await.map_err(|e|
                                     format!("ERROR: {:?}", e)
@@ -169,17 +191,9 @@ pub async fn search_stream_handler(
                                 window_name: structured_query.window_name,
                             };
 
-                            emitter_clone.send(EventTypes::Thinking, Thinking {
-                                title: format!("Searching memories..."),
-                                status: ThinkingStatus::Running,
-                                message: None,
-                                results: None,
-                                queries: None,
-                            }).await;
-                            // FIX: Map the error to a String
                             let shallow_results = match
                                 state.db
-                                    .perform_shallow_search(search_query).await
+                                    .perform_search(search_query).await
                                     .map_err(|e| format!("ERROR: {:?}", e))
                             {
                                 Ok(s) => s,
@@ -190,100 +204,122 @@ pub async fn search_stream_handler(
                                 }
                             };
 
-                            {
-                                let founded_results: Vec<StepSearchResults> = shallow_results
-                                    .iter()
-                                    .map(|f| StepSearchResults {
-                                        app_name: f.app_name.clone(),
-                                        captured_at: f.captured_at.clone(),
-                                        image_path: f.image_path.clone(),
-                                        window_name: f.window_title.clone(),
-                                    })
-                                    .collect();
+                            let emit_details = shallow_results
+                                .iter()
+                                .map(|f| StepSearchResults {
+                                    app_name: f.app_name.clone(),
+                                    captured_at: f.captured_at.clone(),
+                                    image_path: f.image_path.clone(),
+                                    window_name: f.window_title.clone(),
+                                })
+                                .collect();
 
-                                let citation_results: Vec<Citation> = shallow_results
-                                    .iter()
-                                    .map(|f| Citation {
-                                        app_name: f.app_name.clone(),
-                                        captured_at: f.captured_at.to_string(),
-                                        image_path: f.image_path.clone(),
-                                        window_name: f.window_title.clone(),
-                                        bbox: BBox {
-                                            height: f.window_height as f64,
-                                            width: f.window_width as f64,
-                                            text_ends: 0,
-                                            text_start: 0,
-                                            x: f.window_x as f64,
-                                            y: f.window_y as f64,
-                                        },
-                                        source_id: f.chunk_id as i64,
-                                        url: f.browser_url.clone(),
-                                    })
-                                    .collect();
-
-                                emitter_clone.send(EventTypes::Citations, citation_results).await;
-
-                                emitter_clone.send(EventTypes::Thinking, Thinking {
-                                    title: format!("Found {} results", shallow_results.len()),
-                                    status: ThinkingStatus::Running,
-                                    message: None,
-                                    results: Some(founded_results),
-                                    queries: None,
-                                }).await;
-                            }
-
-                            let grouped_results: Vec<app_core::db::GroupedSearchResult> =
-                                group_results(shallow_results);
-                            info!("grouped_results  : {:#?}", grouped_results);
-
-                            emitter.send(EventTypes::Thinking, Thinking {
-                                title: format!("Evaluating the sources"),
-                                status: ThinkingStatus::Running,
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Found {} relevant memories", shallow_results.len()),
                                 message: None,
-                                results: None,
                                 queries: None,
+                                results: Some(emit_details),
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            context.personal_results = shallow_results;
+
+                            let action = if context.personal_results.is_empty() {
+                                plan.web_policy.on_no_results.clone()
+                            } else {
+                                plan.web_policy.on_results_found.clone()
+                            };
+
+                            context.final_action = Some(action.clone());
+
+                            match action {
+                                WebAction::Return | WebAction::Offer => {
+                                    emitter.send(EventTypes::Thinking, Thinking {
+                                        title: "Finished".to_string(),
+                                        message: None,
+                                        queries: None,
+                                        results: None,
+                                        status: ThinkingStatus::Completed,
+                                    }).await;
+                                    // We are done gathering. Break the loop so we DON'T hit WebSearch.
+                                    break;
+                                }
+                                WebAction::Auto => {
+                                    // We need web context too. Let the loop continue to the next item!
+                                    continue;
+                                }
+                            }
+                        }
+
+                        KnowledgeSource::WebSearch => {
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Searching the Web"),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Searching for relevant information..."),
+                                message: None,
+                                queries: Some(plan.web_search_queries.clone()),
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            let web_results = match search_web(&web_plan.web_search_queries).await {
+                                Ok(w) => w,
+                                Err(e) => {
+                                    error!("Failed to make web search: {:#?}", e);
+                                    continue;
+                                }
+                            };
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Found {} relevant web results", web_results.len()),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
                             }).await;
 
                             emitter.send(EventTypes::Thinking, Thinking {
                                 title: "Finished".to_string(),
-                                status: ThinkingStatus::Completed,
                                 message: None,
-                                results: None,
                                 queries: None,
+                                results: None,
+                                status: ThinkingStatus::Completed,
                             }).await;
 
-                            // --------------------------
-                            // TOKEN STREAM CALLBACK
-                            // --------------------------
-                            let emitter_clone = emitter.clone();
-
-                            let callback = move |token: String| {
-                                let emitter = emitter_clone.clone();
-
-                                async move {
-                                    emitter.send(EventTypes::Token, MessagePart {
-                                        text: token,
-                                        r#type: "text".to_string(),
-                                    }).await;
-                                }
-                            };
-                            let _ = call_llm_streaming(
-                                &user_query,
-                                grouped_results,
-                                callback
-                            ).await;
+                            context.web_results = web_results;
                         }
 
-                        _ => {}
+                        KnowledgeSource::LLMKnowledge => {}
                     }
-
-                    break; // TODO implemenet Web search as fallback
                 }
             }
             ExecutionStrategy::DeepResearch { sources, search_query } => {
                 for knowledge_priority in sources {
                     match knowledge_priority {
                         KnowledgeSource::PersonalMemory => {
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: "Searching through your memories...".to_string(),
+
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: "Understanding your request...".to_string(),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
                             let structured_query = match
                                 modal_for_structured_query(&search_query).await.map_err(|e|
                                     format!("ERROR: {:?}", e)
@@ -333,17 +369,10 @@ pub async fn search_stream_handler(
                                 window_name: structured_query.window_name,
                             };
 
-                            emitter_clone.send(EventTypes::Thinking, Thinking {
-                                title: format!("Searching memories..."),
-                                status: ThinkingStatus::Running,
-                                message: None,
-                                results: None,
-                                queries: None,
-                            }).await;
                             // FIX: Map the error to a String
-                            let shallow_results = match
+                            let deep_results = match
                                 state.db
-                                    .perform_deep_search(search_query).await
+                                    .perform_search(search_query).await
                                     .map_err(|e| format!("ERROR: {:?}", e))
                             {
                                 Ok(s) => s,
@@ -354,8 +383,13 @@ pub async fn search_stream_handler(
                                 }
                             };
 
-                            {
-                                let founded_results: Vec<StepSearchResults> = shallow_results
+                            info!(
+                                "Deep search results before cross encoding : {:#?}",
+                                deep_results
+                            );
+
+                            if !deep_results.is_empty() {
+                                let emit_details = deep_results
                                     .iter()
                                     .map(|f| StepSearchResults {
                                         app_name: f.app_name.clone(),
@@ -365,87 +399,200 @@ pub async fn search_stream_handler(
                                     })
                                     .collect();
 
-                                let citation_results: Vec<Citation> = shallow_results
-                                    .iter()
-                                    .map(|f| Citation {
-                                        app_name: f.app_name.clone(),
-                                        captured_at: f.captured_at.to_string(),
-                                        image_path: f.image_path.clone(),
-                                        window_name: f.window_title.clone(),
-                                        bbox: BBox {
-                                            height: f.window_height as f64,
-                                            width: f.window_width as f64,
-                                            text_ends: 0,
-                                            text_start: 0,
-                                            x: f.window_x as f64,
-                                            y: f.window_y as f64,
-                                        },
-                                        source_id: f.chunk_id as i64,
-                                        url: f.browser_url.clone(),
-                                    })
-                                    .collect();
-
-                                emitter_clone.send(EventTypes::Citations, citation_results).await;
-
                                 emitter_clone.send(EventTypes::Thinking, Thinking {
-                                    title: format!("Found {} results", shallow_results.len()),
-                                    status: ThinkingStatus::Running,
+                                    title: format!(
+                                        "Found {} relevant memories",
+                                        deep_results.len()
+                                    ),
+
                                     message: None,
-                                    results: Some(founded_results),
                                     queries: None,
+                                    results: Some(emit_details),
+                                    status: ThinkingStatus::Running,
                                 }).await;
                             }
 
-                            let grouped_results: Vec<app_core::db::GroupedSearchResult> =
-                                group_results(shallow_results);
-                            info!("grouped_results  : {:#?}", grouped_results);
+                            // Step 1 — collect text content WITHOUT moving deep_results
+                            let text_data: Vec<String> = deep_results
+                                .iter()
+                                .map(|f| f.text_content.clone())
+                                .collect();
 
-                            emitter.send(EventTypes::Thinking, Thinking {
-                                title: format!("Evaluating the sources"),
-                                status: ThinkingStatus::Running,
+                            // Cross Encoding
+                            info!("Running cross encode");
+                            let cross_encoder = state.crossEncoder.clone();
+                            let query_clone = original_user_query.clone();
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Evaluating Search Results"),
                                 message: None,
-                                results: None,
                                 queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            let scores: Vec<f32> = tokio::task
+                                ::spawn_blocking(move || {
+                                    let mut encoder = cross_encoder.lock().unwrap();
+
+                                    let text_refs: Vec<&str> = text_data
+                                        .iter()
+                                        .map(String::as_str)
+                                        .collect();
+
+                                    encoder.score_batch(&query_clone, &text_refs)
+                                }).await
+                                .unwrap()
+                                .unwrap();
+
+                            // Safety check
+                            assert_eq!(deep_results.len(), scores.len());
+
+                            // Step 2 — pair results with scores
+                            let mut paired: Vec<_> = deep_results
+                                .into_iter()
+                                .zip(scores.into_iter())
+                                .collect();
+
+                            // Step 3 — sort by score DESC
+                            paired.sort_by(|a, b| { b.1.partial_cmp(&a.1).unwrap() });
+
+                            // Step 4 — take Top-K
+                            let top_k = 5;
+
+                            let filtered_results: Vec<_> = paired
+                                .into_iter()
+                                .take(top_k)
+                                .map(|(res, _)| res)
+                                .collect();
+
+                            info!(
+                                "Deep search results after cross encoding : {:#?}",
+                                filtered_results
+                            );
+
+                            if !filtered_results.is_empty() {
+                                let emit_details_filtered = filtered_results
+                                    .iter()
+                                    .map(|f| StepSearchResults {
+                                        app_name: f.app_name.clone(),
+                                        captured_at: f.captured_at.clone(),
+                                        image_path: f.image_path.clone(),
+                                        window_name: f.window_title.clone(),
+                                    })
+                                    .collect();
+
+                                emitter_clone.send(EventTypes::Thinking, Thinking {
+                                    title: format!(
+                                        "Found {} Personal Search Results",
+                                        filtered_results.len()
+                                    ),
+                                    message: None,
+                                    queries: None,
+                                    results: Some(emit_details_filtered),
+                                    status: ThinkingStatus::Running,
+                                }).await;
+                            }
+
+                            // Save
+                            context.personal_results = filtered_results;
+
+                            let action = if context.personal_results.is_empty() {
+                                plan.web_policy.on_no_results.clone()
+                            } else {
+                                plan.web_policy.on_results_found.clone()
+                            };
+
+                            context.final_action = Some(action.clone());
+
+                            match action {
+                                WebAction::Return | WebAction::Offer => {
+                                    emitter.send(EventTypes::Thinking, Thinking {
+                                        title: "Finished".to_string(),
+                                        message: None,
+                                        queries: None,
+                                        results: None,
+                                        status: ThinkingStatus::Completed,
+                                    }).await;
+                                    // We are done gathering. Break the loop so we DON'T hit WebSearch.
+                                    break;
+                                }
+                                WebAction::Auto => {
+                                    // We need web context too. Let the loop continue to the next item!
+                                    continue;
+                                }
+                            }
+                        }
+
+                        KnowledgeSource::WebSearch => {
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Searching the Web"),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Searching"),
+                                message: None,
+                                queries: Some(plan.web_search_queries.clone()),
+                                results: None,
+                                status: ThinkingStatus::Running,
+                            }).await;
+                            let web_results: Vec<crate::server::search_web::TavilyResponse> = match
+                                search_web(&web_plan.web_search_queries).await
+                            {
+                                Ok(w) => w,
+                                Err(e) => {
+                                    error!("Failed to make web search: {:#?}", e);
+                                    continue;
+                                }
+                            };
+
+                            emitter_clone.send(EventTypes::Thinking, Thinking {
+                                title: format!("Found {} Web results", web_results.len()),
+                                message: None,
+                                queries: None,
+                                results: None,
+                                status: ThinkingStatus::Running,
                             }).await;
 
                             emitter.send(EventTypes::Thinking, Thinking {
                                 title: "Finished".to_string(),
-                                status: ThinkingStatus::Completed,
                                 message: None,
-                                results: None,
                                 queries: None,
+                                results: None,
+                                status: ThinkingStatus::Completed,
                             }).await;
 
-                            // --------------------------
-                            // TOKEN STREAM CALLBACK
-                            // --------------------------
-                            let emitter_clone = emitter.clone();
-
-                            let callback = move |token: String| {
-                                let emitter = emitter_clone.clone();
-
-                                async move {
-                                    emitter.send(EventTypes::Token, MessagePart {
-                                        text: token,
-                                        r#type: "text".to_string(),
-                                    }).await;
-                                }
-                            };
-                            let _ = call_llm_streaming(
-                                &user_query,
-                                grouped_results,
-                                callback
-                            ).await;
-                        
+                            context.web_results = web_results;
+                            context.final_action = Some(WebAction::Auto);
                         }
 
-                        _ => {}
+                        KnowledgeSource::LLMKnowledge => {}
                     }
-
-                    break; // TODO implemenet Web search as fallback
                 }
             }
         }
+
+        info!("Final GatheredContext: {:#?}", context);
+
+        let token_emitter_clone = emitter.clone();
+        let callback = move |token: String| {
+            let emitter = token_emitter_clone.clone();
+
+            async move {
+                emitter.send(EventTypes::Token, MessagePart {
+                    text: token,
+                    r#type: "text".to_string(),
+                }).await;
+            }
+        };
+
+        let _ = call_llm_streaming(&user_query, context, callback).await;
+
+        emitter.send(EventTypes::Done, "").await;
     });
 
     let stream = ReceiverStream::new(rx).map(|event_json| {

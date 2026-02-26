@@ -1,4 +1,7 @@
+use app_core::db::SearchResult;
 use serde::{ Deserialize, Serialize };
+
+use crate::server::search_web::{TavilyResponse, WebSearchResult};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum KnowledgeSource {
@@ -104,4 +107,12 @@ pub enum ExecutionStrategy {
         sources: Vec<KnowledgeSource>, // All sources that will be actively scraped/queried
         search_query: String, // e.g., ["Fetch past 7 days of VS Code logs", "Cross-reference with Web"]
     },
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct GatheredContext {
+    pub personal_results: Vec<SearchResult>,
+    pub web_results: Vec<TavilyResponse>,
+    // We can also store the final decided action here to pass to the LLM
+    pub final_action: Option<WebAction>,
 }

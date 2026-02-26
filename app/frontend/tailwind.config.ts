@@ -9,11 +9,7 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        mono: ['var(--font-jetbrains-mono)'],
-        // This maps 'font-sans' to your Inter variable
-        sans: ["var(--font-inter)", "ui-sans-serif", "system-ui"],
-        // This creates 'font-display' for Studio Feixen
-        display: ["var(--font-feixen)", "sans-serif"],
+        sans: ["var(--font-geist)"],
       },
     },
   },
