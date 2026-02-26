@@ -16,8 +16,9 @@ import { redirect } from "next/navigation";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { SettingsDialog } from "../settingsDialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
+import { useBreakpoint } from "@/hooks/useBreakpoints";
 
 const techTopics: string[] = [
   "What are microservices?",
@@ -27,6 +28,7 @@ const techTopics: string[] = [
 
 function LeftSidebar(): React.ReactElement {
   const { toggleSidebar, state, isMobile } = useSidebar();
+  const { isMd } = useBreakpoint();
   const [isSettingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [isMobileOpen, setMobileOpen] = useState(false);
   const isCollapsed = state === "collapsed";
@@ -56,7 +58,7 @@ function LeftSidebar(): React.ReactElement {
             <PanelLeft
               onClick={(): void => {
                 console.log("Panel left clicked");
-                if (isMobile) {
+                if (isMobile || isMd) {
                   setMobileOpen(!isMobileOpen);
                 } else {
                   toggleSidebar();
@@ -157,7 +159,11 @@ function LeftSidebar(): React.ReactElement {
     </>
   );
 
-  if (isMobile) {
+  useEffect((): void => {
+    console.log("Is Mid Screen: ", isMd);
+  }, [isMd]);
+
+  if (isMobile || isMd) {
     return (
       <div className="relative">
         <div className="absolute top-6 left-6">

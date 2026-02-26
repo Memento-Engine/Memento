@@ -23,7 +23,7 @@ export default function ParticleBackground() {
     let particles: Particle[] = [];
     let isDark = document.documentElement.classList.contains("dark");
 
-    // 🎨 Theme colors
+    // Theme colors
     const getColors = () => {
       if (isDark) {
         // KEEP YOUR CURRENT DARK COLORS
@@ -33,7 +33,7 @@ export default function ParticleBackground() {
         };
       }
 
-      // 🌞 LIGHT THEME COLORS (new)
+      // LIGHT THEME COLORS (new)
       return {
         particle: "rgba(60,60,60,0.55)", // darker + visible
         line: (opacity: number) => `rgba(80,80,80,${opacity * 0.25})`, // stronger connections
@@ -41,8 +41,20 @@ export default function ParticleBackground() {
     };
 
     const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      const oldWidth = canvas.width;
+      const oldHeight = canvas.height;
+
+      const newWidth = window.innerWidth;
+      const newHeight = window.innerHeight;
+
+      canvas.width = newWidth;
+      canvas.height = newHeight;
+
+      // scale existing particle positions
+      particles.forEach((p) => {
+        p.x = (p.x / oldWidth) * newWidth;
+        p.y = (p.y / oldHeight) * newHeight;
+      });
     };
 
     resize();
@@ -104,7 +116,7 @@ export default function ParticleBackground() {
       requestAnimationFrame(draw);
     };
 
-    // 👀 Watch for theme changes (next-themes / tailwind)
+    // Watch for theme changes (next-themes / tailwind)
     const observer = new MutationObserver(() => {
       isDark = document.documentElement.classList.contains("dark");
     });
