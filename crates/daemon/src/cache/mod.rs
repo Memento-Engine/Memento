@@ -1,2 +1,3 @@
-pub mod phash;
 pub mod cache;
+
+pub mod ocr_cache;

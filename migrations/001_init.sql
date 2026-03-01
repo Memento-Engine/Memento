@@ -7,22 +7,36 @@ CREATE TABLE IF NOT EXISTS frames (
 
     app_name TEXT NOT NULL,
     window_title TEXT,
-    process_id INTEGER,
     is_focused BOOLEAN,
     browser_url TEXT,
 
+    -- These represents the window dimensions
     window_x INTEGER,
     window_y INTEGER,
     window_width INTEGER,
     window_height INTEGER,
 
-    image_path TEXT,
-    p_hash INTEGER
+    -- Monitor dimensions to answers the dimension related queries (e.g: what was the text on my top left corner?)
+    monitor_height INTEGER,  
+    monitor_width INTEGER,
+
+    image_path TEXT
 );
 
 
 CREATE INDEX IF NOT EXISTS idx_frames_created_at ON frames(captured_at);
 CREATE INDEX IF NOT EXISTS idx_frames_app_name ON frames(app_name);
+
+-- Timeline table to prevent being stored same frames multiple times
+CREATE TABLE IF NOT EXISTS timelines (
+    id INTEGER PRIMARY KEY,
+    frame_id INTEGER NOT NULL,
+    timestamp INTEGER,
+    
+    FOREIGN KEY (frame_id)
+        REFERENCES frames(id)
+        ON DELETE CASCADE
+);
 
 -- ==========================================
 -- 2. CHUNKS (The Structured Memory)
@@ -32,30 +46,13 @@ CREATE TABLE IF NOT EXISTS chunks (
     frame_id INTEGER NOT NULL,
     
     text_content TEXT NOT NULL,    -- The clean text block
-    role TEXT NOT NULL,            -- 'content', 'meta', 'code', 'error'
-    
-    -- The "Visual" Link
-    bbox TEXT,                     -- JSON: {"x": 100, "y": 200, "w": 500, "h": 50}
-    text_hash INTEGER,
+    text_json TEXT NOT NULL,    
 
     FOREIGN KEY(frame_id) REFERENCES frames(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_frame_id ON chunks(frame_id);
 
--- ==========================================
--- 2. Occurances 
--- ==========================================
-CREATE TABLE IF NOT EXISTS occurances (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    frame_id INTEGER NOT NULL, -- Frame id could be differnent than chunk id because image taken from somewhere
-    chunk_id INTEGER NOT NULL,
-    
-    -- The "Visual" Link
-    bbox TEXT,                     -- JSON: {"x": 100, "y": 200, "w": 500, "h": 50}
-    
-    FOREIGN KEY(frame_id) REFERENCES frames(id) ON DELETE CASCADE
-);
 
 
 -- ==========================================

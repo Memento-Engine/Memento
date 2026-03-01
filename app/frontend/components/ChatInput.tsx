@@ -10,15 +10,14 @@ import {
 } from "lucide-react";
 import { AutosizeTextarea } from "./ChatHome"; // Ensure this path is correct
 import { Button } from "./ui/button";
-import { useState } from "react";
-import { useTypewriter } from "@/hooks/useTypeWriter";
+import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 
 export interface ChatInputProps {
   handleSend: (query: string) => void;
 }
 
-export default function ChatInput({
+function ChatInput({
   handleSend,
 }: ChatInputProps): React.ReactElement {
   const [query, setQuery] = useState<string>("");
@@ -41,7 +40,8 @@ export default function ChatInput({
               setQuery("");
             }
           }}
-          onClick={(): void => {
+          onClick={(e): void => {
+            e.preventDefault();
             const message = query; // snapshot
             handleSend(message);
             setQuery("");
@@ -77,3 +77,6 @@ export default function ChatInput({
     </div>
   );
 }
+
+
+export default React.memo(ChatInput);

@@ -50,20 +50,29 @@ pub async fn query_rewriter_classifier_model(
 
     let json_response: serde_json::Value = response.json().await?;
 
-    let raw_response = json_response["choices"][0]["message"]["content"]
-        .as_str()
-        .expect("Missing Content");
+    let raw_response = json_response
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str());
 
-    let clean_json = if
-        let (Some(start), Some(end)) = (raw_response.find('{'), raw_response.rfind('}'))
-    {
+    let res = match raw_response {
+        Some(content) => content,
+        None => {
+            tracing::error!("Full response: {:#?}", json_response);
+            return Err("Missing content in LLM response".into());
+        }
+    };
+
+    let clean_json = if let (Some(start), Some(end)) = (res.find('{'), res.rfind('}')) {
         if start <= end {
-            &raw_response[start..=end]
+            &res[start..=end]
         } else {
-            &raw_response // fallback just in case
+            &res // fallback just in case
         }
     } else {
-        &raw_response // fallback if no brackets found
+        &res // fallback if no brackets found
     };
 
     let plan: ExecutionPlan = serde_json::from_str(clean_json)?;

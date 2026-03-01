@@ -596,6 +596,8 @@ pub async fn search_stream_handler(
     });
 
     let stream = ReceiverStream::new(rx).map(|event_json| {
+        info!("Event JSon : {:#?}", event_json);
+
         let mut parsed: Value = serde_json::from_str(&event_json).unwrap();
 
         // SSE event name

@@ -123,7 +123,9 @@ function AppearanceTab() {
     <Card className="border shadow-sm">
       <CardHeader>
         <CardTitle className="text-md">Theme</CardTitle>
-        <CardDescription className="text-sm">Select the theme for the dashboard.</CardDescription>
+        <CardDescription className="text-sm">
+          Select the theme for the dashboard.
+        </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-6">
@@ -217,67 +219,9 @@ function DataTab() {
   );
 }
 
-function PrivacyTab() {
-  const [settings, setSettings] = useState({
-    analytics: true,
-    ads: false,
-    history: true,
-  });
-  return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-base font-semibold tracking-tight">Privacy</h3>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Control what data you share and how it's used.
-        </p>
-      </div>
-      <div className="divide-y rounded-xl border overflow-hidden">
-        {[
-          {
-            key: "analytics" as const,
-            label: "Usage Analytics",
-            desc: "Help improve the app by sharing usage data",
-          },
-          {
-            key: "ads" as const,
-            label: "Personalized Ads",
-            desc: "Show ads tailored to your interests",
-          },
-          {
-            key: "history" as const,
-            label: "Activity History",
-            desc: "Save your activity for a better experience",
-          },
-        ].map(({ key, label, desc }) => (
-          <div
-            key={key}
-            className="flex items-center justify-between px-4 py-3 bg-background"
-          >
-            <div>
-              <p className="text-sm font-medium">{label}</p>
-              <p className="text-xs text-muted-foreground">{desc}</p>
-            </div>
-            <button
-              onClick={() => setSettings((s) => ({ ...s, [key]: !s[key] }))}
-              className={cn(
-                "w-10 h-5.5 rounded-full relative transition-colors",
-                settings[key] ? "bg-primary" : "bg-muted",
-              )}
-              style={{ height: "22px", minWidth: "40px" }}
-            >
-              <span
-                className={cn(
-                  "absolute top-0.5 left-0.5 w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform",
-                  settings[key] && "translate-x-[18px]",
-                )}
-              />
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+
+import PrivacySettings from "./settings/PrivacyTab";
+
 
 function SystemTab() {
   return (
@@ -307,7 +251,7 @@ const tabContent: Record<SettingsTabs, React.ReactNode> = {
   [SettingsTabs.Profile]: <ProfileTab />,
   [SettingsTabs.Appearance]: <AppearanceTab />,
   [SettingsTabs.DataAndStorage]: <DataTab />,
-  [SettingsTabs.Privacy]: <PrivacyTab />,
+  [SettingsTabs.Privacy]: <PrivacySettings />,
   [SettingsTabs.BackgroundService]: <SystemTab />,
 };
 

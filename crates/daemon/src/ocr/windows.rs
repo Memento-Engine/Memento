@@ -1,216 +1,138 @@
-use super::engine::OcrEngine; // YOUR trait
+use std::collections::HashMap;
 
-use serde::Serialize;
-use windows::Media::Ocr::OcrEngine as WindowsOcrEngine; // Windows API
-use windows::Graphics::Imaging::{ BitmapDecoder };
-use windows::Storage::Streams::{ DataWriter, InMemoryRandomAccessStream };
-use async_trait::async_trait;
-
+use anyhow::Result;
+use image::{ DynamicImage, GenericImageView };
 use tracing::{ info };
 
-use image::DynamicImage;
-use std::io::Cursor;
 
-pub struct WindowsOcr {
-    engine: WindowsOcrEngine,
+use serde::{Deserialize, Deserializer, Serialize};
+
+fn deserialize_f32_from_string<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse::<f32>().map_err(serde::de::Error::custom)
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct OcrWord {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OcrBbox {
     pub text: String,
-    pub x: f32,
-    pub y: f32,
+    
+    #[serde(deserialize_with = "deserialize_f32_from_string")]
+    pub left: f32,
+    
+    #[serde(deserialize_with = "deserialize_f32_from_string")]
+    pub top: f32,
+    
+    #[serde(deserialize_with = "deserialize_f32_from_string")]
     pub width: f32,
+    
+    #[serde(deserialize_with = "deserialize_f32_from_string")]
     pub height: f32,
+    
+    #[serde(deserialize_with = "deserialize_f32_from_string")]
+    pub conf: f32,
 }
 
-impl OcrWord {
-   pub  fn is_within_x_range(&self, min_x: usize, max_x: usize) -> bool {
-        let center_x = self.x + self.width / 2.0;
-        center_x >= (min_x as f32) && center_x <= (max_x as f32)
+impl TryFrom<HashMap<String, String>> for OcrBbox {
+    type Error = anyhow::Error;
+
+    fn try_from(map: HashMap<String, String>) -> Result<Self, Self::Error> {
+        Ok(OcrBbox {
+            text: map.get("text").ok_or(anyhow::anyhow!("missing text"))?.clone(),
+            left: map.get("left").ok_or(anyhow::anyhow!("missing left"))?.parse()?,
+            top: map.get("top").ok_or(anyhow::anyhow!("missing top"))?.parse()?,
+            width: map.get("width").ok_or(anyhow::anyhow!("missing width"))?.parse()?,
+            height: map.get("height").ok_or(anyhow::anyhow!("missing height"))?.parse()?,
+            conf: map.get("conf").ok_or(anyhow::anyhow!("missing conf"))?.parse()?,
+        })
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct OcrLine {
-    pub text: String,
-    pub words: Vec<OcrWord>,
-}
 
-#[derive(Debug, Serialize)]
-pub struct OcrResultData {
-    pub full_text: String,
-    pub lines: Vec<OcrLine>,
-}
+#[cfg(target_os = "windows")]
+pub async fn perform_ocr_windows(image: &DynamicImage) -> Result<(String, String, Option<f64>)> {
+    use std::io::Cursor;
+    use windows::{
+        Graphics::Imaging::BitmapDecoder,
+        Media::Ocr::OcrEngine as WindowsOcrEngine,
+        Storage::Streams::{ DataWriter, InMemoryRandomAccessStream },
+    };
 
-fn empty_result() -> OcrResultData {
-    OcrResultData {
-        full_text: String::new(),
-        lines: vec![],
+    // Validate dimensions
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        return Ok(("".to_string(), "[]".to_string(), None));
     }
-}
 
-impl WindowsOcr {
-    pub fn new() -> Self {
-        let engine = WindowsOcrEngine::TryCreateFromUserProfileLanguages().expect(
-            "Failed to create OCR engine"
-        );
+    // Encode image as PNG into memory
+    let mut buffer = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::Png)
+        .map_err(|e| anyhow::anyhow!("Failed to encode image: {}", e))?;
 
-        Self { engine }
+    // Create WinRT memory stream
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream)?;
+
+    writer.WriteBytes(&buffer)?;
+
+    // REPLACED .get() WITH .await
+    writer.StoreAsync()?.await?;
+    writer.FlushAsync()?.await?;
+
+    stream.Seek(0)?;
+
+    // Decode PNG into SoftwareBitmap
+    let decoder = BitmapDecoder::CreateWithIdAsync(BitmapDecoder::PngDecoderId()?, &stream)?.await?;
+
+    let bitmap = decoder.GetSoftwareBitmapAsync()?.await?;
+
+    // Create OCR engine
+    let engine = WindowsOcrEngine::TryCreateFromUserProfileLanguages()?;
+
+    let result = engine.RecognizeAsync(&bitmap)?.await?;
+
+    let mut full_text = String::new();
+    let mut ocr_results: Vec<serde_json::Value> = Vec::new();
+
+    let lines = result.Lines()?;
+    for line in lines {
+        let words = line.Words()?;
+        for word in words {
+            let text = word.Text()?;
+            let text_str = text.to_string();
+
+            if !text_str.is_empty() {
+                if !full_text.is_empty() {
+                    full_text.push(' ');
+                }
+                full_text.push_str(&text_str);
+
+                let rect = word.BoundingRect()?;
+
+                ocr_results.push(
+                    serde_json::json!({
+                    "text": text_str,
+                    "left": rect.X.to_string(),
+                    "top": rect.Y.to_string(),
+                    "width": rect.Width.to_string(),
+                    "height": rect.Height.to_string(),
+                    "conf": "1.0"  // Windows OCR doesn't provide word-level confidence
+                })
+                );
+            }
+        }
     }
-}
 
-#[async_trait]
-impl OcrEngine for WindowsOcr {
-    async fn process(&self, image: &DynamicImage) -> OcrResultData {
-        let engine = &self.engine;
-
-        let mut cursor = Cursor::new(Vec::new());
-
-        if let Err(e) = image.write_to(&mut cursor, image::ImageFormat::Png) {
-            eprintln!("Image encoding failed: {:?}", e);
-            return empty_result();
-        }
-
-        let stream = match InMemoryRandomAccessStream::new() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Stream creation failed: {:?}", e);
-                return empty_result();
-            }
-        };
-
-        let writer = match DataWriter::CreateDataWriter(&stream) {
-            Ok(w) => w,
-            Err(e) => {
-                eprintln!("DataWriter creation failed: {:?}", e);
-                return empty_result();
-            }
-        };
-
-        if let Err(e) = writer.WriteBytes(&cursor.into_inner()) {
-            eprintln!("WriteBytes failed: {:?}", e);
-            return empty_result();
-        }
-
-        if let Err(e) = writer.StoreAsync() {
-            eprintln!("StoreAsync creation failed: {:?}", e);
-            return empty_result();
-        }
-
-        if let Err(e) = writer.FlushAsync() {
-            eprintln!("FlushAsync creation failed: {:?}", e);
-            return empty_result();
-        }
-
-        if let Err(e) = stream.Seek(0) {
-            eprintln!("Stream seek failed: {:?}", e);
-            return empty_result();
-        }
-
-        let decoder = match BitmapDecoder::CreateAsync(&stream) {
-            Ok(d) =>
-                match d.await {
-                    Ok(dec) => dec,
-                    Err(e) => {
-                        eprintln!("Decoder await failed: {:?}", e);
-                        return empty_result();
-                    }
-                }
-            Err(e) => {
-                eprintln!("Decoder creation failed: {:?}", e);
-                return empty_result();
-            }
-        };
-
-        let bitmap = match decoder.GetSoftwareBitmapAsync() {
-            Ok(b) =>
-                match b.await {
-                    Ok(bm) => bm,
-                    Err(e) => {
-                        eprintln!("Bitmap await failed: {:?}", e);
-                        return empty_result();
-                    }
-                }
-            Err(e) => {
-                eprintln!("Bitmap request failed: {:?}", e);
-                return empty_result();
-            }
-        };
-
-        let result = match engine.RecognizeAsync(&bitmap) {
-            Ok(r) =>
-                match r.await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        eprintln!("OCR await failed: {:?}", e);
-                        return empty_result();
-                    }
-                }
-            Err(e) => {
-                eprintln!("OCR request failed: {:?}", e);
-                return empty_result();
-            }
-        };
-
-        let mut result_lines: Vec<OcrLine> = Vec::new();
-        let mut full_text: String = String::new();
-
-        if let Ok(lines) = result.Lines() {
-            for line in lines {
-                let line_text = line
-                    .Text()
-                    .ok()
-                    .map(|t| t.to_string_lossy())
-                    .unwrap_or_default();
-
-                full_text.push_str(&line_text);
-                full_text.push('\n');
-
-                let mut words_vec = Vec::new();
-
-                if let Ok(words) = line.Words() {
-                    for word in words {
-                        let text: String = word
-                            .Text()
-                            .ok()
-                            .map(|t| t.to_string_lossy())
-                            .unwrap_or_default();
-
-                        let rect = word.BoundingRect().ok();
-
-                        words_vec.push(OcrWord {
-                            text,
-                            x: rect
-                                .as_ref()
-                                .map(|r| r.X)
-                                .unwrap_or(0.0),
-                            y: rect
-                                .as_ref()
-                                .map(|r| r.Y)
-                                .unwrap_or(0.0),
-                            width: rect
-                                .as_ref()
-                                .map(|r| r.Width)
-                                .unwrap_or(0.0),
-                            height: rect
-                                .as_ref()
-                                .map(|r| r.Height)
-                                .unwrap_or(0.0),
-                        });
-                    }
-                }
-
-                result_lines.push(OcrLine {
-                    text: line_text,
-                    words: words_vec,
-                });
-            }
-        }
-
-        return OcrResultData {
-            full_text,
-            lines: result_lines,
-        };
+    if full_text.is_empty() {
+        full_text = result.Text()?.to_string();
     }
+
+    let json_output = serde_json::to_string(&ocr_results).unwrap_or_else(|_| "[]".to_string());
+
+    info!("JSON OUTPUT directly from windows native Code : {:#?}", json_output);
+
+    Ok((full_text, json_output, Some(1.0)))
 }

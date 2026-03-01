@@ -6,12 +6,12 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import ReferenceProvider from "@/providers/ReferenceProvider";
 import RightSidebar from "@/components/layout/Rightbar";
 import useReferenceContext from "@/hooks/useReferenceContext";
-
 import KeyboardProvider from "@/providers/KeyboardProvider";
 import ChatProvider from "@/providers/ChatProvider";
 import LeftSidebar from "@/components/layout/Sidebar";
 import { GeistSans } from "geist/font/sans";
-import ParticleBackground from "@/components/ParticleBackground";
+import { Toaster } from "sonner";
+import DraggableCaptureAgent from "@/components/DraggableCaptureAgent";
 
 export default function RootLayout({
   children,
@@ -24,9 +24,17 @@ export default function RootLayout({
       className={`${GeistSans.className} ${GeistSans.variable} antialiased`}
     >
       <body className="bg-background text-foreground">
+        <Toaster
+          position="bottom-right"
+          toastOptions={{
+            className: "rounded-xl border text-sm font-medium shadow-lg",
+          }}
+        />
+
         <ChatProvider>
           <ReferenceProvider>
             <LayoutContent>{children}</LayoutContent>
+            <DraggableCaptureAgent />
           </ReferenceProvider>
         </ChatProvider>
       </body>

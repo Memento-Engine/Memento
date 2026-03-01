@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect } from "react";
+import React, { useCallback } from "react";
 import { Bot } from "lucide-react";
 import ChatInput from "./ChatInput";
 import {
@@ -9,20 +9,14 @@ import {
 } from "./conversation";
 import MessageItem from "./MessageItem";
 import useChatContext from "@/hooks/useChatContext";
-import { StepThinking } from "./StepThinking";
 
-export default function Thread(): React.ReactElement {
+function Thread(): React.ReactElement {
   const { messages, sendMessage } = useChatContext();
 
-  const handleSend = async (query: string) => {
+  const handleSend = useCallback(async (query: string) => {
     if (!query.trim()) return;
-    console.log("got query fromhandle send", query);
     await sendMessage(query);
-  };
-
-  useEffect((): void => {
-    console.log("Messages : ", messages);
-  }, [messages]);
+  }, []);
 
   return (
     <div className="flex flex-col w-full h-full bg-base overflow-hidden">
@@ -65,3 +59,5 @@ export default function Thread(): React.ReactElement {
     </div>
   );
 }
+
+export default React.memo(Thread);
