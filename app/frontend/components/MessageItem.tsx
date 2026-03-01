@@ -39,7 +39,7 @@ import useChatContext from "@/hooks/useChatContext";
 import MementoBreathing from "./MementoBreathing";
 import ThinkingBubble from "./ThinkingBubble";
 
-export default function MessageItem({
+function MessageItem({
   message,
   isFirstMessage,
   isLastMessage,
@@ -52,7 +52,11 @@ export default function MessageItem({
   showAssistant,
 }: MessageItemProps): React.ReactElement {
   const { assistantStatus } = useChatContext();
-  const isStreaming: boolean = isLastMessage && assistantStatus == "Streaming";
+  const isStreaming: boolean = isLastMessage && (
+    assistantStatus == "LocalPending" || 
+    assistantStatus == "Thinking" || 
+      assistantStatus == "Streaming" 
+  );
 
   const citationMap = new Map<number, Citation>();
   for (const part of message.parts) {
@@ -237,9 +241,7 @@ export default function MessageItem({
             <div
               className={cn(
                 "flex items-center gap-1",
-                (assistantStatus === "LocalPending" ||
-                  assistantStatus === "Thinking" ||
-                  assistantStatus === "Streaming") &&
+              isStreaming &&
                   "hidden",
               )}
             >
@@ -263,3 +265,18 @@ export default function MessageItem({
     </>
   );
 }
+
+export default React.memo(MessageItem, (prevProps, nextProps) => {
+  // Always re-render if streaming and this is the last message
+  if (nextProps.isLastMessage){
+    return false;
+  }
+
+  return (
+    prevProps.message === nextProps.message &&
+    prevProps.isFirstMessage === nextProps.isFirstMessage &&
+    // prevProps.isLastMessage === nextProps.isLastMessage &&
+    prevProps.status === nextProps.status &&
+    prevProps.showAssistant === nextProps.showAssistant
+  );
+});

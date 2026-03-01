@@ -122,7 +122,7 @@ export default function ChatHome({
             }}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`${placeholder}|`}
-            className="text-lg py-2 px-3 dark:bg-[#0a0a0a] placeholder:text-sm placeholder:font-medium dark:placeholder:text-muted"
+            className="text-base py-2 px-3 dark:bg-[#0a0a0a] placeholder:text-sm dark:placeholder:text-muted"
           />
 
           {/* ===== TOOLBAR ===== */}
