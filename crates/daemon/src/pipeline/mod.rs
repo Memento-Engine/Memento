@@ -1,4 +1,3 @@
 pub mod capture;
-
-pub mod memory_process;
-pub mod ocr_processing;
+pub mod monitor;
+pub mod processing_ocr_results;

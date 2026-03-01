@@ -20,6 +20,10 @@ impl EmbeddingModel {
         // Return first embedding
         Ok(embeddings[0].clone())
     }
+    
+    pub fn generate_batch_embeddings(&mut self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.model.embed(texts, None)
+    }
 }
 
 use fastembed::{ TextRerank, RerankerModel, RerankInitOptions };
@@ -31,7 +35,9 @@ pub struct CrossEncoder {
 impl CrossEncoder {
     pub fn new() -> Result<Self> {
         println!("Loading reranker V2M3");
-        let model = TextRerank::try_new(RerankInitOptions::new(RerankerModel::JINARerankerV1TurboEn))?;
+        let model = TextRerank::try_new(
+            RerankInitOptions::new(RerankerModel::JINARerankerV1TurboEn)
+        )?;
 
         Ok(Self { model })
     }

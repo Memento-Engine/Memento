@@ -1,4 +1,5 @@
 use chrono::{ DateTime, Utc };
+use image::DynamicImage;
 use sqlx::migrate::MigrateDatabase;
 use sqlx::sqlite::{ SqliteConnectOptions, SqlitePool, SqlitePoolOptions };
 use std::time::Duration;
@@ -10,6 +11,67 @@ use sqlx::{ QueryBuilder, Sqlite, Result, FromRow };
 use serde::{ Serialize, Deserialize };
 use std::fmt::Debug;
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Rect {
+    /// Check if two rectangles overlap (share any area)
+    pub fn overlaps(&self, other: &Rect) -> bool {
+        let self_right = self.x + (self.width as i32);
+        let self_bottom = self.y + (self.height as i32);
+        let other_right = other.x + (other.width as i32);
+        let other_bottom = other.y + (other.height as i32);
+
+        self.x < other_right &&
+            self_right > other.x &&
+            self.y < other_bottom &&
+            self_bottom > other.y
+    }
+
+    /// Compute the intersection area between two rectangles (0 if no overlap)
+    pub fn intersection_area(&self, other: &Rect) -> u64 {
+        let self_right = self.x + (self.width as i32);
+        let self_bottom = self.y + (self.height as i32);
+        let other_right = other.x + (other.width as i32);
+        let other_bottom = other.y + (other.height as i32);
+
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = self_right.min(other_right);
+        let bottom = self_bottom.min(other_bottom);
+
+        if right > left && bottom > top {
+            ((right - left) as u64) * ((bottom - top) as u64)
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunkBlock {
+    pub text: String,
+    pub text_json: String,
+    pub text_embeddings: Vec<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessedOcrResult {
+    pub window_name: String,
+    pub app_name: String,
+    pub text_blocks: Vec<ChunkBlock>,
+    pub focused: bool,
+    pub confidence: f64,
+    pub browser_url: Option<String>,
+    pub monitor_dimensions: Rect,
+    pub image : DynamicImage
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SearchQuery {
@@ -65,8 +127,6 @@ pub struct SearchResult {
     pub window_title: String,
     pub text_content: String,
     pub browser_url: String,
-
-    pub process_id: i32,
 
     pub window_x: i32,
     pub window_y: i32,
@@ -271,167 +331,108 @@ impl DatabaseManager {
 
         Ok(result.last_insert_rowid())
     }
+    
+    
+    pub async fn insert_frames_with_chunks(
+        &self,
+        result: &ProcessedOcrResult,
+        image_path : &str
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.begin_immediate_with_retry().await?;
 
-    pub async fn insert_into_vec_chunks(&self, chunk_id: i64, embedding: Vec<f32>) {
-        let bytes: &[u8] = bytemuck::cast_slice(&embedding);
+        let ProcessedOcrResult {
+            app_name,
+            browser_url,
+            focused,
+            monitor_dimensions,
+            text_blocks,
+            window_name,
+            ..
+        } = result;
 
-        sqlx::query("INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)")
-            .bind(chunk_id)
-            .bind(bytes)
-            .execute(&self.pool).await
-            .unwrap();
-    }
+        // Insert Frame
+        let frame_id = sqlx
+            ::query(
+                r#"
+                INSERT INTO frames (
+                app_name,
+                window_title,
+                is_focused,
+                browser_url,
+                window_x,
+                window_y,
+                window_width,
+                window_height,
+                monitor_width,
+                monitor_height,
+                image_path
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#
+            )
+            .bind(app_name)
+            .bind(window_name)
+            .bind(focused)
+            .bind(browser_url)
+            .bind(monitor_dimensions.x as i64)
+            .bind(monitor_dimensions.y as i64)
+            .bind(monitor_dimensions.width as i64)
+            .bind(monitor_dimensions.height as i64)
+            .bind(monitor_dimensions.width as i64)
+            .bind(monitor_dimensions.height as i64)
+            .bind(image_path)
+            .execute(&mut **tx.conn()).await?
+            .last_insert_rowid();
 
-    pub async fn perform_shallow_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
-        let embedding_json = serde_json
-            ::to_string(&search.embedding)
-            .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
+        // Insert Chunks
+        for chunk in text_blocks {
+            let chunk_id = sqlx
+                ::query(
+                    r#"
+            INSERT INTO chunks (
+                frame_id,
+                text_content,
+                text_json
+            )
+            VALUES (?, ?, ?)
+            "#
+                )
+                .bind(frame_id)
+                .bind(&chunk.text)
+                .bind(&chunk.text_json)
+                .execute(&mut **tx.conn()).await?
+                .last_insert_rowid();
 
-        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
-            "
-    SELECT 
-        f.id as frame_id,
-        f.captured_at, 
-        f.app_name, 
-        f.window_title, 
-        f.process_id,
-        f.is_focused,
-        f.browser_url,
-        f.window_x,
-        f.window_y,
-        f.window_width,
-        f.window_height,
-        f.image_path,
-        c.text_content,
-        c.id as chunk_id,
-        vec_distance_cosine(v.embedding, "
-        );
+            //  Insert Embedding — serialize Vec<f32> to raw bytes for sqlite-vec
+            let embedding_bytes: Vec<u8> = chunk.text_embeddings
+                .iter()
+                .flat_map(|f| f.to_le_bytes())
+                .collect();
 
-        qb.push_bind(embedding_json.clone());
-
-        qb.push(
-            ") as score
-    FROM chunks c
-    JOIN frames f ON c.frame_id = f.id
-    JOIN vec_chunks v ON v.chunk_id = c.id
-    WHERE vec_distance_cosine(v.embedding, "
-        );
-
-        qb.push_bind(embedding_json.clone());
-
-        qb.push(") < 0.65
-    ORDER BY score ASC
-    LIMIT 20
-");
-
-        let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
-
-        Ok(results)
-    }
-
-    pub async fn perform_deep_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
-        let embedding_json = serde_json
-            ::to_string(&search.embedding)
-            .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
-
-        let keywords_str = search.key_words
-            .as_ref()
-            .map(|k| {
-                k.iter()
-                    .filter(|w| !w.trim().is_empty())
-                    .map(|w| format!("{}*", w))
-                    .collect::<Vec<_>>()
-                    .join(" OR ")
-            })
-            .unwrap_or_default();
-
-        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
-            r#"
-        WITH
-
-        -- 1️⃣ Semantic Retrieval (High Recall)
-        vector_matches AS (
-            SELECT
-                chunk_id as id,
-                vec_distance_cosine(embedding, 
-        "#
-        );
-
-        qb.push_bind(embedding_json);
-
-        qb.push(
-            r#") as semantic_score
-        FROM vec_chunks
-        WHERE semantic_score < 0.90
-        LIMIT 150
-        ),
-
-        -- 2️⃣ Keyword Retrieval
-        keyword_matches AS (
-        "#
-        );
-
-        if !keywords_str.is_empty() {
-            qb.push(
-                "SELECT rowid as id, 1.0 as keyword_hit FROM chunks_fts WHERE chunks_fts MATCH "
-            );
-            qb.push_bind(keywords_str);
-        } else {
-            qb.push("SELECT NULL as id, 0.0 as keyword_hit WHERE 1=0");
+            sqlx
+                ::query(
+                    r#"
+            INSERT INTO vec_chunks (chunk_id, embedding)
+            VALUES (?, ?)
+            "#
+                )
+                .bind(chunk_id)
+                .bind(&embedding_bytes)
+                .execute(&mut **tx.conn()).await?;
         }
 
-        qb.push(
-            r#"
-        ),
+        tx.commit().await?;
 
-        combined AS (
-            SELECT id,
-                   MIN(semantic_score) as semantic_score,
-                   MAX(keyword_hit) as keyword_hit
-            FROM (
-                SELECT id, semantic_score, 0.0 as keyword_hit FROM vector_matches
-                UNION ALL
-                SELECT id, 0.5 as semantic_score, keyword_hit FROM keyword_matches
-            )
-            GROUP BY id
-        )
+        Ok(())
+    }
 
-        SELECT
-            f.id as frame_id,
-            f.captured_at,
-            f.app_name,
-            f.window_title,
-            f.process_id,
-            f.is_focused,
-            f.browser_url,
-            f.window_x,
-            f.window_y,
-            f.window_width,
-            f.window_height,
-            f.image_path,
-            c.text_content,
-            c.id as chunk_id,
-
-            -- 3️ FINAL SCORE (Deep Ranking)
-            (
-                (1 - semantic_score) * 0.7
-                + keyword_hit * 0.05
-                + CASE WHEN f.is_focused = 1 THEN 0.05 ELSE 0 END
-                + (1.0 / (1 + (julianday('now') - julianday(f.captured_at)))) * 0.2
-            ) as final_score
-
-        FROM combined
-        JOIN chunks c ON combined.id = c.id
-        JOIN frames f ON c.frame_id = f.id
-
-        ORDER BY final_score DESC
-        LIMIT 50
-        "#
-        );
-
-        let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
-
-        Ok(results)
+    // Changed return type from Vec<u64> to Vec<i64>
+    pub async fn check_frame_hash(&self) -> Result<Vec<i64>> {
+        sqlx
+            ::query_scalar(r#"
+        SELECT image_hash FROM frames
+    "#)
+            .fetch_all(&self.pool).await
     }
 
     pub async fn perform_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
@@ -453,7 +454,7 @@ impl DatabaseManager {
             r#"
 WITH
 
--- 0️⃣ Metadata Filtering FIRST
+-- 0️ Metadata Filtering FIRST
 filtered_chunks AS (
     SELECT
         c.id,
@@ -545,7 +546,6 @@ SELECT
     f.captured_at,
     f.app_name,
     f.window_title,
-    f.process_id,
     f.is_focused,
     f.browser_url,
     f.window_x,
@@ -574,56 +574,6 @@ LIMIT 50
         let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
 
         Ok(results)
-    }
-
-    pub async fn insert_into_chunks(
-        &self,
-        frame_id: i64,
-        text_content: &str,
-        role: &str,
-        bbox: &str,
-        text_hash: i64
-    ) -> Result<i64, sqlx::Error> {
-        let id = sqlx
-            ::query(
-                "
-            INSERT INTO chunks (frame_id, text_content, role, bbox, text_hash) VALUES (?1, ?2, ?3, ?4, ?5)
-        "
-            )
-            .bind(frame_id)
-            .bind(text_content)
-            .bind(role)
-            .bind(bbox)
-            .bind(text_hash)
-            .execute(&self.pool).await?
-            .last_insert_rowid();
-
-        Ok(id)
-    }
-
-    pub async fn find_chunk_by_hash(&self, hash: u64) -> Result<Option<i64>, sqlx::Error> {
-        let result = sqlx
-            ::query_scalar::<_, i64>("SELECT id FROM chunks WHERE text_hash = ?1")
-            .bind(hash as i64)
-            .fetch_optional(&self.pool).await?;
-
-        Ok(result)
-    }
-
-    pub async fn insert_into_occurances(
-        &self,
-        frame_id: i64,
-        chunk_id: i64,
-        bbox: &str
-    ) -> Result<(), sqlx::Error> {
-        sqlx
-            ::query("INSERT INTO occurances (frame_id, chunk_id, bbox) VALUES (?1, ?2, ?3)")
-            .bind(frame_id)
-            .bind(chunk_id)
-            .bind(bbox)
-            .execute(&self.pool).await?;
-
-        Ok(())
     }
 
     async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
