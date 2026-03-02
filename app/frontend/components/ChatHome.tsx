@@ -98,17 +98,17 @@ export default function ChatHome({
 
       <div
         className="
-  relative
-  w-full
-  max-w-2xl
-  bg-background
-  dark:bg-[#0a0a0a]
-  border
-  rounded-2xl
-  shadow-sm
-  overflow-hidden
-  z-1
-"
+        relative
+        w-full
+        max-w-2xl
+        bg-background
+        dark:bg-[#0a0a0a]
+        border
+        rounded-2xl
+        shadow-sm
+        overflow-hidden
+        z-1
+      "
       >
         <div className="flex flex-col p-2">
           <AutosizeTextarea

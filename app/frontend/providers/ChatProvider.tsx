@@ -18,6 +18,9 @@ interface ChatProviderProps {
   children: React.ReactNode;
 }
 
+
+
+
 export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
   const [assistantStatus, setAssistantStatus] =

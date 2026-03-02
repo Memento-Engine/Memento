@@ -13,24 +13,26 @@ import useChatContext from "@/hooks/useChatContext";
 function Thread(): React.ReactElement {
   const { messages, sendMessage } = useChatContext();
 
-  const handleSend = useCallback(async (query: string) => {
-    if (!query.trim()) return;
-    await sendMessage(query);
-  }, []);
+  const handleSend = useCallback(
+    async (query: string) => {
+      if (!query.trim()) return;
+      await sendMessage(query);
+    },
+    [sendMessage],
+  );
 
   return (
-    <div className="flex flex-col w-full h-full bg-base overflow-hidden">
+    <div className="flex flex-col w-full h-full pt-4  bg-base overflow-hidden">
       <Conversation className="flex-1">
         <ConversationContent className="mx-auto w-full md:w-4/5 xl:w-4/6 px-4 py-6">
           {messages.map((m, index) => (
-            <div className="flex flex-col gap-4">
+            <div key={m.id} className="flex flex-col gap-4">
               <MessageItem
-                key={m.id}
-                onEdit={(): void => console.log("editing")}
+                onEdit={() => console.log("editing")}
                 message={m}
                 isFirstMessage={index === 0}
                 isLastMessage={index === messages.length - 1}
-                status={"streaming"} // Pass real status if you have it
+                status="streaming"
                 showAssistant={m.role === "assistant"}
                 assistant={{
                   name: "Gemini",

@@ -40,7 +40,7 @@ export function SourceBadge({
           )}
         >
           <Link2Icon className="h-3 w-3" />
-          {label ?? "source"}
+          {label ?? "wikipedia"}
         </Badge>
       </HoverCardTrigger>
 

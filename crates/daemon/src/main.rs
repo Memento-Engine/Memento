@@ -11,7 +11,7 @@ use crate::{
     embedding::engine::{ CrossEncoder, EmbeddingModel },
     ocr::engine::WindowsOcrEngine,
     pipeline::{
-        capture::continuous_capture,
+        capture::{CaptureResult, continuous_capture},
         monitor::get_primary_monitor_id,
         processing_ocr_results::processing_ocr_results,
     },
@@ -193,7 +193,7 @@ async fn main() {
     let file_appender = tracing_appender::rolling::daily("logs", "daemon.log");
 
     // 2. Create an environment filter defaulting to "debug"
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     // 3. Initialize the subscriber with the filter
     tracing_subscriber
@@ -271,7 +271,7 @@ async fn main() {
     let app_clone = app_state.clone();
 
     let windows_ocr_engine = Arc::new(ocr_engine);
-    let (result_sender, mut result_receiver) = channel(512);
+    let (result_sender, mut result_receiver) = channel::<CaptureResult>(512);
 
     let monitor_id = match get_primary_monitor_id().await {
         Ok(m) => {
@@ -286,21 +286,21 @@ async fn main() {
 
     info!("Starting continuous capture task...");
 
-    // 3. Spawn the task using an async block.
-    // The `move` keyword transfers ownership of `ocr_engine` into the task.
-    tokio::spawn(async move {
-        let _ = continuous_capture(
-            result_sender,
-            interval,
-            windows_ocr_engine.clone(),
-            monitor_id
-        ).await;
-    });
+    // // 3. Spawn the task using an async block.
+    // // The `move` keyword transfers ownership of `ocr_engine` into the task.
+    // tokio::spawn(async move {
+    //     let _ = continuous_capture(
+    //         result_sender,
+    //         interval,
+    //         windows_ocr_engine.clone(),
+    //         monitor_id
+    //     ).await;
+    // });
 
-    // processing ocr results
-    tokio::spawn(async move {
-        processing_ocr_results(result_receiver, embedding_engine, db).await;
-    });
+    // // processing ocr results
+    // tokio::spawn(async move {
+    //     processing_ocr_results(result_receiver, embedding_engine, db).await;
+    // });
 
     // Starting the server
     start_server(app_clone).await;

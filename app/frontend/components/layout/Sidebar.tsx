@@ -93,7 +93,7 @@ function LeftSidebar(): React.ReactElement {
       </SidebarHeader>
 
       <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4">
-        <SidebarMenuItem onClick={goToHome} className="group/menuitem">
+        <SidebarMenuItem onClick={goToHome} className="group/menuitem list-none">
           <SidebarMenuButton
             variant="default"
             className="
@@ -110,7 +110,7 @@ function LeftSidebar(): React.ReactElement {
           </SidebarMenuButton>
         </SidebarMenuItem>
 
-        <SidebarMenuItem className="group/menuitem">
+        <SidebarMenuItem className="group/menuitem list-none">
           <SidebarMenuButton
             variant="default"
             className="w-full flex items-center cursor-pointer justify-start px-3"
@@ -210,7 +210,7 @@ function LeftSidebar(): React.ReactElement {
                 <User2 className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="flex flex-col gap-1 text-left  overflow-hidden">
-                <span className="text-sm font-semibold leading-none text-foreground whitespace-nowrap">
+                <span className="text-sm font-medium leading-none text-foreground whitespace-nowrap">
                   Bruce Wayne
                 </span>
                 <span className="text-xs leading-none text-muted-foreground whitespace-nowrap">

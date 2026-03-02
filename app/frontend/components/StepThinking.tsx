@@ -16,11 +16,6 @@ export function StepThinking({ steps }: Props) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const { setReferenceMeta } = useReferenceContext();
 
-  // Debug
-  useEffect((): void => {
-    console.log("STEPS from step thinking", steps);
-  }, [steps]);
-
   // Auto-collapse when finished
   useEffect(() => {
     if (isDone) {
@@ -36,21 +31,22 @@ export function StepThinking({ steps }: Props) {
   if (steps.length === 0) return null;
 
   return (
-    <div className="flex flex-col w-full rounded-md bg-transparent">
-      {/* Collapsible Header */}
+    <div className="flex w-full flex-col rounded-lg bg-background">
+      {/* Header */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors py-3 w-full text-left"
+        className="flex w-full items-center gap-2 py-3 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         {isCollapsed ? (
-          <ChevronRight className="w-4 h-4" />
+          <ChevronRight className="h-4 w-4" />
         ) : (
-          <ChevronDown className="w-4 h-4" />
+          <ChevronDown className="h-4 w-4" />
         )}
-        {isDone ? "Thought process complete" : "Thinking..."}
+        <span className="text-foreground/70">
+          {isDone ? "Thought process complete" : "Thinking..."}
+        </span>
       </button>
 
-      {/* Animated Body */}
       <AnimatePresence initial={false}>
         {!isCollapsed && (
           <motion.div
@@ -60,39 +56,47 @@ export function StepThinking({ steps }: Props) {
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="pb-4">
-              {/* Timeline */}
-              <div className="relative border-l border-border ml-2 space-y-5 pb-2">
-                <AnimatePresence>
-                  {steps.map((step, index) => {
-                    const isLast = index === steps.length - 1 && !isDone;
+            <div className="pb-4 pt-1 space-y-0">
+              {steps.map((step, index) => {
+                const isLastStep = index === steps.length - 1;
+                const isActive = isLastStep && !isDone;
 
-                    return (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          duration: 0.4,
-                          ease: "easeOut",
-                          delay: index * 0.15,
-                        }}
-                        className="relative pl-6"
-                      >
-                        {/* Timeline Dot */}
+                return (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.3,
+                      delay: index * 0.08,
+                    }}
+                    className="relative pb-6 last:pb-2"
+                  >
+                    {/* Vertical Line */}
+                    {!isLastStep && (
+                      <div className="absolute left-[7px] top-4 bottom-0 w-px bg-border" />
+                    )}
+
+                    {/* Row */}
+                    <div className="flex items-start gap-3">
+                      {/* Dot */}
+                      <div className="relative mt-[3px]">
                         <div
-                          className={`absolute -left-[7px] top-1.5 rounded-full border-2 border-background ${
-                            isLast
-                              ? "bg-primary animate-pulse h-3 w-3"
-                              : "bg-muted h-3 w-3"
+                          className={`h-2.5 w-2.5 rounded-full ${
+                            isActive
+                              ? "bg-primary"
+                              : "bg-muted-foreground/40"
                           }`}
                         />
+                      </div>
 
-                        {/* Step Content */}
-                        <div className="space-y-3">
+                      {/* Content */}
+                      <div className="flex-1 space-y-3">
+                        {/* Title */}
+                        <div className="flex flex-col">
                           <h3
-                            className={`text-xs font-medium ${
-                              isLast
+                            className={`text-xs leading-none ${
+                              isActive
                                 ? "text-foreground"
                                 : "text-muted-foreground"
                             }`}
@@ -100,76 +104,96 @@ export function StepThinking({ steps }: Props) {
                             {step.title}
                           </h3>
 
-                          {step.message && (
-                            <p className="text-xs text-muted-foreground">
-                              {step.message}
-                            </p>
-                          )}
-
-                          {/* Search Queries */}
-                          {step.queries && step.queries.length > 0 && (
-                            <div className="flex flex-wrap gap-2 pt-1">
-                              {step.queries.map((query, i) => (
-                                <div
-                                  key={i}
-                                  className="flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground"
-                                >
-                                  <Search className="w-3 h-3 text-muted-foreground" />
-                                  <span>{query}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Search Results */}
-                          {step.results && step.results.length > 0 && (
-                            <div className="mt-2 rounded-xl border border-border overflow-hidden max-w-2xl">
-                              <div className="max-h-48 overflow-y-auto">
-                                {step.results.map((result, i) => (
-                                  <div
-                                    key={i}
-                                    onClick={() => {
-                                      setReferenceMeta({
-                                        app_name: result.app_name,
-                                        browser_url: "",
-                                        captured_at: result.captured_at,
-                                        chunk_id: 123,
-                                        image_path: result.image_path,
-                                        text_content: "",
-                                        window_height: 0,
-                                        window_title: result.window_name,
-                                        window_width: 0,
-                                        window_x: 0,
-                                        window_y: 0,
-                                      });
-                                    }}
-                                    className="flex items-center justify-between px-3 py-2.5  transition-colors border-b border-border last:border-0 cursor-pointer"
-                                  >
-                                    <div className="flex items-center gap-3 overflow-hidden">
-                                      {/* Favicon Placeholder */}
-                                      <div className="flex-shrink-0 w-5 h-5 bg-muted rounded-full flex items-center justify-center border border-border">
-                                        <Globe className="w-3 h-3 text-muted-foreground" />
-                                      </div>
-
-                                      <span className="text-xs text-gray-300 truncate">
-                                        {result.app_name} | {result.window_name}
-                                      </span>
-                                    </div>
-
-                                    <span className="text-xs text-muted-foreground ml-4 flex-shrink-0">
-                                      {renderDate(result.captured_at)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+                          {/* Active Animation */}
+                          {isActive && (
+                            <div className="mt-1.5 h-[2px] w-24 overflow-hidden rounded-full bg-primary/20">
+                              <motion.div
+                                className="h-full w-1/2 rounded-full bg-primary"
+                                initial={{ x: "-100%" }}
+                                animate={{ x: "200%" }}
+                                transition={{
+                                  repeat: Infinity,
+                                  duration: 1.2,
+                                  ease: "linear",
+                                }}
+                              />
                             </div>
                           )}
                         </div>
-                      </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
-              </div>
+
+                        {/* Message */}
+                        {step.message && (
+                          <p className="text-[13px] leading-relaxed text-muted-foreground">
+                            {step.message}
+                          </p>
+                        )}
+
+                        {/* Queries */}
+                        {step.queries && step.queries.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {step.queries.map((query, i) => (
+                              <div
+                                key={i}
+                                className="flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-secondary-foreground shadow-sm"
+                              >
+                                <Search className="h-3 w-3 text-muted-foreground" />
+                                <span>{query}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Results */}
+                        {step.results && step.results.length > 0 && (
+                          <div className="mt-3 max-w-2xl overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+                            <div className="max-h-48 overflow-y-auto divide-y divide-border">
+                              {step.results.map((result, i) => (
+                                <div
+                                  key={i}
+                                  onClick={() => {
+                                    setReferenceMeta({
+                                      app_name: result.app_name,
+                                      browser_url: "",
+                                      captured_at: result.captured_at,
+                                      chunk_id: 123,
+                                      image_path: result.image_path,
+                                      text_content: "",
+                                      window_height: 0,
+                                      window_title: result.window_name,
+                                      window_width: 0,
+                                      window_x: 0,
+                                      window_y: 0,
+                                    });
+                                  }}
+                                  className="flex cursor-pointer items-center justify-between px-3 py-2.5 transition-colors hover:bg-muted/50"
+                                >
+                                  <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
+                                      <Globe className="h-3 w-3 text-muted-foreground" />
+                                    </div>
+
+                                    <span className="truncate text-[13px] text-foreground">
+                                      {result.app_name}
+                                      <span className="mx-1 font-normal text-muted-foreground">
+                                        |
+                                      </span>
+                                      {result.window_name}
+                                    </span>
+                                  </div>
+
+                                  <span className="ml-4 shrink-0 text-xs text-muted-foreground">
+                                    {renderDate(result.captured_at)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
           </motion.div>
         )}
