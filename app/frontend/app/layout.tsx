@@ -12,6 +12,7 @@ import LeftSidebar from "@/components/layout/Sidebar";
 import { GeistSans } from "geist/font/sans";
 import { Toaster } from "sonner";
 import DraggableCaptureAgent from "@/components/DraggableCaptureAgent";
+import SystemHealthProvider from "@/providers/SystemHealthProvider";
 
 export default function RootLayout({
   children,
@@ -31,12 +32,14 @@ export default function RootLayout({
           }}
         />
 
-        <ChatProvider>
-          <ReferenceProvider>
-            <LayoutContent>{children}</LayoutContent>
-            <DraggableCaptureAgent />
-          </ReferenceProvider>
-        </ChatProvider>
+        <SystemHealthProvider>
+          <ChatProvider>
+            <ReferenceProvider>
+              <LayoutContent>{children}</LayoutContent>
+              <DraggableCaptureAgent />
+            </ReferenceProvider>
+          </ChatProvider>
+        </SystemHealthProvider>
       </body>
     </html>
   );

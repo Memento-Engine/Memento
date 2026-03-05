@@ -1,5 +1,6 @@
 "use client";
 
+import { getBaseUrl } from "@/api/base";
 import {
   chatRequest,
   Citation,
@@ -12,19 +13,23 @@ import {
   ChatContext,
   TRANSITIONS,
 } from "@/contexts/chatContext";
+import useSystemHealth from "@/hooks/useSystemHealth";
+import { notify } from "@/lib/notify";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 interface ChatProviderProps {
   children: React.ReactNode;
 }
 
-
-
-
 export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
   const [assistantStatus, setAssistantStatus] =
     useState<AssistantStatus>("Idle");
+
+  const router = useRouter();
+
+  const { isRunning } = useSystemHealth();
 
   const transitionStatus = (nextState: AssistantStatus): boolean => {
     const allowedNextStates = TRANSITIONS[assistantStatus];
@@ -41,8 +46,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     console.warn(`Blocked transition from ${assistantStatus} to ${nextState}`);
     return false;
   };
-
-  const BASE_URL = "http://localhost:9090/api/v1";
 
   function parseSSEEvent(raw: string) {
     const lines = raw.split("\n");
@@ -321,6 +324,14 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   }
 
   const sendMessage = async (message: string): Promise<void> => {
+    if (!isRunning) {
+      notify.error(
+        "Memento is offline. Please start the memento by clicking on floating widget or from settings.",
+      );
+      return;
+    }
+    router.push("/chat/123");
+
     console.log("Message from chat input", message);
     transitionStatus("LocalPending");
     try {
@@ -345,6 +356,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       };
 
       setMessages((prev) => [...prev, currentChat]);
+
+      const BASE_URL = await getBaseUrl();
 
       const res = await fetch(`${BASE_URL}/search_stream_handler`, {
         method: "POST",
@@ -383,10 +396,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     } finally {
     }
   };
-
-  useEffect((): void => {
-    console.log("Ai Assistant status", assistantStatus);
-  }, [assistantStatus]);
 
   return (
     <ChatContext.Provider

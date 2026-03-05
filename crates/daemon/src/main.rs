@@ -11,7 +11,7 @@ use crate::{
     embedding::engine::{ CrossEncoder, EmbeddingModel },
     ocr::engine::WindowsOcrEngine,
     pipeline::{
-        capture::{CaptureResult, continuous_capture},
+        capture::{ CaptureResult, continuous_capture },
         monitor::get_primary_monitor_id,
         processing_ocr_results::processing_ocr_results,
     },
@@ -25,6 +25,23 @@ use tokio::sync::{ Mutex, mpsc };
 use tracing::{ error, info, warn, debug };
 use tokio::time::{ sleep, self, Instant, Duration };
 use std::sync::atomic::{ AtomicBool, Ordering };
+
+use fs2::FileExt;
+use std::fs::OpenOptions;
+
+fn ensure_single_instance() {
+    let lock_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("memento-daemon.lock")
+        .unwrap();
+
+    if lock_file.try_lock_exclusive().is_err() {
+        println!("Another memento-daemon instance is already running");
+        std::process::exit(0);
+    }
+}
 
 // #[tokio::main]
 // async fn main() {
@@ -186,6 +203,8 @@ use std::sync::atomic::{ AtomicBool, Ordering };
 
 #[tokio::main]
 async fn main() {
+    let _lock =  ensure_single_instance();
+
     use tracing_subscriber::EnvFilter;
     // 1. Initialize tracing in debug mode
 

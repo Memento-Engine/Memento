@@ -10,12 +10,10 @@ export default function Home() {
   const { sendMessage } = useChatContext();
   return (
     <div className="  flex min-h-screen items-center justify-center bg-background">
-      <ParticleBackground />
+      {/* <ParticleBackground /> */}
 
       <ChatHome
         handleSend={(query: string): void => {
-          router.push("/chat/123");
-          console.log(query);
           sendMessage(query);
         }}
       />

@@ -208,7 +208,7 @@ function MessageItem({
   return (
     <>
       {renderStepThinking()}
-      {renderImageGrid()}
+      {/* {renderImageGrid()} */}
       <div className="w-full mb-4">
         {message.parts.map((part, i) => {
           switch (part.type) {

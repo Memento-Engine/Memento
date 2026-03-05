@@ -13,7 +13,7 @@ pub fn base_dir() -> PathBuf {
     // Windows: C:\Users\name\.personal-ai
     // Linux/Mac: ~/.personal-ai
     let home = dirs::home_dir().expect("Cannot find home directory");
-    home.join(".personal-ai")
+    home.join(".memento")
 }
 
 

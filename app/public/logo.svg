@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+
+  <defs>
+
+    <!-- deep neutral background -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+
+    <!-- single golden memory tone with subtle intensity change -->
+    <radialGradient id="spiralColor" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#FFD27A"/>
+      <stop offset="55%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#B45309"/>
+    </radialGradient>
+
+  </defs>
+
+  <!-- rounded desktop icon container -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- geometric logarithmic-style spiral -->
+  <!-- constructed from expanding arcs approximating Fibonacci growth -->
+  <path
+    d="
+    M512 512
+    m -28 0
+    a28 28 0 1 1 56 0
+    a70 70 0 1 1 -140 0
+    a140 140 0 1 1 280 0
+    a240 240 0 1 1 -480 0
+    a380 380 0 1 1 760 0
+    "
+    fill="none"
+    stroke="url(#spiralColor)"
+    stroke-width="42"
+    stroke-linecap="round"
+  />
+
+</svg>

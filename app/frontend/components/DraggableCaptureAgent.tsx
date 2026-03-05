@@ -1,6 +1,11 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useSyncExternalStore,
+} from "react";
 import {
   Brain,
   Settings,
@@ -10,6 +15,7 @@ import {
   AlertTriangle,
   Database,
   GripHorizontal,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -20,11 +26,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import Image from "next/image";
+import useSystemHealth from "@/hooks/useSystemHealth";
 
 type EngineStatus = "running" | "stopped" | "error";
 
 export default function DraggableCaptureAgent() {
-  const [isCapturing, setIsCapturing] = useState(true);
+  const { isRunning, isMementoDaemonLoading, startMementoDaemon, stopMementoDaemon } =
+    useSystemHealth();
+
+  const [isCapturing, setIsCapturing] = useState(false);
   const [engineStatus, setEngineStatus] = useState<EngineStatus>("running");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -36,6 +46,16 @@ export default function DraggableCaptureAgent() {
   const dragStartPos = useRef({ x: 0, y: 0 });
   const mouseStartPos = useRef({ x: 0, y: 0 });
   const hasMoved = useRef(false);
+
+  useEffect((): void => {
+    if (isRunning) {
+      setEngineStatus("running");
+    } else {
+      setEngineStatus("stopped");
+    }
+
+    setIsCapturing(isRunning);
+  }, [isRunning]);
 
   useEffect(() => {
     setIsMounted(true);
@@ -121,6 +141,58 @@ export default function DraggableCaptureAgent() {
     setIsCapturing(true);
   };
 
+  const renderCaptureStateLoading = (): React.ReactElement => {
+    console.log("renderCaptureStateLoading rendered");
+    if (isMementoDaemonLoading) {
+      return (
+        <DropdownMenuItem
+          onClick={toggleCapture}
+          disabled={engineStatus === "error"}
+          className="flex items-center cursor-pointer justify-between px-3 py-2 text-sm rounded-md hover:bg-muted"
+        >
+          <span>Loading</span>
+          <Loader2 className="h-4 w-4 text-muted-foreground fill-current animate-spin" />
+        </DropdownMenuItem>
+      );
+    }
+    if (isCapturing) {
+      return (
+        <DropdownMenuItem
+           onSelect={(e) => {
+            console.log("Start Daemon command hitted");
+            e.preventDefault();
+            e.stopPropagation();
+            stopMementoDaemon();
+          }}
+          disabled={engineStatus === "error"}
+          className="flex items-center cursor-pointer justify-between px-3 py-2 text-sm rounded-md hover:bg-muted"
+        >
+          <span>Pause Capturing</span>
+          <Square className="h-4 w-4  text-muted-foreground fill-current" />
+        </DropdownMenuItem>
+      );
+    } else {
+      console.log("About to render Resume Capturing");
+
+      return (
+        <DropdownMenuItem
+          onSelect={(e) => {
+            console.log("Start Daemon command hitted");
+            e.preventDefault();
+            e.stopPropagation();
+            startMementoDaemon();
+          }}
+          className="flex items-center cursor-pointer justify-between px-3 py-2 text-sm rounded-md hover:bg-muted"
+        >
+          <span>Resume Capturing</span>
+          <Play className="h-4 w-4 text-muted-foreground fill-current" />
+        </DropdownMenuItem>
+      );
+    }
+
+    return <></>;
+  };
+
   return (
     <div
       className={`fixed z-[9999] ${
@@ -131,9 +203,9 @@ export default function DraggableCaptureAgent() {
         top: `${position.y}px`,
         touchAction: "none",
       }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
+      // onPointerDown={handlePointerDown}
+      // onPointerMove={handlePointerMove}
+      // onPointerUp={handlePointerUp}
     >
       <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
         <DropdownMenuTrigger asChild>
@@ -143,9 +215,7 @@ export default function DraggableCaptureAgent() {
               size="icon"
               className="rounded-full h-12 w-12 shadow-md bg-card border-border text-foreground hover:bg-muted"
             >
-              <span
-                className="cursor-pointer text-base flex shrink-0 items-center"
-              >
+              <span className="cursor-pointer text-base flex shrink-0 items-center">
                 <Image
                   src="/blackLogo.svg"
                   alt="logo"
@@ -232,18 +302,7 @@ export default function DraggableCaptureAgent() {
 
           <DropdownMenuSeparator />
 
-          <DropdownMenuItem
-            onClick={toggleCapture}
-            disabled={engineStatus === "error"}
-            className="flex items-center justify-between px-3 py-2 text-sm rounded-md hover:bg-muted"
-          >
-            <span>{isCapturing ? "Pause Capturing" : "Resume Capturing"}</span>
-            {isCapturing ? (
-              <Square className="h-4 w-4 text-muted-foreground fill-current" />
-            ) : (
-              <Play className="h-4 w-4 text-muted-foreground fill-current" />
-            )}
-          </DropdownMenuItem>
+          {renderCaptureStateLoading()}
 
           <DropdownMenuSeparator />
 
