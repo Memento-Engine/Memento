@@ -39,7 +39,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     return false;
   };
 
-  const BASE_URL = "http://localhost:9090/api/v1";
+  const BASE_URL = "http://localhost:4173/api/v1";
 
   function parseSSEEvent(raw: string) {
     const lines = raw.split("\n");
@@ -319,6 +319,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
   const sendMessage = async (message: string): Promise<void> => {
     console.log("Message from chat input", message);
+
     transitionStatus("LocalPending");
     try {
       const currentChat: MementoUIMessage = {
@@ -343,12 +344,12 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
       setMessages((prev) => [...prev, currentChat]);
 
-      const res = await fetch(`${BASE_URL}/search_stream_handler`, {
+      const res = await fetch(`${BASE_URL}/agent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(chatRequest),
+        body: JSON.stringify({ goal: message }),
       });
 
       if (!res.body) throw new Error("No response body");
