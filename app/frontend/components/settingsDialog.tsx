@@ -286,7 +286,7 @@ export function SettingsDialog({
         <aside className="w-64 shrink-0 bg-sidebar border-r flex flex-col">
           <div className="p-6">
             <h2 className="text-md font-medium tracking-tight">Settings</h2>
-            <p className="text-sm text-muted-foreground mt-1 font-medium">
+            <p className="text-sm text-muted-foreground/70 mt-1 font-medium">
               Account Management
             </p>
           </div>
@@ -302,7 +302,7 @@ export function SettingsDialog({
                   className={`w-full cursor-pointer  justify-start gap-3 px-3 h-10 transition-all ${
                     isActive
                       ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground/70 hover:text-foreground"
                   }`}
                 >
                   <span

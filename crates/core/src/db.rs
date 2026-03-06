@@ -12,6 +12,8 @@ use serde::{ Serialize, Deserialize };
 use std::fmt::Debug;
 use std::collections::HashMap;
 
+use crate::config::base_dir;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Rect {
     pub x: i32,
@@ -221,6 +223,10 @@ impl DatabaseManager {
 
         // create db if not exists
         if !sqlx::Sqlite::database_exists(&connection_string).await? {
+            let home_dir = base_dir();
+            if !home_dir.exists() {
+                std::fs::create_dir_all(home_dir);
+            }
             sqlx::Sqlite::create_database(&connection_string).await?;
         }
 

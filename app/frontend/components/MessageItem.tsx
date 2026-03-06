@@ -34,7 +34,7 @@ const CHAT_STATUS = {
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Citation, MementoUIMessage } from "./types";
-import { StepThinking } from "./StepThinking";
+import { mockSteps, StepThinking } from "./StepThinking";
 import useChatContext from "@/hooks/useChatContext";
 import MementoBreathing from "./MementoBreathing";
 import ThinkingBubble from "./ThinkingBubble";
@@ -179,6 +179,8 @@ function MessageItem({
       const steps = message.parts
         .filter((p) => p.type === "data-thinking")
         .map((p) => p.data);
+
+
 
       return <StepThinking steps={steps} />;
     }

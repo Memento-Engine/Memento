@@ -105,7 +105,7 @@ export default function ChatHome({
         )}
 
         {/* ===== BRAND ===== */}
-        <div className="flex items-center justify-center gap-3 mb-6">
+        <div className="flex items-center justify-center gap-1 mb-6">
           <Image
             src="/blackLogo.svg"
             alt="logo"
@@ -113,8 +113,8 @@ export default function ChatHome({
             width={55}
             height={55}
           />
-          <h1 className="text-4xl tracking-[0.1em] text-primary font-semibold">
-            Memento
+          <h1 className="text-4xl text-primary font-semibold">
+            memento
           </h1>
         </div>
 

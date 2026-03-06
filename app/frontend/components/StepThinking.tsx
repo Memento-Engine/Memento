@@ -3,11 +3,44 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronRight, Search, Globe } from "lucide-react";
 import { ThinkingStep } from "./types";
 import useReferenceContext from "@/hooks/useReferenceContext";
-import { renderDate } from "@/lib/utils";
+import { cn, renderDate } from "@/lib/utils";
 
 type Props = {
   steps: ThinkingStep[];
 };
+
+export const mockSteps = [
+  {
+    title: "Searching indexed memories",
+    status: "running",
+    message: "Scanning your captured activities...",
+    queries: ["meeting notes", "design doc", "chat with John"],
+  },
+  {
+    title: "Processing results",
+    status: "completed",
+    results: [
+      {
+        app_name: "Google Chrome",
+        window_name: "Figma - Design System",
+        image_path: "/captures/figma-design.png",
+        captured_at: "2026-03-06T16:45:10Z",
+      },
+      {
+        app_name: "Visual Studio Code",
+        window_name: "search-engine.ts",
+        image_path: "/captures/vscode-code.png",
+        captured_at: "2026-03-06T16:47:32Z",
+      },
+    ],
+    message: "Relevant activities found in your history.",
+  },
+  {
+    title: "Generating answer",
+    status: "final",
+    message: "Here are the most relevant moments from your memory.",
+  },
+];
 
 export function StepThinking({ steps }: Props) {
   const isDone =
@@ -35,18 +68,20 @@ export function StepThinking({ steps }: Props) {
       {/* Header */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="flex w-full items-center gap-2 py-3 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="flex w-full items-center gap-2 py-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         {isCollapsed ? (
           <ChevronRight className="h-4 w-4" />
         ) : (
           <ChevronDown className="h-4 w-4" />
         )}
-        <span className="text-foreground/70">
-          {isDone ? "Thought process complete" : "Thinking..."}
+
+        <span
+          className={cn("text-foreground/70", !isDone && "thinking-shimmer")}
+        >
+          {isDone ? "Thought process completed" : "Thinking..."}
         </span>
       </button>
-
       <AnimatePresence initial={false}>
         {!isCollapsed && (
           <motion.div
@@ -56,7 +91,7 @@ export function StepThinking({ steps }: Props) {
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="pb-4 pt-1 space-y-0">
+            <div className="space-y-0 pb-4 pt-1">
               {steps.map((step, index) => {
                 const isLastStep = index === steps.length - 1;
                 const isActive = isLastStep && !isDone;
@@ -72,20 +107,18 @@ export function StepThinking({ steps }: Props) {
                     }}
                     className="relative pb-6 last:pb-2"
                   >
-                    {/* Vertical Line */}
+                    {/* Vertical Line - Centered perfectly to the 10px dot */}
                     {!isLastStep && (
-                      <div className="absolute left-[7px] top-4 bottom-0 w-px bg-border" />
+                      <div className="absolute bottom-0 left-[4.5px] top-[18px] w-px bg-border" />
                     )}
 
                     {/* Row */}
                     <div className="flex items-start gap-3">
-                      {/* Dot */}
-                      <div className="relative mt-[3px]">
+                      {/* Dot Container */}
+                      <div className="relative mt-[3px] shrink-0">
                         <div
                           className={`h-2.5 w-2.5 rounded-full ${
-                            isActive
-                              ? "bg-primary"
-                              : "bg-muted-foreground/40"
+                            isActive ? "bg-primary" : "bg-muted-foreground/40"
                           }`}
                         />
                       </div>
@@ -97,33 +130,17 @@ export function StepThinking({ steps }: Props) {
                           <h3
                             className={`text-xs leading-none ${
                               isActive
-                                ? "text-foreground"
+                                ? "text-foreground thinking-shimmer"
                                 : "text-muted-foreground"
                             }`}
                           >
                             {step.title}
                           </h3>
-
-                          {/* Active Animation */}
-                          {isActive && (
-                            <div className="mt-1.5 h-[2px] w-24 overflow-hidden rounded-full bg-primary/20">
-                              <motion.div
-                                className="h-full w-1/2 rounded-full bg-primary"
-                                initial={{ x: "-100%" }}
-                                animate={{ x: "200%" }}
-                                transition={{
-                                  repeat: Infinity,
-                                  duration: 1.2,
-                                  ease: "linear",
-                                }}
-                              />
-                            </div>
-                          )}
                         </div>
 
                         {/* Message */}
                         {step.message && (
-                          <p className="text-[13px] leading-relaxed text-muted-foreground">
+                          <p className="text-xs leading-relaxed text-muted-foreground">
                             {step.message}
                           </p>
                         )}
@@ -145,8 +162,8 @@ export function StepThinking({ steps }: Props) {
 
                         {/* Results */}
                         {step.results && step.results.length > 0 && (
-                          <div className="mt-3 max-w-2xl overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-                            <div className="max-h-48 overflow-y-auto divide-y divide-border">
+                          <div className="mt-3 max-w-2xl overflow-hidden rounded-lg border border-border bg-sidebar shadow-sm">
+                            <div className="max-h-48 divide-y divide-border overflow-y-auto">
                               {step.results.map((result, i) => (
                                 <div
                                   key={i}
@@ -165,16 +182,16 @@ export function StepThinking({ steps }: Props) {
                                       window_y: 0,
                                     });
                                   }}
-                                  className="flex cursor-pointer items-center justify-between px-3 py-2.5 transition-colors hover:bg-muted/50"
+                                  className="flex cursor-pointer items-center justify-between px-3 py-2.5 transition-colors hover:bg-muted/20"
                                 >
                                   <div className="flex items-center gap-3 overflow-hidden">
                                     <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
                                       <Globe className="h-3 w-3 text-muted-foreground" />
                                     </div>
 
-                                    <span className="truncate text-[13px] text-foreground">
+                                    <span className="truncate text-xs text-foreground/80">
                                       {result.app_name}
-                                      <span className="mx-1 font-normal text-muted-foreground">
+                                      <span className="mx-1 font-normal">
                                         |
                                       </span>
                                       {result.window_name}
