@@ -1,28 +1,57 @@
 import { ChatOpenAI } from "@langchain/openai";
-import { PlannerPlan, PlannerPlanSchema, PlannerStep } from "./planner.schema";
+import { PlannerPlan, PlannerPlanSchema } from "./planner.schema";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { plannerPrompt } from "../prompts/plannerPrompt";
-import { AgentState, AgentStateType } from "../agentState";
-import { config } from "dotenv";
+import { AgentStateType } from "../agentState";
+import { validatePlan } from "./planner.validator";
+import { getConfig } from "../config/config";
+import { createContextLogger } from "../utils/logger";
+import { SafeJsonParser, ErrorHandler, withRetry } from "../utils/parser";
+import { PlannerError, ErrorCode } from "../types/errors";
+import { emitStepEvent } from "../utils/eventQueue";
+import util from "util";
 
-config();
+let llmInstance: ChatOpenAI | null = null;
 
-console.log("KEY:", process.env.OPENROUTER_API_KEY);
-export const llm = new ChatOpenAI({
-  model: "deepseek/deepseek-chat",
-  temperature: 0,
+/**
+ * Initialize the LLM with configuration.
+ * Uses singleton pattern to avoid multiple instances.
+ */
+function initializeLLM(): ChatOpenAI {
+  if (llmInstance) {
+    return llmInstance;
+  }
 
-  configuration: {
-    baseURL: "https://openrouter.ai/api/v1",
-  },
+  const config = getConfig();
 
-  apiKey:
-    "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",
-});
+  llmInstance = new ChatOpenAI({
+    model: config.llm.model,
+    temperature: config.llm.temperature,
+    apiKey: config.llm.apiKey,
+    configuration: {
+      baseURL: config.llm.baseUrl,
+    },
+    timeout: config.llm.timeout,
+  });
 
-const plannerModel = llm.withStructuredOutput(PlannerPlanSchema);
+  return llmInstance;
+}
 
-function propagateFilters(plan: PlannerPlan) {
+/**
+ * Get the LLM instance.
+ */
+export function getLLM(): ChatOpenAI {
+  if (!llmInstance) {
+    initializeLLM();
+  }
+  return llmInstance!;
+}
+
+/**
+ * Propagate filters from parent steps to dependent steps.
+ * Ensures consistent filtering across related queries.
+ */
+function propagateFilters(plan: PlannerPlan): void {
   for (const step of plan.steps) {
     if (step.kind !== "search") continue;
 
@@ -41,161 +70,116 @@ function propagateFilters(plan: PlannerPlan) {
   }
 }
 
-function validateSchema(plan: PlannerPlan) {
-  const result = PlannerPlanSchema.safeParse(plan);
-
-  if (!result.success) {
-    return {
-      valid: false,
-      error: result.error.message,
-    };
-  }
-
-  return { valid: true, plan: result.data };
-}
-
-function detectCycle(steps: PlannerStep[]): boolean {
-  const visited = new Set<string>();
-  const stack = new Set<string>();
-
-  const map = new Map(steps.map((s) => [s.id, s]));
-
-  function dfs(id: string): boolean {
-    if (stack.has(id)) return true;
-    if (visited.has(id)) return false;
-
-    visited.add(id);
-    stack.add(id);
-
-    const step = map.get(id);
-    if (!step) return false;
-
-    for (const dep of step.dependsOn) {
-      if (dfs(dep)) return true;
-    }
-
-    stack.delete(id);
-    return false;
-  }
-
-  for (const step of steps) {
-    if (dfs(step.id)) return true;
-  }
-
-  return false;
-}
-
-const PLACEHOLDER_REGEX = /\{\{(step\d+)\.output\}\}/g;
-
-function validatePlaceholders(plan: PlannerPlan) {
-  const stepIds = new Set(plan.steps.map((s) => s.id));
-
-  for (const step of plan.steps) {
-    const json = JSON.stringify(step);
-
-    const matches = [...json.matchAll(PLACEHOLDER_REGEX)];
-
-    for (const m of matches) {
-      const ref = m[1];
-
-      if (!stepIds.has(ref)) {
-        return {
-          valid: false,
-          error: `Invalid placeholder reference: ${ref}`,
-        };
-      }
-
-      if (!step.dependsOn.includes(ref)) {
-        return {
-          valid: false,
-          error: `Step ${step.id} uses ${ref} but does not depend on it`,
-        };
-      }
-    }
-  }
-
-  return { valid: true };
-}
-
-function validateLogicalRules(plan: PlannerPlan) {
-  for (const step of plan.steps) {
-    if (step.kind === "search" && !step.databaseQuery) {
-      return {
-        valid: false,
-        error: `Search step ${step.id} missing databaseQuery`,
-      };
-    }
-  }
-
-  return { valid: true };
-}
-
-function validatePlan(plan: PlannerPlan) {
-  const schema = validateSchema(plan);
-  if (!schema.valid) return schema;
-
-  const parsed = schema.plan;
-  if (!parsed?.steps) {
-    return { valid: false, plan: parsed };
-  }
-  if (detectCycle(parsed.steps)) {
-    return { valid: false, error: "Planner produced cyclic dependencies" };
-  }
-
-  const placeholderCheck = validatePlaceholders(parsed);
-  if (!placeholderCheck.valid) return placeholderCheck;
-
-  const logicCheck = validateLogicalRules(parsed);
-  if (!logicCheck.valid) return logicCheck;
-
-  return { valid: true, plan: parsed };
-}
-
+/**
+ * Planner node: Creates execution plan from user goal.
+ * Retries on validation errors to refine the plan.
+ */
 export async function plannerNode(
   state: AgentStateType,
-  config?: RunnableConfig
+  config?: RunnableConfig,
 ): Promise<AgentStateType> {
+  const logger = createContextLogger(state.requestId, {
+    node: "planner",
+    goal: state.goal,
+  });
 
-  console.log("Planner was called.");
+  logger.info("Planner node started");
 
-  const goal = state.goal;
+  const llm = getLLM();
+  const appConfig = getConfig();
 
-  let attempts = 0;
-  const MAX_ATTEMPTS = 3;
+  try {
+    let lastValidationError = "";
+    
+    // Attempt to generate and validate plan with retries
+    const plan = await withRetry(
+      async () => {
+        // Build error message for LLM to learn from previous failures
+        const errorContext = lastValidationError 
+          ? `PREVIOUS ATTEMPT FAILED:\n\nValidation Error:\n${lastValidationError}\n\nFix the JSON to resolve these errors. Pay special attention to:\n- Filter fields MUST be arrays: "app_name": ["value1", "value2"]\n- limit MUST be between 1-100\n`
+          : "";
 
-  while (attempts < MAX_ATTEMPTS) {
+        const prompt = await plannerPrompt.invoke({
+          goal: state.goal,
+          previousErrors: errorContext,
+        });
 
-    const prompt = await plannerPrompt.invoke({
-      goal,
-      previousErrors: state.plannerErrors ?? ""
+        const response = await llm.invoke(prompt);
+        const parsedContent = SafeJsonParser.parseContent(response.content);
+
+        logger.info("Planner LLM response parsed", {
+          parsedContent
+        });
+ 
+        const rawPlan = parsedContent as PlannerPlan;
+
+        // Validate plan structure
+        const validation = validatePlan(rawPlan);
+
+        if (!validation.valid) {
+          // Store error for next retry attempt
+          lastValidationError = validation.error;
+          
+          logger.warn("Plan validation failed - will retry", {
+            error: validation.error,
+            attempt: (state.planAttempts ?? 0) + 1,
+          });
+
+          throw new PlannerError(
+            `Plan validation failed: ${validation.error}`,
+            { validation: validation.error },
+          );
+        }
+
+        return validation.data;
+      },
+      {
+        maxAttempts: appConfig.agent.maxPlanRetries,
+        initialDelayMs: 100,
+        maxDelayMs: 1000,
+      },
+    );
+
+    propagateFilters(plan);
+
+    logger.info("Plan created successfully", {
+      stepCount: plan.steps.length,
+      stepIds: plan.steps.map((s) => s.id),
     });
 
-    const rawPlan = await plannerModel.invoke(prompt);
+    // Emit planning step event
+    emitStepEvent(
+      "plan_0",
+      "planning",
+      "Create Execution Plan",
+      "completed",
+      state.requestId,
+      {
+        description: `Created plan with ${plan.steps.length} steps`,
+        query: state.goal,
+        queries: plan.steps.map((s) => s.query),
+      },
+    );
 
-    const validation = validatePlan(rawPlan);
+    return {
+      ...state,
+      plan,
+      currentStep: 0,
+      planAttempts: (state.planAttempts ?? 0) + 1,
+      plannerErrors: "",
+    };
+  } catch (error) {
+    const agentError = ErrorHandler.toAgentError(
+      error,
+      ErrorCode.PLANNER_FAILED,
+      { goal: state.goal },
+    );
 
-    if (validation.valid) {
+    logger.error("Planner node failed", String(error), {
+      error: agentError.code,
+      message: agentError.message,
+    });
 
-      const plan = validation.plan;
-
-      propagateFilters(plan);
-
-      console.dir(plan.steps, { depth: null, colors: true });
-
-      return {
-        ...state,
-        plan,
-        currentStep: 0,
-        plannerErrors: undefined
-      };
-    }
-
-    attempts++;
-
-    console.log("Planner validation failed:", validation?.error);
-
-    state.plannerErrors = validation?.error;
+    throw agentError;
   }
-
-  throw new Error("Planner failed after multiple attempts");
 }
