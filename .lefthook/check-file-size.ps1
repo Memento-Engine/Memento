@@ -5,7 +5,7 @@ param(
     [int]$MaxFileSizeMB = 50
 )
 
-Write-Host "📏 Checking file sizes..." -ForegroundColor Cyan
+Write-Host '[CHECK] Checking file sizes...' -ForegroundColor Cyan
 
 $maxSizeBytes = $MaxFileSizeMB * 1024 * 1024
 $foundLargeFiles = $false
@@ -24,30 +24,30 @@ foreach ($file in $allFiles) {
         
         if ($fileSize -gt $maxSizeBytes) {
             $fileSizeMB = [math]::Round($fileSize / 1024 / 1024, 2)
-            Write-Host "⚠️  Large file: $file ($fileSizeMB MB)" -ForegroundColor Yellow
+            Write-Host "[WARN] Large file: $file ($fileSizeMB MB)" -ForegroundColor Yellow
             $foundLargeFiles = $true
         }
     }
 }
 
 if ($foundLargeFiles) {
-    Write-Host ""
-    Write-Host " FILE SIZE VALIDATION FAILED" -ForegroundColor Red
-    Write-Host ""
+    Write-Host ''
+    Write-Host '[FAIL] FILE SIZE VALIDATION FAILED' -ForegroundColor Red
+    Write-Host ''
     Write-Host "Files larger than $MaxFileSizeMB MB cannot be committed:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Best practices:" -ForegroundColor Green
-    Write-Host "  • Use Git LFS (Large File Storage) for binary files"
-    Write-Host "  • Store large assets in cloud storage (S3, etc.)"
-    Write-Host "  • Add to .gitignore: *.mp4, *.zip, *.iso, etc."
-    Write-Host "  • Keep compiled artifacts out of git"
-    Write-Host ""
-    Write-Host "To set up Git LFS:" -ForegroundColor Cyan
-    Write-Host "  git lfs install"
+    Write-Host ''
+    Write-Host 'Best practices:' -ForegroundColor Green
+    Write-Host '  - Use Git LFS (Large File Storage) for binary files'
+    Write-Host '  - Store large assets in cloud storage (S3, etc.)'
+    Write-Host '  - Add to .gitignore: *.mp4, *.zip, *.iso, etc.'
+    Write-Host '  - Keep compiled artifacts out of git'
+    Write-Host ''
+    Write-Host 'To set up Git LFS:' -ForegroundColor Cyan
+    Write-Host '  git lfs install'
     Write-Host "  git lfs track '*.psd'  # Example for large files"
-    Write-Host ""
+    Write-Host ''
     exit 1
 }
 
-Write-Host "✓ All files within size limits" -ForegroundColor Green
+Write-Host '[OK] All files within size limits' -ForegroundColor Green
 exit 0

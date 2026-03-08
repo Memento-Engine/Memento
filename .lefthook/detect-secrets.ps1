@@ -32,7 +32,7 @@ foreach ($file in $filesToCheck) {
         
         # Check file name patterns
         if ($file -match "\.env|secrets|credentials|\.key$" -and $file -notmatch "\.example") {
-            Write-Host "  Potential secret file: $file" -ForegroundColor Yellow
+            Write-Host "  [WARN] Potential secret file: $file" -ForegroundColor Yellow
             $foundSecrets = $true
         }
         
@@ -40,7 +40,7 @@ foreach ($file in $filesToCheck) {
         if ($content -and -not ($file -match "\.(exe|dll|so|bin|png|jpg|gif)$")) {
             foreach ($pattern in $secretPatterns) {
                 if ($content -match $pattern.pattern) {
-                    Write-Host "  Possible $($pattern.name) found in: $file" -ForegroundColor Yellow
+                    Write-Host "  [WARN] Possible $($pattern.name) found in: $file" -ForegroundColor Yellow
                     $foundSecrets = $true
                 }
             }
@@ -49,27 +49,27 @@ foreach ($file in $filesToCheck) {
 }
 
 if ($foundSecrets) {
-    Write-Host ""
-    Write-Host " SECRETS DETECTION ALERT" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Possible secrets were detected in your staged files!" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "If these are false positives:" -ForegroundColor Green
-    Write-Host "  git commit --no-verify  # Skip hook (NOT RECOMMENDED)"
-    Write-Host ""
-    Write-Host "IMPORTANT SECURITY NOTES:" -ForegroundColor Red
-    Write-Host "  • NEVER commit .env files with real credentials"
-    Write-Host "  • Use .env.example with placeholder values"
-    Write-Host "  • Add .env to .gitignore"
-    Write-Host "  • Rotate any exposed secrets immediately"
-    Write-Host "  • Never push API keys, tokens, or passwords"
-    Write-Host ""
-    Write-Host "If you accidentally committed a secret:" -ForegroundColor Yellow
-    Write-Host "  git log -p --follow -- <file>  # Check commit history"
-    Write-Host "  # Consider: git filter-branch or BFG Repo-Cleaner"
-    Write-Host ""
+    Write-Host ''
+    Write-Host '[FAIL] SECRETS DETECTION ALERT' -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Possible secrets were detected in your staged files!' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host 'If these are false positives:' -ForegroundColor Green
+    Write-Host '  git commit --no-verify  # Skip hook (NOT RECOMMENDED)'
+    Write-Host ''
+    Write-Host 'IMPORTANT SECURITY NOTES:' -ForegroundColor Red
+    Write-Host '  - NEVER commit .env files with real credentials'
+    Write-Host '  - Use .env.example with placeholder values'
+    Write-Host '  - Add .env to .gitignore'
+    Write-Host '  - Rotate any exposed secrets immediately'
+    Write-Host '  - Never push API keys, tokens, or passwords'
+    Write-Host ''
+    Write-Host 'If you accidentally committed a secret:' -ForegroundColor Yellow
+    Write-Host '  git log -p --follow -- <file>  # Check commit history'
+    Write-Host '  # Consider: git filter-branch or BFG Repo-Cleaner'
+    Write-Host ''
     exit 1
 }
 
-Write-Host "✓ Scanned $scanCount files - No secrets detected" -ForegroundColor Green
+Write-Host '[OK] Scanned $scanCount files - No secrets detected' -ForegroundColor Green
 exit 0
