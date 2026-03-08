@@ -6,6 +6,7 @@ import {
   citationsSchema,
   MementoUIMessage,
   thinkingSchema,
+  ThinkingStep,
 } from "@/components/types";
 import {
   AssistantStatus,
@@ -22,12 +23,13 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
   const [assistantStatus, setAssistantStatus] =
     useState<AssistantStatus>("Idle");
+  const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
 
   const transitionStatus = (nextState: AssistantStatus): boolean => {
     const allowedNextStates = TRANSITIONS[assistantStatus];
 
     if (allowedNextStates.includes(nextState)) {
-      if (nextState === "Finished" || nextState === "Error") {
+      if (nextState === "Finished" || nextState === "NoResults" || nextState === "Error") {
         setAssistantStatus("Idle");
       } else {
         setAssistantStatus(nextState);
@@ -97,35 +99,38 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     return cleanedCitations;
   }
 
-  async function handleSseEvent(eventChunk: string) {
-    const parsedEvent = parseSSEEvent(eventChunk);
-    if (!parsedEvent) return;
+  async function handleStreamingEvent(event: any) {
+    const eventType = event.type;
 
-    const { eventType, data } = parsedEvent;
+    console.log(`[Stream Event] Type: '${eventType}', Data:`, event.data);
 
-    // Fallback in case eventType is undefined or empty
-    const type = (eventType || "message").trim();
-    console.log(`[SSE] Type: '${type}', Data:`, data);
-
-    switch (type) {
+    switch (eventType) {
       case "thinking": {
+        // Step progress/thinking update
         transitionStatus("Thinking");
-        const parsedThinking = thinkingSchema.safeParse(data);
+        
+        const thinkingData = event.data;
+        
+        // Validate the thinking data against schema
+        const parsedThinking = thinkingSchema.safeParse(thinkingData);
 
         if (!parsedThinking.success) {
-          console.log(
-            "Failed to parse the thinking schema",
-            parsedThinking.error,
-          );
-          transitionStatus("Error");
+          console.warn(" Failed to parse thinking schema");
+          console.warn("  | Validation Errors:", parsedThinking.error.issues);
+          console.warn("  | Received data:", JSON.stringify(thinkingData, null, 2));
           return;
         }
 
-        // This is a single object, e.g., { title: "...", status: "running", ... }
-        const thinkingSteps = parsedThinking.data;
+        console.log("Thinking event validated successfully");
+        console.log("  | Step:", thinkingData.stepId, "Type:", thinkingData.stepType, "Status:", thinkingData.status);
+        console.log("  | Results:", thinkingData.resultCount ?? 0);
 
-        console.log("Thinking Steps from Case Thinking", thinkingSteps);
+        const thinkingStep = parsedThinking.data;
 
+        // Add to step updates
+        setStepUpdates((prev) => [...prev, thinkingStep]);
+
+        // Also add to messages as thinking data
         setMessages((prev) => {
           try {
             const lastMessage = prev[prev.length - 1];
@@ -146,7 +151,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
                   parts: [
                     {
                       type: "data-thinking",
-                      data: thinkingSteps, // Pass the object directly, NOT an array
+                      data: thinkingStep,
                     },
                   ],
                 },
@@ -158,47 +163,241 @@ export default function ChatProvider({ children }: ChatProviderProps) {
             const updatedMessage = { ...lastMessage };
             const updatedParts = [...updatedMessage.parts];
 
-            // If the last part exists but isn't 'data-thinking', add it as a new part
             updatedParts.push({
               type: "data-thinking",
-              data: thinkingSteps, // Pass the object directly
+              data: thinkingStep,
             });
 
             updatedMessage.parts = updatedParts;
             updatedMessages[updatedMessages.length - 1] = updatedMessage;
 
-            console.log("UpdatedMessages", updatedMessages);
-
             return updatedMessages;
           } catch (error) {
-            console.error("Error inside state updater:", error);
+            console.error("Error updating messages with thinking data:", error);
             return prev;
           }
         });
 
         break;
       }
-      case "citations":
-        console.log("Clenaed Citations: ", getNormalizedCitations(data));
 
-        const parsedCitations = citationsSchema.safeParse(
-          getNormalizedCitations(data),
-        );
+      case "error": {
+        // Error event - check if it's a system error or just "no results"
+        const errorData = event.data;
+        const isSystemError = errorData.isSystemError ?? true;
 
-        if (!parsedCitations.success) {
-          console.log(
-            "Failed to parse the Citations schema",
-            parsedCitations.error,
-          );
-          return;
+        if (isSystemError) {
+          // Real system error
+          console.error("System error received:", errorData.message);
+          transitionStatus("Error");
+        } else {
+          // Not a system error - treat as normal "no results found" case
+          console.log("No results detected:", errorData.message);
+          transitionStatus("Finished");
         }
+
+        // Add error message to messages if desired
         setMessages((prev) => {
           try {
             const lastMessage = prev[prev.length - 1];
 
-            // 1. If no assistant message, create a brand new one
             if (!lastMessage || lastMessage.role !== "assistant") {
-              // SAFE ID GENERATION FALLBACK
+              const safeId =
+                typeof crypto.randomUUID === "function"
+                  ? crypto.randomUUID()
+                  : Date.now().toString() +
+                    Math.random().toString(36).substring(2);
+
+              return [
+                ...prev,
+                {
+                  id: safeId,
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "text",
+                      text: errorData.message,
+                    },
+                  ],
+                },
+              ];
+            }
+
+            const updatedMessages = [...prev];
+            const updatedMessage = { ...lastMessage };
+            const updatedParts = [...updatedMessage.parts];
+
+            const lastPart = updatedParts[updatedParts.length - 1];
+
+            if (lastPart && lastPart.type === "text") {
+              updatedParts[updatedParts.length - 1] = {
+                ...lastPart,
+                text: lastPart.text + "\n" + errorData.message,
+              };
+            } else {
+              updatedParts.push({ type: "text", text: errorData.message });
+            }
+
+            updatedMessage.parts = updatedParts;
+            updatedMessages[updatedMessages.length - 1] = updatedMessage;
+
+            return updatedMessages;
+          } catch (error) {
+            console.error("Error updating messages with error:", error);
+            return prev;
+          }
+        });
+
+        break;
+      }
+
+      case "text": {
+        // Text streaming event - contains chunk of final response
+        const textData = event.data;
+        const chunk = textData.chunk;
+
+        if (!chunk) {
+          console.warn("Received empty text chunk");
+          return;
+        }
+
+        console.log(`✅ Text chunk received: ${chunk.length} chars`);
+        setMessages((prev) => {
+          try {
+            const lastMessage = prev[prev.length - 1];
+
+            // If no assistant message exists, create one
+            if (!lastMessage || lastMessage.role !== "assistant") {
+              const safeId =
+                typeof crypto.randomUUID === "function"
+                  ? crypto.randomUUID()
+                  : Date.now().toString() +
+                    Math.random().toString(36).substring(2);
+
+              return [
+                ...prev,
+                {
+                  id: safeId,
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "text",
+                      text: chunk,
+                    },
+                  ],
+                },
+              ];
+            }
+
+            // Append to existing assistant message
+            const updatedMessages = [...prev];
+            const updatedMessage = { ...lastMessage };
+            const updatedParts = [...updatedMessage.parts];
+
+            const lastPart = updatedParts[updatedParts.length - 1];
+
+            if (lastPart && lastPart.type === "text") {
+              // Append to existing text part
+              updatedParts[updatedParts.length - 1] = {
+                ...lastPart,
+                text: lastPart.text + chunk,
+              };
+            } else {
+              // Add new text part
+              updatedParts.push({ type: "text", text: chunk });
+            }
+
+            updatedMessage.parts = updatedParts;
+            updatedMessages[updatedMessages.length - 1] = updatedMessage;
+
+            return updatedMessages;
+          } catch (error) {
+            console.error("Error updating messages with text chunk:", error);
+            return prev;
+          }
+        });
+
+        break;
+      }
+
+      case "complete": {
+        // Completion event - marks end of execution
+        // Note: Final text has already been streamed via "text" events
+        const completeData = event.data;
+
+        console.log(`✅ Execution complete - success: ${completeData.success}`);
+
+        if (completeData.success) {
+          // Successful execution
+          if (completeData.metadata?.noResultsFound) {
+            // Transition to NoResults state (not an error)
+            transitionStatus("NoResults");
+          } else {
+            transitionStatus("Finished");
+          }
+        } else {
+          // Failed execution
+          transitionStatus("Error");
+
+          // Only add error message if no text was already streamed
+          setMessages((prev) => {
+            try {
+              const lastMessage = prev[prev.length - 1];
+
+              if (
+                !lastMessage ||
+                lastMessage.role !== "assistant" ||
+                lastMessage.parts.length === 0
+              ) {
+                // Only add if no message exists
+                const safeId =
+                  typeof crypto.randomUUID === "function"
+                    ? crypto.randomUUID()
+                    : Date.now().toString() +
+                      Math.random().toString(36).substring(2);
+
+                return [
+                  ...prev,
+                  {
+                    id: safeId,
+                    role: "assistant",
+                    parts: [
+                      {
+                        type: "text",
+                        text: "An error occurred while processing your request. Please try again.",
+                      },
+                    ],
+                  },
+                ];
+              }
+
+              return prev;
+            } catch (error) {
+              console.error("Error handling completion error:", error);
+              return prev;
+            }
+          });
+        }
+
+        break;
+      }
+
+      // Legacy event types (kept for backward compatibility)
+      case "citations": {
+        const parsedCitations = citationsSchema.safeParse(
+          getNormalizedCitations(event.data),
+        );
+
+        if (!parsedCitations.success) {
+          console.log("Failed to parse the Citations schema", parsedCitations.error);
+          return;
+        }
+
+        setMessages((prev) => {
+          try {
+            const lastMessage = prev[prev.length - 1];
+
+            if (!lastMessage || lastMessage.role !== "assistant") {
               const safeId =
                 typeof crypto.randomUUID === "function"
                   ? crypto.randomUUID()
@@ -220,7 +419,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               ];
             }
 
-            // 2. If we are appending, clone and update
             const updatedMessages = [...prev];
             const updatedMessage = { ...lastMessage };
             const updatedParts = [...updatedMessage.parts];
@@ -245,74 +443,14 @@ export default function ChatProvider({ children }: ChatProviderProps) {
             return updatedMessages;
           } catch (error) {
             console.error("Error inside state updater:", error);
-            return prev; // Return previous state to avoid UI crashes
-          }
-        });
-        break;
-
-      case "token": {
-        const token: string = data?.text ?? "";
-        transitionStatus("Streaming");
-
-        setMessages((prev) => {
-          try {
-            const lastMessage = prev[prev.length - 1];
-
-            // 1. If no assistant message, create a brand new one
-            if (!lastMessage || lastMessage.role !== "assistant") {
-              // SAFE ID GENERATION FALLBACK
-              const safeId =
-                typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
-
-              return [
-                ...prev,
-                {
-                  id: safeId,
-                  role: "assistant",
-                  parts: [{ type: "text", text: token }],
-                },
-              ];
-            }
-
-            // 2. If we are appending, clone and update
-            const updatedMessages = [...prev];
-            const updatedMessage = { ...lastMessage };
-            const updatedParts = [...updatedMessage.parts];
-
-            const lastPart = updatedParts[updatedParts.length - 1];
-
-            if (lastPart && lastPart.type === "text") {
-              updatedParts[updatedParts.length - 1] = {
-                ...lastPart,
-                text: lastPart.text + token,
-              };
-            } else {
-              updatedParts.push({ type: "text", text: token });
-            }
-
-            updatedMessage.parts = updatedParts;
-            updatedMessages[updatedMessages.length - 1] = updatedMessage;
-
-            return updatedMessages;
-          } catch (error) {
-            console.error("Error inside state updater:", error);
-            transitionStatus("Error");
-            return prev; // Return previous state to avoid UI crashes
+            return prev;
           }
         });
         break;
       }
 
-      case "done":
-        console.log("Stream Done");
-        transitionStatus("Finished");
-        break;
-
       default:
-        console.warn(`Unhandled SSE Event Type: '${type}'`);
+        console.warn(`Unhandled event type: '${eventType}'`);
         break;
     }
   }
@@ -321,6 +459,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     console.log("Message from chat input", message);
 
     transitionStatus("LocalPending");
+    setStepUpdates([]); // Reset step updates for new message
+    
     try {
       const currentChat: MementoUIMessage = {
         id: "12",
@@ -337,10 +477,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         ...m,
         parts: m.parts.filter((p) => p.type === "text"),
       }));
-      const chatRequest: chatRequest = {
-        chat_history: [...filtered_messages, currentChat],
-        message_id: "123",
-      };
 
       setMessages((prev) => [...prev, currentChat]);
 
@@ -352,38 +488,60 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         body: JSON.stringify({ goal: message }),
       });
 
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
       if (!res.body) throw new Error("No response body");
 
-      console.log("Response body", res.body);
+      console.log("🔷 Streaming response received from backend");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder("utf-8");
 
       let buffer = "";
+      let eventCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log(`🏁 Stream ended. Total events received: ${eventCount}`);
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
 
-        const events = buffer.split(/\r?\n\r?\n/);
+        // Split by newlines to get individual JSON objects
+        const lines = buffer.split("\n");
 
-        buffer = events.pop() || "";
+        // Keep the last incomplete line in the buffer
+        buffer = lines.pop() || "";
 
-        for (const event of events) {
-          await handleSseEvent(event);
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            const event = JSON.parse(line);
+            eventCount++;
+            console.log(`🎯 [Event #${eventCount}] Received: type=${event.type}, Keys:`, Object.keys(event));
+            if (event.data) {
+              console.log(`   Data Keys:`, Object.keys(event.data));
+              if (event.data.stepId) console.log(`   stepId: ${event.data.stepId}`);
+            }
+            await handleStreamingEvent(event);
+          } catch (e) {
+            console.warn("Failed to parse streaming event:", line, e);
+          }
         }
       }
     } catch (err: unknown) {
-      console.log("err while sending the message: ", err);
+      console.error("Error while sending message:", err);
       transitionStatus("Error");
-    } finally {
     }
   };
 
   useEffect((): void => {
-    console.log("Ai Assistant status", assistantStatus);
+    console.log("Assistant status changed to:", assistantStatus);
   }, [assistantStatus]);
 
   return (
@@ -396,9 +554,11 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         rewrite: () => {},
         assistantStatus,
         makeTransition: transitionStatus,
+        stepUpdates,
       }}
     >
       {children}
     </ChatContext.Provider>
   );
-}
+} 
+

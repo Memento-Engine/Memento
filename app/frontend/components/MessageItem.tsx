@@ -194,6 +194,36 @@ function MessageItem({
         case "LocalPending":
           return <ThinkingBubble />;
 
+        case "Error":
+          // Only show error UI for actual system errors, not for "no results found"
+          return (
+            <div className="flex items-center gap-2 mt-4 p-3 rounded-md bg-destructive/10 border border-destructive/20">
+              <div className="flex-1">
+                <p className="text-sm text-destructive font-medium">
+                  Something went wrong
+                </p>
+                <p className="text-xs text-destructive/70 mt-1">
+                  An error occurred while processing your request. Please check your connection and try again.
+                </p>
+              </div>
+              {onRegenerate && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onRegenerate(message.id)}
+                  className="shrink-0"
+                >
+                  Retry
+                </Button>
+              )}
+            </div>
+          );
+
+        case "NoResults":
+          // "No results found" is not an error - it's a normal response
+          // The message content will contain the explanation from the LLM
+          return null;
+
         default:
           return null;
       }

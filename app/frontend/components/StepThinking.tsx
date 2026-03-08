@@ -18,7 +18,12 @@ export function StepThinking({ steps }: Props) {
 
   // Debug
   useEffect((): void => {
-    console.log("STEPS from step thinking", steps);
+    if (steps.length > 0) {
+      console.log("✅ STEPS from step thinking component (count=" + steps.length + ")");
+      steps.forEach((step, i) => {
+        console.log(`  Step ${i}: ${step.stepId} (${step.stepType}) - Status: ${step.status}, Results: ${step.resultCount ?? 0}`);
+      });
+    }
   }, [steps]);
 
   // Auto-collapse when finished

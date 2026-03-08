@@ -2,15 +2,18 @@ use chrono::{ DateTime, Utc };
 use image::DynamicImage;
 use sqlx::migrate::MigrateDatabase;
 use sqlx::sqlite::{ SqliteConnectOptions, SqlitePool, SqlitePoolOptions };
+use std::fs;
 use std::time::Duration;
 use sqlx::pool::PoolConnection;
-use tracing::{ warn, debug };
+use tracing::{ debug, info, warn };
 use libsqlite3_sys::sqlite3_auto_extension;
 use sqlite_vec::sqlite3_vec_init;
 use sqlx::{ QueryBuilder, Sqlite, Result, FromRow };
 use serde::{ Serialize, Deserialize };
 use std::fmt::Debug;
 use std::collections::HashMap;
+use std::sync::{ Arc, Mutex };
+// use crate::{ embedding::engine::EmbeddingModel };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Rect {
@@ -18,6 +21,13 @@ pub struct Rect {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum SearchType {
+    Vector,
+    FTS,
+    Hybrid,
 }
 
 impl Rect {
@@ -70,7 +80,7 @@ pub struct ProcessedOcrResult {
     pub confidence: f64,
     pub browser_url: Option<String>,
     pub monitor_dimensions: Rect,
-    pub image : DynamicImage
+    pub image: DynamicImage,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -221,6 +231,12 @@ impl DatabaseManager {
 
         // create db if not exists
         if !sqlx::Sqlite::database_exists(&connection_string).await? {
+            let home_dir = dirs::home_dir().expect("Failed to get the homeDir");
+            let memento_dir = home_dir.join(".memento");
+            if !memento_dir.exists() {
+                fs::create_dir_all(memento_dir)?;
+            }
+            tracing::info!("connectionString : {:#?}", connection_string);
             sqlx::Sqlite::create_database(&connection_string).await?;
         }
 
@@ -283,6 +299,316 @@ impl DatabaseManager {
         }
     }
 
+    fn build_hybrid_select(
+        &self,
+
+        qb: &mut QueryBuilder<Sqlite>
+    ) {
+        qb.push(r#"
+SELECT *
+FROM combined
+ORDER BY semantic_score ASC, keyword_hit DESC
+LIMIT 50
+"#);
+    }
+    fn build_fts_select(&self, qb: &mut QueryBuilder<Sqlite>) {
+        qb.push(
+            r#"
+        SELECT *
+        FROM keyword_matches
+        WHERE id IS NOT NULL
+        LIMIT 50
+        "#
+        );
+    }
+
+    fn build_vector_select(&self, qb: &mut QueryBuilder<Sqlite>) {
+        qb.push(
+            r#"
+        SELECT
+            fc.captured_at,
+            fc.app_name,
+            fc.window_title,
+            fc.text_content,
+            fc.browser_url,
+            fc.window_x,
+            fc.window_y,
+            fc.window_width,
+            fc.window_height,
+            fc.chunk_id,
+            fc.frame_id,
+            fc.image_path
+        FROM vector_matches vm
+        JOIN filtered_chunks fc ON fc.chunk_id = vm.id
+        ORDER BY vm.semantic_score
+        LIMIT 50
+        "#
+        );
+    }
+
+    fn build_hybrid_merge(&self, qb: &mut QueryBuilder<Sqlite>) {
+        qb.push(
+            r#"
+combined AS (
+    SELECT id,
+           MIN(semantic_score) as semantic_score,
+           MAX(keyword_hit) as keyword_hit
+    FROM (
+        SELECT id, semantic_score, 0.0 as keyword_hit FROM vector_matches
+        UNION ALL
+        SELECT id, 0.5 as semantic_score, keyword_hit FROM keyword_matches
+    )
+    GROUP BY id
+)
+"#
+        );
+    }
+
+    fn build_fts_cte<'a>(&self, qb: &mut QueryBuilder<'a, Sqlite>, keywords_str: &'a str) {
+        qb.push(r#"
+            keyword_matches AS (
+            "#);
+
+        if !keywords_str.is_empty() {
+            qb.push(
+                r#"
+                SELECT
+                    rowid as id,
+                    1.0 as keyword_hit
+                FROM chunks_fts
+                WHERE chunks_fts MATCH
+                "#
+            );
+
+            qb.push_bind(keywords_str);
+
+            qb.push(" AND rowid IN (SELECT id FROM filtered_chunks)");
+        } else {
+            qb.push("SELECT NULL as id, 0.0 as keyword_hit WHERE 1=0");
+        }
+
+        qb.push(")");
+    }
+
+    fn build_vector_cte<'a>(&self, qb: &mut QueryBuilder<'a, Sqlite>, embedding_json: &'a str) {
+        qb.push(
+            r#"
+        vector_matches AS (
+            SELECT
+                v.chunk_id as id,
+                vec_distance_cosine(v.embedding,
+        "#
+        );
+
+        qb.push_bind(embedding_json);
+
+        qb.push(
+            r#"
+        ) as semantic_score
+        FROM vec_chunks v
+        JOIN filtered_chunks fc ON fc.chunk_id = v.chunk_id
+        ORDER BY semantic_score ASC
+        LIMIT 150
+        )
+        "#
+        );
+    }
+    fn build_filtered_chunks_cte(
+        &self,
+        qb: &mut QueryBuilder<Sqlite>,
+        app_names: Option<Vec<&str>>,
+        window_names: Option<Vec<&str>>,
+        browser_urls: Option<Vec<&str>>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>
+    ) {
+        qb.push(
+            r#"
+filtered_chunks AS (
+    SELECT
+        c.id AS chunk_id,
+        c.text_content,
+        f.id AS frame_id,
+        f.captured_at,
+        f.app_name,
+        f.window_title,
+        f.is_focused,
+        f.browser_url,
+        f.window_x,
+        f.window_y,
+        f.window_width,
+        f.window_height,
+        f.monitor_height,
+        f.monitor_width,
+        f.image_path
+    FROM chunks c
+    JOIN frames f ON c.frame_id = f.id
+    WHERE 1=1
+"#
+        );
+
+        // Handle app_name array - match if ANY app_name variant matches
+        if let Some(apps) = app_names {
+            if !apps.is_empty() {
+                qb.push(" AND (");
+                for (idx, _) in apps.iter().enumerate() {
+                    if idx > 0 {
+                        qb.push(" OR ");
+                    }
+                    qb.push("LOWER(f.app_name) LIKE ");
+                    qb.push_bind(format!("%{}%", apps[idx].to_lowercase()));
+                }
+                qb.push(")");
+            }
+        }
+
+        // Handle window_title array - match if ANY window title variant matches
+        if let Some(windows) = window_names {
+            if !windows.is_empty() {
+                qb.push(" AND (");
+                for (idx, _) in windows.iter().enumerate() {
+                    if idx > 0 {
+                        qb.push(" OR ");
+                    }
+                    qb.push("LOWER(f.window_title) LIKE ");
+                    qb.push_bind(format!("%{}%", windows[idx].to_lowercase()));
+                }
+                qb.push(")");
+            }
+        }
+
+        // Handle browser_url array - match if ANY url variant matches
+        if let Some(urls) = browser_urls {
+            if !urls.is_empty() {
+                qb.push(" AND (");
+                for (idx, _) in urls.iter().enumerate() {
+                    if idx > 0 {
+                        qb.push(" OR ");
+                    }
+                    qb.push("LOWER(f.browser_url) LIKE ");
+                    qb.push_bind(format!("%{}%", urls[idx].to_lowercase()));
+                }
+                qb.push(")");
+            }
+        }
+
+        if let (Some(start), Some(end)) = (start_time, end_time) {
+            qb.push(" AND f.captured_at BETWEEN ");
+            qb.push_bind(start.to_rfc3339());
+            qb.push(" AND ");
+            qb.push_bind(end.to_rfc3339());
+        }
+
+        qb.push(")");
+    }
+
+    pub async fn search_tool(
+        &self,
+        app_names: Option<Vec<&str>>,
+        window_names: Option<Vec<&str>>,
+        browser_urls: Option<Vec<&str>>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+        key_words: Option<Vec<&str>>,
+        search_type: &SearchType,
+        limit: Option<i32>,
+        embedding_json: &str,
+        _sort_field: Option<&str>,
+        _sort_order: Option<&str>
+    ) -> Result<Vec<SearchResult>, sqlx::Error> {
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("WITH ");
+
+        let keywords_str = key_words
+            .as_ref()
+            .map(|k| {
+                k.iter()
+                    .filter(|w| !w.trim().is_empty())
+                    .map(|w| format!("\"{}\"*", w))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            })
+            .unwrap_or_default();
+
+        self.build_filtered_chunks_cte(
+            &mut qb,
+            app_names,
+            window_names,
+            browser_urls,
+            start_time,
+            end_time
+        );
+
+        match search_type {
+            SearchType::Vector => {
+                println!("Embeddinjson len {:?}", embedding_json.len());
+                qb.push(",");
+                self.build_vector_cte(&mut qb, &embedding_json);
+
+                self.build_vector_select(&mut qb);
+            }
+
+            SearchType::FTS => {
+                qb.push(",");
+                self.build_fts_cte(&mut qb, &keywords_str);
+
+                self.build_fts_select(&mut qb);
+            }
+
+            SearchType::Hybrid => {
+                qb.push(",");
+                self.build_vector_cte(&mut qb, &embedding_json);
+
+                qb.push(",");
+                self.build_fts_cte(&mut qb, &keywords_str);
+
+                qb.push(",");
+                self.build_hybrid_merge(&mut qb);
+
+                self.build_final_select(&mut qb);
+            }
+        }
+
+        let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
+
+        Ok(results)
+    }
+
+    fn build_final_select(&self, qb: &mut QueryBuilder<Sqlite>) {
+        qb.push(
+            r#"
+            SELECT
+            f.id as frame_id,
+            f.captured_at,
+            f.app_name,
+            f.window_title,
+            f.is_focused,
+            f.browser_url,
+            f.window_x,
+            f.window_y,
+            f.window_width,
+            f.window_height,
+            f.image_path,
+
+            c.text_content,
+            c.id as chunk_id,
+
+            (
+                (1 - semantic_score) * 0.7
+                + keyword_hit * 0.3
+                + CASE WHEN f.is_focused = 1 THEN 0.3 ELSE 0 END
+                + (1.0 / (1 + (julianday('now') - julianday(f.captured_at)))) * 0.2
+            ) as final_score
+
+            FROM combined
+            JOIN chunks c ON combined.id = c.id
+            JOIN frames f ON c.frame_id = f.id
+
+            ORDER BY final_score DESC
+            LIMIT 50
+"#
+        );
+    }
+
     pub async fn insert_into_frames(
         &self,
         app_name: &str,
@@ -331,12 +657,11 @@ impl DatabaseManager {
 
         Ok(result.last_insert_rowid())
     }
-    
-    
+
     pub async fn insert_frames_with_chunks(
         &self,
         result: &ProcessedOcrResult,
-        image_path : &str
+        image_path: &str
     ) -> Result<(), sqlx::Error> {
         let mut tx = self.begin_immediate_with_retry().await?;
 
@@ -454,6 +779,7 @@ impl DatabaseManager {
             r#"
 WITH
 
+
 -- 0️ Metadata Filtering FIRST
 filtered_chunks AS (
     SELECT
@@ -491,12 +817,12 @@ filtered_chunks AS (
             r#"
 ),
 
--- 1️ Semantic Retrieval (ONLY on filtered chunks)
-vector_matches AS (
-    SELECT
-        v.chunk_id as id,
-        vec_distance_cosine(v.embedding,
-"#
+        -- 1️ Semantic Retrieval (ONLY on filtered chunks)
+        vector_matches AS (
+            SELECT
+                v.chunk_id as id,
+                vec_distance_cosine(v.embedding,
+        "#
         );
 
         qb.push_bind(embedding_json);
@@ -509,9 +835,9 @@ vector_matches AS (
     LIMIT 150
 ),
 
--- 2️ Keyword Retrieval (ONLY filtered)
-keyword_matches AS (
-"#
+        -- 2️ Keyword Retrieval (ONLY filtered)
+        keyword_matches AS (
+        "#
         );
 
         if !keywords_str.is_empty() {

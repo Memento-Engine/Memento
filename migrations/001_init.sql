@@ -3,7 +3,7 @@
 -- ==========================================
 CREATE TABLE IF NOT EXISTS frames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    captured_at DATETIME DEFAULT (datetime('now','localtime')),
 
     app_name TEXT NOT NULL,
     window_title TEXT,

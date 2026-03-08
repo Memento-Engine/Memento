@@ -2,7 +2,7 @@ import { app } from "@tauri-apps/api";
 import { InferUITools, UIMessage, tool } from "ai";
 import { string, z } from "zod";
 
-// Thinking schema
+// Step search results schema
 export const StepSearchResultsSchema = z.object({
   app_name: z.string(),
   window_name: z.string(),
@@ -10,17 +10,42 @@ export const StepSearchResultsSchema = z.object({
   captured_at: z.string(),
 });
 
+// Thinking schema - represents execution steps streamed from backend
 export const thinkingSchema = z.object({
-  title: z.string(),
+  // Step identification
+  stepId: z.string(),
+  stepType: z.enum([
+    "planning", // planner generating plan
+    "searching", // executor running search step
+    "reasoning", // executor running reasoning step
+    "completion", // final answer generation
+  ]),
+
+  // Step status and progress
   status: z.enum([
     "running", // currently executing
     "completed", // finished step
-    "final", // pipeline finished
+    "failed", // step failed but recovered
+    "final", // entire pipeline finished
   ]),
 
+  // Step description and details
+  title: z.string(), // Human-readable step name
+  description: z.string().optional(), // Detailed description
+  query: z.string().optional(), // Search query or reasoning prompt
+  
+  // Search/execution results
   results: z.array(StepSearchResultsSchema).optional().nullable(),
-  message: z.string().optional().nullable(),
-  queries: z.array(z.string()).nullable().optional(),
+  resultCount: z.number().optional(), // Count of results found
+  
+  // Reasoning and feedback
+  message: z.string().optional().nullable(), // Info/warning/error message
+  reasoning: z.string().optional(), // LLM reasoning for this step
+  queries: z.array(z.string()).nullable().optional(), // Alternative queries tried
+  
+  // Timing
+  duration: z.number().optional(), // Time taken in ms
+  timestamp: z.string().optional(), // ISO timestamp
 });
 
 export type ThinkingStep = z.infer<typeof thinkingSchema>;

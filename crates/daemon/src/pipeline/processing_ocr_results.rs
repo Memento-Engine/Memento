@@ -80,7 +80,7 @@ pub async fn processing_ocr_results(
             // Generate embeddings safely (non-blocking async)
             // ----------------------------------------
             let embeddings: Vec<Vec<f32>> = {
-                let embedding_model = bi_encoder.clone();
+                let embedding_model: Arc<Mutex<EmbeddingModel>> = bi_encoder.clone();
 
                 tokio::task
                     ::spawn_blocking(move || {

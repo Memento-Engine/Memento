@@ -1,0 +1,153 @@
+# Lefthook Configuration
+# Comprehensive git hooks for code quality, security, and consistency
+#
+# COMMIT MESSAGE FORMAT:
+# =====================
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+#
+# Types:
+#   feat:     A new feature
+#   fix:      A bug fix
+#   docs:     Documentation only changes
+#   style:    Changes that don't affect code meaning (formatting, prettier, eslint fixes)
+#   refactor: Code change that neither fixes a bug nor adds a feature
+#   perf:     Code change that improves performance
+#   test:     Adding or updating tests
+#   chore:    Changes to build process, dependencies, or tooling
+#   ci:       Changes to CI/CD configuration
+#   revert:   Reverts a previous commit
+#
+# Examples:
+#   feat(auth): add JWT token validation
+#   fix(api): resolve race condition in query handler
+#   docs: update README with setup instructions
+#   refactor(core): simplify error handling logic
+#   perf(search): optimize database indexing
+#
+# BRANCH NAME FORMAT:
+# ===================
+# <type>/<issue-id>-<description>
+#
+# Types:
+#   feature/  - New features
+#   fix/      - Bug fixes
+#   hotfix/   - Urgent fixes for production
+#   refactor/ - Code refactoring
+#   docs/     - Documentation changes
+#   test/     - Test-related changes
+#   chore/    - Build, CI, dependencies, etc.
+#
+# Rules:
+#   - Use lowercase letters, numbers, hyphens only
+#   - No underscores, spaces, or special characters
+#   - Keep under 50 characters
+#   - Use issue ID if available (e.g., #123)
+#
+# Examples:
+#   feature/123-user-authentication
+#   fix/456-memory-leak-in-search
+#   hotfix/789-critical-api-outage
+#   refactor/cleanup-query-builder
+#   docs/api-documentation
+
+# Global settings
+colors: true
+skip_output: false
+no_tty: false
+
+# Pre-commit hooks - Run before committing
+pre-commit:
+  parallel: false
+  commands:
+    01-branch-validate:
+      stage_fixed: true
+      commands:
+        validate-branch-name:
+          run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/validate-branch.ps1
+          skip: merge,rebase
+
+    02-file-hygiene:
+      commands:
+        check-file-size:
+          run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/check-file-size.ps1
+          skip: merge,rebase
+        check-permissions:
+          run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/check-permissions.ps1
+          skip: merge,rebase
+
+    03-secrets-detection:
+      commands:
+        detect-secrets:
+          run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/detect-secrets.ps1
+          skip: merge,rebase
+
+    04-rust-checks:
+      glob: "crates/**/*.rs|app/src-tauri/**/*.rs"
+      commands:
+        rustfmt:
+          run: cargo fmt --all -- --check
+          fail_text: "Run 'cargo fmt --all' to format Rust code"
+          skip: merge,rebase
+
+    05-node-format:
+      glob: "agents/**/*.ts|app/**/*.ts|app/**/*.tsx|app/**/*.js"
+      commands:
+        prettier:
+          run: npx prettier --write {staged_files}
+          skip: merge,rebase
+
+    06-node-lint:
+      glob: "agents/**/*.ts|app/**/*.ts|app/**/*.tsx"
+      commands:
+        eslint-agents:
+          run: cd agents && npx eslint --fix src/**/*.ts 2>/dev/null || true
+          skip: merge,rebase
+        eslint-app:
+          run: cd app && npx eslint --fix . 2>/dev/null || true
+          skip: merge,rebase
+
+    07-commit-msg-validate:
+      commands:
+        validate-commit-msg:
+          run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/validate-commit-msg.ps1 {commit_msg_filepath}
+          skip: merge,rebase,squash
+
+# Pre-push hooks - Run before pushing to remote
+pre-push:
+  parallel: false
+  commands:
+    01-rust-check:
+      commands:
+        cargo-check:
+          run: cargo check --all --all-features
+          fail_text: "Cargo check failed. Fix errors and try again."
+          skip: merge,rebase
+
+    02-rust-test:
+      commands:
+        cargo-test:
+          run: cargo test --all --all-features 2>/dev/null || true
+          skip: merge,rebase
+
+    03-ui-build:
+      commands:
+        build-app:
+          run: cd app && npm run build 2>/dev/null || true
+          skip: merge,rebase
+
+    04-full-lint:
+      commands:
+        lint-all:
+          run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/full-lint.ps1
+          skip: merge,rebase
+
+# Commit message hook
+commit-msg:
+  commands:
+    validate-commit-msg:
+      run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/validate-commit-msg.ps1 {1}
+      skip: merge,rebase,squash

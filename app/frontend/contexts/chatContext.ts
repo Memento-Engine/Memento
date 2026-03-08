@@ -1,4 +1,4 @@
-import { MementoUIMessage } from "@/components/types";
+import {MementoUIMessage } from "@/components/types";
 import { createContext } from "react";
 
 export type AssistantStatus =
@@ -7,15 +7,17 @@ export type AssistantStatus =
   | "Thinking" // Server reasoning/searching
   | "Streaming" // Tokens arriving
   | "Finished" // Message complete (Terminal)
+  | "NoResults" // Search completed but found no results (Terminal, not an error)
   | "Error"; // Failure (Terminal)
 
 // Define the strict, forward-only transition rules
 export const TRANSITIONS: Record<AssistantStatus, AssistantStatus[]> = {
-  Idle: ["LocalPending", "Thinking", "Streaming", "Finished", "Error"],
+  Idle: ["LocalPending", "Thinking", "Streaming", "Finished", "NoResults", "Error"],
   LocalPending: ["Thinking", "Error"],
-  Thinking: ["Streaming", "Finished", "Error"], // Can jump to Finished if no stream
-  Streaming: ["Finished", "Error"],
+  Thinking: ["Streaming", "Finished", "NoResults", "Error"], // Can jump to Finished/NoResults if no stream
+  Streaming: ["Finished", "NoResults", "Error"],
   Finished: ["Idle"], // Assuming you want to reset for the next message
+  NoResults: ["Idle"], // No results is not an error, can reset
   Error: ["Idle"], // Assuming you want to allow recovery/reset
 };
 
@@ -31,6 +33,7 @@ type ChatContext = {
   rewrite: (messageId: string) => void;
   assistantStatus: AssistantStatus; // Use the raw string type here
   makeTransition: (nextState: AssistantStatus) => boolean;
+  stepUpdates: any[]; // Array of step thinking events
 };
 
 export function chatContextEmptyState(): ChatContext {
@@ -42,6 +45,7 @@ export function chatContextEmptyState(): ChatContext {
     rewrite: () => {},
     assistantStatus: "Idle",
     makeTransition: () => false,
+    stepUpdates: [],
   };
 }
 

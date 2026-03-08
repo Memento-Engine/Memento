@@ -271,7 +271,7 @@ async fn main() {
     let app_clone = app_state.clone();
 
     let windows_ocr_engine = Arc::new(ocr_engine);
-    let (result_sender, mut result_receiver) = channel(512);
+    // let (result_sender, mut result_receiver) = channel(512);
 
     let monitor_id = match get_primary_monitor_id().await {
         Ok(m) => {
@@ -288,19 +288,19 @@ async fn main() {
 
     // 3. Spawn the task using an async block.
     // The `move` keyword transfers ownership of `ocr_engine` into the task.
-    tokio::spawn(async move {
-        let _ = continuous_capture(
-            result_sender,
-            interval,
-            windows_ocr_engine.clone(),
-            monitor_id
-        ).await;
-    });
+    // tokio::spawn(async move {
+    //     let _ = continuous_capture(
+    //         result_sender,
+    //         interval,
+    //         windows_ocr_engine.clone(),
+    //         monitor_id
+    //     ).await;
+    // });
 
-    // processing ocr results
-    tokio::spawn(async move {
-        processing_ocr_results(result_receiver, embedding_engine, db).await;
-    });
+    // // processing ocr results
+    // tokio::spawn(async move {
+    //     processing_ocr_results(result_receiver, embedding_engine, db).await;
+    // });
 
     // Starting the server
     start_server(app_clone).await;
