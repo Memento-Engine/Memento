@@ -1,6 +1,5 @@
 import { AgentStateType } from "../agentState";
 import { DatabaseQuery, PlannerStep, PlannerPlan } from "../planner/planner.schema";
-import { getLLM } from "../planner/planner.node";
 import { resolveDatabaseQuery, validateStepOutput } from "./extraction.validator";
 import { extractorPrompt } from "../prompts/extractionPrompt";
 import { getConfig } from "../config/config";
@@ -11,6 +10,7 @@ import { ExecutorError, ToolError, ErrorCode, AgentError } from "../types/errors
 import { ToolContext } from "../types/tools";
 import { emitError, emitStepEvent } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
+import { invokeRoleLlm } from "../llm/routing";
 
 /**
  * Check if a result is empty or invalid.
@@ -72,6 +72,31 @@ async function shouldTriggerReplan(state: AgentStateType): Promise<boolean> {
   return shouldReplan;
 }
 
+function isTimeoutError(error: unknown): boolean {
+  if (error instanceof AgentError && error.code === ErrorCode.TIMEOUT_ERROR) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|ETIMEDOUT/i.test(message);
+}
+
+function shouldReplanOnError(step: PlannerStep, error: unknown): boolean {
+  if (isTimeoutError(error)) {
+    return false;
+  }
+
+  if (error instanceof ToolError) {
+    return true;
+  }
+
+  if (error instanceof ExecutorError && /dependency not resolved/i.test(error.message)) {
+    return true;
+  }
+
+  return step.kind === "search";
+}
+
 /**
  * Execute a single step of the plan.
  * Handles tool execution, validation, and retries.
@@ -81,9 +106,8 @@ async function executeStep(
   stepResults: Record<string, any>,
   logger: any,
   state: AgentStateType
-): Promise<any> {
+): Promise<{ result: any; llmCallsUsed: number }> {
   const config = await getConfig();
-  const llm = await getLLM();
   const toolRegistry = await getToolRegistry();
 
   // Search steps use the search tool
@@ -97,7 +121,11 @@ async function executeStep(
 
     try {
       // Resolve placeholder references in database query
-      step.databaseQuery = await resolveDatabaseQuery(step.databaseQuery, step.dependsOn, stepResults);
+      step.databaseQuery = await resolveDatabaseQuery(
+        step.databaseQuery,
+        step.dependsOn,
+        stepResults
+      );
 
       logger.debug("Resolved database query", {
         stepId: step.id,
@@ -138,7 +166,7 @@ async function executeStep(
         logger.warn("Search returned no results", {
           stepId: step.id,
         });
-        return null;
+        return { result: null, llmCallsUsed: 0 };
       }
 
       // OPTIMIZATION: Return database results directly without LLM extraction
@@ -149,7 +177,7 @@ async function executeStep(
         optimizationNote: "Skipping LLM extraction - using DB results directly",
       });
 
-      return dbResults;
+      return { result: dbResults, llmCallsUsed: 0 };
     } catch (error) {
       if (error instanceof ToolError) {
         throw error;
@@ -172,7 +200,7 @@ async function executeStep(
     requiresLLM: true,
   });
 
-  return await executeReasoningStep(step, stepResults, state, logger, config, llm);
+  return await executeReasoningStep(step, stepResults, state, logger, config);
 }
 
 function normalizeReasoningOutput(step: PlannerStep, parsed: any): any {
@@ -207,11 +235,19 @@ function normalizeReasoningOutput(step: PlannerStep, parsed: any): any {
     return (parsed as Record<string, any>).value;
   }
 
-  if (expectedType === "list" && "items" in parsed && Array.isArray((parsed as Record<string, any>).items)) {
+  if (
+    expectedType === "list" &&
+    "items" in parsed &&
+    Array.isArray((parsed as Record<string, any>).items)
+  ) {
     return (parsed as Record<string, any>).items;
   }
 
-  if (expectedType === "table" && "rows" in parsed && Array.isArray((parsed as Record<string, any>).rows)) {
+  if (
+    expectedType === "table" &&
+    "rows" in parsed &&
+    Array.isArray((parsed as Record<string, any>).rows)
+  ) {
     return (parsed as Record<string, any>).rows;
   }
 
@@ -227,9 +263,8 @@ async function executeReasoningStep(
   stepResults: Record<string, any>,
   state: AgentStateType,
   logger: any,
-  config: any,
-  llm: any
-): Promise<any> {
+  config: any
+): Promise<{ result: any; llmCallsUsed: number }> {
   return runWithSpan(
     "agent.node.executor.reasoning_step",
     {
@@ -238,110 +273,56 @@ async function executeReasoningStep(
       step_kind: step.kind,
     },
     async () => {
-      let lastError: string = "";
+      const dependencyContext = Object.fromEntries(
+        step.dependsOn.map((depId) => [depId, stepResults[depId]])
+      );
 
-      for (let attempt = 1; attempt <= step.maxRetries; attempt++) {
-        logger.info("Reasoning step execution attempt", {
-          stepId: step.id,
-          attempt,
-          maxRetries: step.maxRetries,
-          stepKind: step.kind,
-        });
+      const prompt = await extractorPrompt.invoke({
+        goal: step.query,
+        previousErrors: "",
+        step: JSON.stringify(step, null, 2),
+        dbResults: JSON.stringify(dependencyContext, null, 2),
+        outputType: step.expectedOutput.type,
+        variableName: step.expectedOutput.variableName,
+        outputDescription: step.expectedOutput.description,
+        currentStepDependencyResults: dependencyContext,
+      });
 
-        try {
-          const dependencyContext = Object.fromEntries(
-            step.dependsOn.map((depId) => [depId, stepResults[depId]]),
-          );
+      const llmInvocation = await invokeRoleLlm({
+        role: "executor",
+        prompt,
+        requestId: state.requestId,
+        spanName: "agent.node.executor.reasoning_llm",
+        spanAttributes: {
+          step_id: step.id,
+          step_kind: step.kind,
+        },
+      });
 
-          const prompt = await extractorPrompt.invoke({
-            goal: step.query,
-            previousErrors: lastError,
-            step: JSON.stringify(step, null, 2),
-            dbResults: JSON.stringify(dependencyContext, null, 2),
-            outputType: step.expectedOutput.type,
-            variableName: step.expectedOutput.variableName,
-            outputDescription: step.expectedOutput.description,
-            currentStepDependencyResults: dependencyContext,
-          });
+      const llmResponse = llmInvocation.response as any;
+      const parsedContent = await SafeJsonParser.parseContent(llmResponse.content);
+      const normalizedContent = normalizeReasoningOutput(step, parsedContent);
 
-          const llmResult = await runWithSpan(
-            "agent.node.executor.reasoning_llm",
-            {
-              request_id: state.requestId,
-              step_id: step.id,
-              retry_attempt: attempt,
-            },
-            async () =>
-              withTimeout(
-                llm.invoke(prompt),
-                config.llm.timeout,
-                "Reasoning LLM request timeout",
-              ),
-          );
+      const validation = validateStepOutput(step, normalizedContent);
 
-          const llmResponse = llmResult as any;
-          logger.debug("LLM response received for reasoning step", {
+      if (!validation.valid) {
+        throw new ExecutorError(
+          `Reasoning step ${step.id} produced invalid output: ${validation.error}`,
+          {
             stepId: step.id,
-            llmContentLength: String(llmResponse.content).length,
-            llmContent: llmResponse.content,
-          });
-
-          const parsedContent = await SafeJsonParser.parseContent(llmResponse.content);
-          const normalizedContent = normalizeReasoningOutput(step, parsedContent);
-
-          logger.debug("Reasoning output parsed", {
-            stepId: step.id,
-            type: typeof normalizedContent,
-            goal: step.query,
-          });
-
-          const validation = validateStepOutput(step, normalizedContent);
-
-          if (validation.valid) {
-            logger.info("Reasoning step completed successfully", {
-              stepId: step.id,
-              outputVariable: step.expectedOutput.variableName,
-              type: step.expectedOutput.type,
-            });
-
-            return normalizedContent;
+            validationError: validation.error,
           }
-
-          lastError = validation.error;
-          logger.warn("Reasoning output validation failed", {
-            stepId: step.id,
-            error: validation.error,
-            stepKind: step.kind,
-            stepQuery: step.query,
-            stepExpectedOutput: step.expectedOutput,
-            attempt,
-          });
-        } catch (error) {
-          lastError = ErrorHandler.getSafeMessage(error);
-          logger.error("Error during reasoning step", error, {
-            stepId: step.id,
-            attempt,
-            error: lastError,
-          });
-        }
-
-        if (attempt < step.maxRetries) {
-          logger.info("Retrying reasoning step", {
-            stepId: step.id,
-            nextAttempt: attempt + 1,
-          });
-        }
+        );
       }
 
-      throw new ExecutorError(
-        `Reasoning step ${step.id} failed after ${step.maxRetries} attempts: ${lastError}`,
-        {
-          stepId: step.id,
-          maxRetries: step.maxRetries,
-          lastError,
-        },
-      );
-    },
+      logger.info("Reasoning step completed successfully", {
+        stepId: step.id,
+        outputVariable: step.expectedOutput.variableName,
+        type: step.expectedOutput.type,
+      });
+
+      return { result: normalizedContent, llmCallsUsed: 1 };
+    }
   );
 }
 
@@ -357,233 +338,262 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
       current_step: state.currentStep,
     },
     async () => {
-  const logger = await createContextLogger(state.requestId, {
-    node: "executor",
-    currentStep: state.currentStep,
-  });
-
-  logger.info("Executor node started", {
-    totalSteps: state.plan?.steps?.length ?? 0,
-  });
-
-  const { plan } = state;
-
-  if (!plan?.steps || plan.steps.length === 0) {
-    throw new ExecutorError("Plan has no steps", {
-      plan: plan ? "exists but empty" : "undefined",
-    });
-  }
-
-  const stepResults = state.stepResults ?? {};
-  const stepErrors: Record<string, string> = state.stepErrors ?? {};
-  let completedSteps = Object.keys(stepResults).length;
-
-  try {
-    for (let i = state.currentStep; i < plan.steps.length; i++) {
-      const step = plan.steps[i];
-
-      logger.info("Executing step", {
-        stepIndex: i,
-        stepId: step.id,
-        stepKind: step.kind,
-        query: step.query,
+      const logger = await createContextLogger(state.requestId, {
+        node: "executor",
+        currentStep: state.currentStep,
       });
 
-      // Verify dependencies are satisfied
-      for (const dep of step.dependsOn) {
-        if (!(dep in stepResults)) {
-          throw new ExecutorError(`Step ${step.id} dependency not resolved: ${dep}`, {
-            stepId: step.id,
-            missingDependency: dep,
-            availableResults: Object.keys(stepResults),
-          });
-        }
+      logger.info("Executor node started", {
+        totalSteps: state.plan?.steps?.length ?? 0,
+      });
+
+      const { plan } = state;
+
+      if (!plan?.steps || plan.steps.length === 0) {
+        throw new ExecutorError("Plan has no steps", {
+          plan: plan ? "exists but empty" : "undefined",
+        });
       }
+
+      const stepResults = state.stepResults ?? {};
+      const stepErrors: Record<string, string> = state.stepErrors ?? {};
+      let completedSteps = Object.keys(stepResults).length;
+      const executionStartedAt = state.startTime ?? Date.now();
+      let llmCalls = state.llmCalls ?? 0;
+      let executedSteps = 0;
+      let reasoningSteps = 0;
+      const maxLlmCalls = (await getConfig()).agent.maxLlmCalls;
+      const maxSteps = (await getConfig()).agent.maxSteps;
+      const maxRuntimeMs = (await getConfig()).agent.maxRuntimeMs;
+      const maxReasoningSteps = (await getConfig()).agent.maxReasoningSteps;
 
       try {
-        // Execute the step
-        const result = await runWithSpan(
-          "agent.node.executor.step",
-          {
-            request_id: state.requestId,
-            step_id: step.id,
-            step_kind: step.kind,
-            step_index: i,
-          },
-          async () => executeStep(step, stepResults, logger, state),
-        );
+        for (let i = state.currentStep; i < plan.steps.length; i++) {
+          const step = plan.steps[i];
 
-        // Evaluate if result is empty or invalid
-        const isResultEmpty = isEmptyResult(result);
+          if (Date.now() - executionStartedAt > maxRuntimeMs) {
+            logger.warn("Global runtime limit reached; returning partial answer", {
+              maxRuntimeMs,
+              executedSteps,
+            });
+            break;
+          }
 
-        if (result === null && step.kind === "search") {
-          // Empty search results
-          stepResults[step.id] = [];
-          logger.warn("Step completed with empty results - may trigger replanning", {
+          if (executedSteps >= maxSteps) {
+            logger.warn("Global step limit reached; returning partial answer", {
+              maxSteps,
+              executedSteps,
+            });
+            break;
+          }
+
+          if (step.kind !== "search" && reasoningSteps >= maxReasoningSteps) {
+            logger.warn("Reasoning step limit reached; skipping remaining reasoning steps", {
+              maxReasoningSteps,
+              reasoningSteps,
+              stepId: step.id,
+            });
+            break;
+          }
+
+          logger.info("Executing step", {
+            stepIndex: i,
             stepId: step.id,
             stepKind: step.kind,
-          });
-
-          // Emit search step event with no results
-          emitStepEvent(step.id, "searching", step.query, "completed", state.requestId, {
-            description: step.query,
             query: step.query,
-            resultCount: 0,
-            message: "Search returned no results",
           });
 
-          // Signal for replanning if this is a critical step
-          // Critical steps are those that return data needed for downstream steps
-          if (hasDependentSteps(plan, step.id)) {
-            logger.info("Empty result detected on step with dependent steps", {
-              stepId: step.id,
-              dependentCount: plan.steps.filter((s) => s.dependsOn.includes(step.id)).length,
-            });
-
-            // Return early to trigger replanning
-            return {
-              ...state,
-              stepResults,
-              stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
-              currentStep: i,
-              shouldReplan: true,
-              lastFailedStepId: step.id,
-              failureReason: `Search step returned empty results. Query: "${step.query}"`,
-            };
-          }
-        } else if (isResultEmpty) {
-          // Non-search step returned empty result
-          logger.warn("Non-search step returned empty result", {
-            stepId: step.id,
-            stepKind: step.kind,
-            resultType: typeof result,
-          });
-
-          emitStepEvent(
-            step.id,
-            step.kind === "search" ? "searching" : "reasoning",
-            step.query,
-            "completed",
-            state.requestId,
-            {
-              description: step.query,
-              query: step.query,
-              message: "Step returned no data",
+          // Verify dependencies are satisfied
+          for (const dep of step.dependsOn) {
+            if (!(dep in stepResults)) {
+              throw new ExecutorError(`Step ${step.id} dependency not resolved: ${dep}`, {
+                stepId: step.id,
+                missingDependency: dep,
+                availableResults: Object.keys(stepResults),
+              });
             }
-          );
-
-          // Similar logic for non-search steps
-          if (hasDependentSteps(plan, step.id)) {
-            logger.info("Empty result detected on non-search step with dependents", {
-              stepId: step.id,
-            });
-
-            return {
-              ...state,
-              stepResults,
-              stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
-              currentStep: i,
-              shouldReplan: true,
-              lastFailedStepId: step.id,
-              failureReason: `Step returned empty result. Kind: ${step.kind}. Query: "${step.query}"`,
-            };
-          } else {
-            // Final step or non-critical step with empty result
-            stepResults[step.id] = result ?? null;
-            logger.info("Empty result on non-critical step - continuing", {
-              stepId: step.id,
-            });
           }
-        } else {
-          stepResults[step.id] = result;
-          logger.info("Step completed successfully", {
-            stepId: step.id,
-            resultType: typeof result,
-          });
 
-          // Emit successful step event
-          emitStepEvent(
-            step.id,
-            step.kind === "search" ? "searching" : "reasoning",
-            step.query,
-            "completed",
-            state.requestId,
-            {
-              description: step.query,
-              query: step.query,
-              results: Array.isArray(result) ? result.slice(0, 3) : undefined,
-              resultCount: Array.isArray(result) ? result.length : 1,
+          try {
+            if (step.kind !== "search" && llmCalls >= maxLlmCalls) {
+              logger.warn("Global LLM call limit reached; returning partial answer", {
+                maxLlmCalls,
+                llmCalls,
+              });
+              break;
             }
-          );
+
+            const stepExecution = await runWithSpan(
+              "agent.node.executor.step",
+              {
+                request_id: state.requestId,
+                step_id: step.id,
+                step_kind: step.kind,
+                step_index: i,
+              },
+              async () => executeStep(step, stepResults, logger, state)
+            );
+            const result = stepExecution.result;
+            llmCalls += stepExecution.llmCallsUsed;
+            executedSteps += 1;
+            if (step.kind !== "search") {
+              reasoningSteps += 1;
+            }
+
+            // Evaluate if result is empty or invalid
+            const isResultEmpty = isEmptyResult(result);
+
+            if (result === null && step.kind === "search") {
+              // Empty search results
+              stepResults[step.id] = [];
+              logger.warn("Step completed with empty results - may trigger replanning", {
+                stepId: step.id,
+                stepKind: step.kind,
+              });
+
+              // Signal for replanning if this is a critical step
+              // Critical steps are those that return data needed for downstream steps
+              if (hasDependentSteps(plan, step.id)) {
+                logger.info("Empty result detected on step with dependent steps", {
+                  stepId: step.id,
+                  dependentCount: plan.steps.filter((s) => s.dependsOn.includes(step.id)).length,
+                });
+
+                // Return early to trigger replanning
+                return {
+                  ...state,
+                  stepResults,
+                  stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
+                  currentStep: i,
+                  shouldReplan: true,
+                  lastFailedStepId: step.id,
+                  failureReason: `Search step returned empty results. Query: "${step.query}"`,
+                  llmCalls,
+                };
+              }
+            } else if (isResultEmpty) {
+              // Non-search step returned empty result
+              logger.warn("Non-search step returned empty result", {
+                stepId: step.id,
+                stepKind: step.kind,
+                resultType: typeof result,
+              });
+
+              // Similar logic for non-search steps
+              if (hasDependentSteps(plan, step.id)) {
+                logger.info("Empty result detected on non-search step with dependents", {
+                  stepId: step.id,
+                });
+
+                return {
+                  ...state,
+                  stepResults,
+                  stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
+                  currentStep: i,
+                  shouldReplan: true,
+                  lastFailedStepId: step.id,
+                  failureReason: `Step returned empty result. Kind: ${step.kind}. Query: "${step.query}"`,
+                  llmCalls,
+                };
+              } else {
+                // Final step or non-critical step with empty result
+                stepResults[step.id] = result ?? null;
+                logger.info("Empty result on non-critical step - continuing", {
+                  stepId: step.id,
+                });
+              }
+            } else {
+              stepResults[step.id] = result;
+              logger.info("Step completed successfully", {
+                stepId: step.id,
+                resultType: typeof result,
+              });
+            }
+
+            // Emit successful step event
+            if (step.kind === "search" && Array.isArray(result) && result.length > 0) {
+              emitStepEvent(step.id, "searching", step.query, "running", state.requestId, {
+                description: step.query,
+                query: step.query,
+                results: result,
+                resultCount: result.length,
+              });
+            } else if (step.kind === "reason") {
+              emitStepEvent(step.id, "reasoning", step.query, "running", state.requestId, {
+                description: step.query,
+                query: step.query,
+              });
+            }
+
+            completedSteps++;
+          } catch (error) {
+            const errorMsg = ErrorHandler.getSafeMessage(error);
+            stepErrors[step.id] = errorMsg;
+
+            logger.error("Step execution failed", error, {
+              stepId: step.id,
+              error: errorMsg,
+            });
+
+            // Check if we should replan instead of failing
+            // Only replan if we haven't already exhausted max replan attempts
+            if (shouldReplanOnError(step, error) && (await shouldTriggerReplan(state))) {
+              logger.info("Triggering replanning due to step execution error", {
+                stepId: step.id,
+                error: errorMsg,
+              });
+
+              return {
+                ...state,
+                stepResults,
+                stepErrors,
+                currentStep: i,
+                shouldReplan: true,
+                lastFailedStepId: step.id,
+                failureReason: `Step execution failed: ${errorMsg}`,
+                llmCalls,
+              };
+            }
+
+            emitError(errorMsg, ErrorCode.EXECUTOR_FAILED, state.requestId, true);
+            throw error;
+          }
         }
 
-        completedSteps++;
-      } catch (error) {
-        const errorMsg = ErrorHandler.getSafeMessage(error);
-        stepErrors[step.id] = errorMsg;
-
-        logger.error("Step execution failed", error, {
-          stepId: step.id,
-          error: errorMsg,
+        logger.info("Executor completed all steps", {
+          totalSteps: plan.steps.length,
+          completedSteps,
+          resultCount: Object.keys(stepResults).length,
         });
 
-        // Check if we should replan instead of failing
-        // Only replan if we haven't already exhausted max replan attempts
-        if (await shouldTriggerReplan(state)) {
-          logger.info("Triggering replanning due to step execution error", {
-            stepId: step.id,
-            error: errorMsg,
-          });
+        // Check if we actually found any search results
+        const hasAnyResults = Object.values(stepResults).some(
+          (result) => result && (!Array.isArray(result) || result.length > 0)
+        );
 
-          return {
-            ...state,
-            stepResults,
-            stepErrors,
-            currentStep: i,
-            shouldReplan: true,
-            lastFailedStepId: step.id,
-            failureReason: `Step execution failed: ${errorMsg}`,
-          };
-        }
+        return {
+          ...state,
+          stepResults,
+          stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
+          currentStep: plan.steps.length,
+          hasSearchResults: hasAnyResults,
+          llmCalls,
+        };
+      } catch (error) {
+        const agentError = ErrorHandler.toAgentError(error, ErrorCode.EXECUTOR_FAILED, {
+          completedSteps,
+          totalSteps: plan.steps.length,
+          stepErrors,
+        });
 
-        emitError(errorMsg, ErrorCode.EXECUTOR_FAILED, state.requestId, true);
-        throw error;
+        logger.error("Executor node failed", error, {
+          error: agentError.code,
+          completedSteps,
+          stepResults,
+        });
+
+        throw agentError;
       }
     }
-
-    logger.info("Executor completed all steps", {
-      totalSteps: plan.steps.length,
-      completedSteps,
-      resultCount: Object.keys(stepResults).length,
-    });
-
-    // Check if we actually found any search results
-    const hasAnyResults = Object.values(stepResults).some(
-      (result) => result && (!Array.isArray(result) || result.length > 0)
-    );
-
-    return {
-      ...state,
-      stepResults,
-      stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
-      currentStep: plan.steps.length,
-      hasSearchResults: hasAnyResults,
-    };
-  } catch (error) {
-    const agentError = ErrorHandler.toAgentError(error, ErrorCode.EXECUTOR_FAILED, {
-      completedSteps,
-      totalSteps: plan.steps.length,
-      stepErrors,
-    });
-
-    logger.error("Executor node failed", error, {
-      error: agentError.code,
-      completedSteps,
-      stepResults,
-    });
-
-    throw agentError;
-  }
-    },
   );
 }

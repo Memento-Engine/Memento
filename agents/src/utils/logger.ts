@@ -1,6 +1,7 @@
 import pino from "pino";
 import pinoHttp from "pino-http";
 import { getConfig } from "../config/config";
+import { formatLocalTimestamp, getLocalTimeZone } from "./time";
 
 let loggerInstance: pino.Logger | null = null;
 let httpLoggerInstance: pino.Logger | null = null;
@@ -16,25 +17,33 @@ export async function initializeLogger(): Promise<pino.Logger> {
 
   const config = await getConfig();
   const isProd = config.server.environment === "production";
+  const timezone = getLocalTimeZone();
+
+  const baseLoggerConfig: pino.LoggerOptions = {
+    level: config.logging.level,
+    base: {
+      service: "agents",
+      timezone,
+    },
+    timestamp: () => `,"time":"${formatLocalTimestamp()}"`,
+    formatters: {
+      level: (label) => {
+        return { level: label };
+      },
+    },
+  };
 
   loggerInstance = pino(
     isProd
-      ? {
-          level: config.logging.level,
-          formatters: {
-            level: (label) => {
-              return { level: label };
-            },
-          },
-        }
+      ? baseLoggerConfig
       : {
-          level: config.logging.level,
+          ...baseLoggerConfig,
           transport: {
             target: "pino-pretty",
             options: {
               colorize: true,
-              translateTime: "HH:MM:ss",
-              ignore: "pid,hostname",
+              translateTime: false,
+              ignore: "pid,hostname,service,timezone",
               singleLine: false,
             },
           },

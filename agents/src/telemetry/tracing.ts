@@ -1,6 +1,7 @@
 import { getLogger } from "../utils/logger";
 import fs from "fs/promises";
 import path from "path";
+import { formatLocalTimestamp, getLocalTimeZone } from "../utils/time";
 
 type SpanAttributes = Record<string, string | number | boolean | undefined>;
 
@@ -55,21 +56,16 @@ async function emitSpanLatencyLog(
     return;
   }
 
-  const now = new Date().toISOString();
   const severity = durationMs >= getSlowSpanThresholdMs() ? "SLOW" : "INFO";
-  const line = [
-    `${now}`,
-    `[${severity}]`,
-    `span=${spanName}`,
-    `status=${status}`,
-    `duration_ms=${durationMs}`,
-    attributes.request_id ? `request_id=${attributes.request_id}` : "",
-    attributes.node ? `node=${attributes.node}` : "",
-    attributes.step_id ? `step_id=${attributes.step_id}` : "",
-    attributes.endpoint ? `endpoint=${attributes.endpoint}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const line = JSON.stringify({
+    timestamp: formatLocalTimestamp(),
+    timezone: getLocalTimeZone(),
+    severity,
+    span: spanName,
+    status,
+    duration_ms: durationMs,
+    attributes,
+  });
 
   await writeLatencyLine(line);
 
@@ -102,13 +98,14 @@ export async function runWithSpan<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const startedAt = Date.now();
-  const cleanedAttributes = sanitizeAttributes(attributes);
 
   try {
     const result = await fn();
+    const cleanedAttributes = sanitizeAttributes(attributes);
     await emitSpanLatencyLog(spanName, Date.now() - startedAt, cleanedAttributes, "ok");
     return result;
   } catch (error) {
+    const cleanedAttributes = sanitizeAttributes(attributes);
     await emitSpanLatencyLog(spanName, Date.now() - startedAt, cleanedAttributes, "error");
     throw error;
   }

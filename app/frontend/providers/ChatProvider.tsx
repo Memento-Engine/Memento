@@ -541,7 +541,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               Object.keys(event)
             );
             if (event.data) {
-              console.log(`   Data Keys:`, Object.keys(event.data));
+              console.log(`Data Keys:`, Object.keys(event.data));
               if (event.data.stepId) console.log(`   stepId: ${event.data.stepId}`);
             }
 

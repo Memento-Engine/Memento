@@ -1,15 +1,14 @@
-import { ChatOpenAI } from "@langchain/openai";
 import { PlannerPlan, PlannerStep, PlannerPlanSchema } from "./planner.schema";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { replanPrompt } from "../prompts/replanPrompt";
 import { AgentStateType } from "../agentState";
 import { validatePlan } from "./planner.validator";
-import { getLLM } from "./planner.node";
 import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
-import { SafeJsonParser, ErrorHandler, withRetry } from "../utils/parser";
+import { SafeJsonParser, ErrorHandler } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
+import { invokeRoleLlm, truncateToApproxTokens } from "../llm/routing";
 
 /**
  * Find a step by ID in a plan.
@@ -67,7 +66,6 @@ export async function replannerNode(
     failedStepId: state.lastFailedStepId,
   });
 
-  const llm = await getLLM();
   const appConfig = await getConfig();
 
   // Safety check: prevent infinite replanning loops
@@ -116,57 +114,61 @@ export async function replannerNode(
         : failedStepResult ? "non-array" : "empty",
     });
 
-    // Attempt to generate revised plan with retries
-    const revisedPlan = await withRetry(
-      async () => {
-        const prompt = await replanPrompt.invoke({
-          goal: state.goal,
-          previousPlan: JSON.stringify(state.plan, null, 2),
-          failedStep: JSON.stringify(failedStep, null, 2),
-          executionResult: JSON.stringify(failedStepResult ?? "empty", null, 2),
-          failureReason: state.failureReason ?? "Unknown",
-        });
+    const plannerInputBudget = appConfig.llm.plannerMaxInputTokens;
+    const prompt = await replanPrompt.invoke({
+      goal: truncateToApproxTokens(state.goal, Math.floor(plannerInputBudget * 0.2)),
+      previousPlan: truncateToApproxTokens(
+        JSON.stringify(state.plan, null, 2),
+        Math.floor(plannerInputBudget * 0.45),
+      ),
+      failedStep: truncateToApproxTokens(
+        JSON.stringify(failedStep, null, 2),
+        Math.floor(plannerInputBudget * 0.15),
+      ),
+      executionResult: truncateToApproxTokens(
+        JSON.stringify(failedStepResult ?? "empty", null, 2),
+        Math.floor(plannerInputBudget * 0.15),
+      ),
+      failureReason: truncateToApproxTokens(
+        state.failureReason ?? "Unknown",
+        Math.floor(plannerInputBudget * 0.05),
+      ),
+    });
 
-        const response = await runWithSpan(
-          "agent.node.replanner.llm",
-          {
-            request_id: state.requestId,
-            node: "replanner",
-            replan_attempts: currentReplanAttempts + 1,
-          },
-          async () => llm.invoke(prompt),
-        );
-        const parsedContent = await SafeJsonParser.parseContent(response.content);
-
-        logger.info("Replanner LLM response parsed", {
-          stepCount: parsedContent?.steps?.length ?? 0,
-        });
-
-        const rawPlan = parsedContent as PlannerPlan;
-
-        // Validate revised plan structure
-        const validation = validatePlan(rawPlan);
-
-        if (!validation.valid) {
-          logger.warn("Revised plan validation failed", {
-            error: validation.error,
-            attempt: currentReplanAttempts + 1,
-          });
-
-          throw new PlannerError(
-            `Revised plan validation failed: ${validation.error}`,
-            { validation: validation.error },
-          );
-        }
-
-        return validation.data;
+    const llmInvocation = await invokeRoleLlm({
+      role: "planner",
+      prompt,
+      requestId: state.requestId,
+      spanName: "agent.node.replanner.llm",
+      spanAttributes: {
+        node: "replanner",
+        replan_attempts: currentReplanAttempts + 1,
       },
-      {
-        maxAttempts: appConfig.agent.maxPlanRetries,
-        initialDelayMs: 100,
-        maxDelayMs: 1000,
-      },
-    );
+    });
+
+    const parsedContent = await SafeJsonParser.parseContent(llmInvocation.response.content);
+
+    logger.info("Replanner LLM response parsed", {
+      stepCount: parsedContent?.steps?.length ?? 0,
+    });
+
+    const rawPlan = parsedContent as PlannerPlan;
+
+    const validation = validatePlan(rawPlan);
+
+    if (!validation.valid) {
+      logger.warn("Revised plan validation failed", {
+        error: validation.error,
+        attempt: currentReplanAttempts + 1,
+      });
+
+      throw new PlannerError(
+        `Revised plan validation failed: ${validation.error}`,
+        { validation: validation.error },
+      );
+    }
+
+    const revisedPlan = validation.data;
 
     logger.info("Revised plan created successfully", {
       stepCount: revisedPlan.steps.length,
@@ -189,6 +191,7 @@ export async function replannerNode(
       plan: revisedPlan,
       shouldReplan: false,
       replanAttempts: currentReplanAttempts + 1,
+      llmCalls: (state.llmCalls ?? 0) + 1,
       // Reset execution to the failed step index to retry with the new plan
       currentStep: Math.max(0, revisedFailedStepIndex),
       // Clear the failure reason now that we've replanned

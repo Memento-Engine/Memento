@@ -40,6 +40,7 @@ export const AgentState = Annotation.Root({
   // Timing and metrics
   startTime: Annotation<number>(),
   endTime: Annotation<number | undefined>(),
+  llmCalls: Annotation<number>(),
 
   // Final result
   finalResult: Annotation<string | undefined>(),

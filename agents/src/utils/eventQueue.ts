@@ -5,6 +5,8 @@
  */
 
 import { AsyncLocalStorage } from "async_hooks";
+import { getLogger } from "./logger";
+import { formatLocalTimestamp } from "./time";
 
 interface QueuedEvent {
   type: "step" | "thinking" | "error" | "complete";
@@ -13,6 +15,31 @@ interface QueuedEvent {
 }
 
 type StreamCallback = (event: QueuedEvent) => void;
+
+function logQueue(
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  metadata?: Record<string, unknown>,
+): void {
+  void getLogger()
+    .then((logger) => {
+      if (level === "debug") {
+        metadata ? logger.debug(metadata, message) : logger.debug(message);
+        return;
+      }
+      if (level === "info") {
+        metadata ? logger.info(metadata, message) : logger.info(message);
+        return;
+      }
+      if (level === "warn") {
+        metadata ? logger.warn(metadata, message) : logger.warn(message);
+        return;
+      }
+      metadata ? logger.error(metadata, message) : logger.error(message);
+    })
+    .catch(() => {
+    });
+}
 
 class EventQueue {
   private events: QueuedEvent[] = [];
@@ -34,7 +61,9 @@ class EventQueue {
       try {
         this.streamWriter(event);
       } catch (error) {
-        console.error("Error in stream writer callback:", error);
+        logQueue("error", "Error in stream writer callback", {
+          error: String(error),
+        });
       }
     }
   }
@@ -66,7 +95,7 @@ const globalEventQueues = new Map<string, EventQueue>();
  * @returns The event queue for this request
  */
 export function initializeEventQueue(requestId: string, streamWriter?: StreamCallback): EventQueue {
-  console.log(`🟢 Initializing event queue for request: ${requestId}`);
+  logQueue("debug", "Initializing event queue", { requestId });
   const queue = new EventQueue();
   if (streamWriter) {
     queue.setStreamWriter(streamWriter);
@@ -90,7 +119,7 @@ export function getEventQueue(requestId: string): EventQueue | undefined {
  * @param requestId Unique request identifier
  */
 export function cleanupEventQueue(requestId: string): void {
-  console.log(`🗑️ Cleaning up event queue for request: ${requestId}`);
+  logQueue("debug", "Cleaning up event queue", { requestId });
   globalEventQueues.delete(requestId);
 }
 
@@ -104,10 +133,10 @@ const eventQueueStorage = new AsyncLocalStorage<EventQueue>();
  * @returns Result of callback
  */
 export function withEventQueue<T>(callback: () => T | Promise<T>): T | Promise<T> {
-  console.log("🟢 Initializing event queue context");
+  logQueue("debug", "Initializing legacy event queue context");
   const queue = new EventQueue();
   const result = eventQueueStorage.run(queue, () => {
-    console.log("🟡 Inside event queue context, running callback");
+    logQueue("debug", "Inside legacy event queue context");
     return callback();
   });
   return result;
@@ -149,8 +178,12 @@ export function emitStepEvent(
   }
 
   if (!queue) {
-    console.warn(" Event queue not initialized - event not emitted");
-    console.warn(`   Step: ${stepId}, Type: ${stepType}, Title: ${title}, RequestId: ${requestId}`);
+    logQueue("warn", "Event queue not initialized - event not emitted", {
+      stepId,
+      stepType,
+      title,
+      requestId,
+    });
     return;
   }
 
@@ -169,15 +202,19 @@ export function emitStepEvent(
       reasoning: details?.reasoning,
       queries: details?.queries,
       duration: details?.duration,
-      timestamp: new Date().toISOString(),
+      timestamp: formatLocalTimestamp(),
     },
-    timestamp: new Date().toISOString(),
+    timestamp: formatLocalTimestamp(),
   };
 
   queue.add(event);
-  console.log(
-    `Event emitted to queue [${requestId}]: stepId=${stepId}, type=${stepType}, status=${status}, resultCount=${details?.resultCount}`
-  );
+  logQueue("debug", "Event emitted to queue", {
+    requestId,
+    stepId,
+    stepType,
+    status,
+    resultCount: details?.resultCount,
+  });
 }
 
 /**
@@ -193,7 +230,10 @@ export function emitCompletion(content: string, requestId: string, stepId: strin
   }
 
   if (!queue) {
-    console.warn("Event queue not initialized - completion not emitted");
+    logQueue("warn", "Event queue not initialized - completion not emitted", {
+      requestId,
+      stepId,
+    });
     return;
   }
 
@@ -205,9 +245,9 @@ export function emitCompletion(content: string, requestId: string, stepId: strin
       title: "Final Response",
       status: "final",
       message: content,
-      timestamp: new Date().toISOString(),
+      timestamp: formatLocalTimestamp(),
     },
-    timestamp: new Date().toISOString(),
+    timestamp: formatLocalTimestamp(),
   });
 }
 
@@ -230,7 +270,10 @@ export function emitError(
   }
 
   if (!queue) {
-    console.warn("Event queue not initialized - error not emitted");
+    logQueue("warn", "Event queue not initialized - error not emitted", {
+      requestId,
+      code,
+    });
     return;
   }
 
@@ -240,9 +283,9 @@ export function emitError(
       message,
       code,
       isSystemError,
-      timestamp: new Date().toISOString(),
+      timestamp: formatLocalTimestamp(),
     },
-    timestamp: new Date().toISOString(),
+    timestamp: formatLocalTimestamp(),
   });
 }
 
@@ -276,17 +319,16 @@ export function drainQueuedEvents(requestId: string): QueuedEvent[] {
     const legacyQueue = eventQueueStorage.getStore();
     if (legacyQueue) {
       const events = legacyQueue.drain();
-      console.log(`Legacy queue drained: ${events.length} events`);
+      logQueue("debug", "Legacy queue drained", { events: events.length, requestId });
       return events;
     }
-    console.warn(" No event queue found in map or AsyncLocalStorage when draining");
+    logQueue("warn", "No event queue found in map or AsyncLocalStorage when draining", {
+      requestId,
+    });
     return [];
   }
 
   const events = queue.drain();
-  console.log(`Queue drained: ${events.length} events`);
-  events.forEach((ev, i) => {
-    console.log(`   [${i}] type=${ev.type}, stepId=${(ev.data as any).stepId}`);
-  });
+  logQueue("debug", "Queue drained", { events: events.length, requestId });
   return events;
 }

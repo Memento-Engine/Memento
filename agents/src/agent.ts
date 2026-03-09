@@ -44,48 +44,43 @@ async function buildAgentGraph() {
       workflow: "planner-executor-replanner-finalAnswer",
     },
     async () => {
-  const logger = await getLogger();
-  
-  try {
-    const workflow = new StateGraph(AgentState);
+      const logger = await getLogger();
 
-    const graphBuilder = workflow
-      .addNode("planner", plannerNode)
-      .addNode("executor", executorNode)
-      .addNode("replanner", replannerNode)
-      .addNode("finalAnswer", finalAnswerNode);
+      try {
+        const workflow = new StateGraph(AgentState);
 
-    // Define edges
-    graphBuilder.addEdge(START, "planner");
-    graphBuilder.addEdge("planner", "executor");
+        const graphBuilder = workflow
+          .addNode("planner", plannerNode)
+          .addNode("executor", executorNode)
+          .addNode("replanner", replannerNode)
+          .addNode("finalAnswer", finalAnswerNode);
 
-    // Conditional edge from executor: replan or finalize
-    graphBuilder.addConditionalEdges(
-      "executor",
-      shouldReplanRoute,
-      {
-        replanner: "replanner",
-        finalAnswer: "finalAnswer",
-      },
-    );
+        // Define edges
+        graphBuilder.addEdge(START, "planner");
+        graphBuilder.addEdge("planner", "executor");
 
-    // Replanner loops back to executor for retry
-    graphBuilder.addEdge("replanner", "executor");
+        // Conditional edge from executor: replan or finalize
+        graphBuilder.addConditionalEdges("executor", shouldReplanRoute, {
+          replanner: "replanner",
+          finalAnswer: "finalAnswer",
+        });
 
-    // Final answer goes to end
-    graphBuilder.addEdge("finalAnswer", END);
+        // Replanner loops back to executor for retry
+        graphBuilder.addEdge("replanner", "executor");
 
-    logger.info("Agent workflow graph built successfully with replanning support");
+        // Final answer goes to end
+        graphBuilder.addEdge("finalAnswer", END);
 
-    return graphBuilder.compile();
-  } catch (error) {
-    logger.error("Failed to build agent workflow graph");
-    throw error;
-  }
-    },
+        logger.info("Agent workflow graph built successfully with replanning support");
+
+        return graphBuilder.compile();
+      } catch (error) {
+        logger.error("Failed to build agent workflow graph");
+        throw error;
+      }
+    }
   );
 }
 
 // Build and export the compiled graph
 export const graph = buildAgentGraph();
-

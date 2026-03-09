@@ -54,10 +54,23 @@ export class SafeJsonParser {
     }
 
     // Remove markdown code fences
-    const cleaned = text
+    let cleaned = text
       .replace(/```json\s*/gi, "")
       .replace(/```\s*/g, "")
       .trim();
+
+    // If the response includes text before/after JSON, try to extract just the JSON
+    if (!cleaned.startsWith("{") && !cleaned.startsWith("[")) {
+      const jsonMatch = cleaned.match(/[\{\[][\s\S]*[\}\]]/);
+      if (jsonMatch) {
+        cleaned = jsonMatch[0];
+      }
+    }
+
+    // Handle potential smart quotes (curly quotes) that some LLMs might use
+    cleaned = cleaned
+      .replace(/[\u201C\u201D]/g, '"')  // Replace curly double quotes with straight quotes
+      .replace(/[\u2018\u2019]/g, "'"); // Replace curly single quotes with straight quotes
 
     if (!cleaned) {
       throw new AgentError(
@@ -70,15 +83,28 @@ export class SafeJsonParser {
     try {
       return JSON.parse(cleaned);
     } catch (parseError) {
-      console.log("ParsedError", parseError);
+      const parseMessage = String(parseError);
+      const likelyTruncated =
+        /unterminated|string|end of json input/i.test(parseMessage) &&
+        cleaned.length >= Math.floor(text.length * 0.95);
 
-      logger.warn("Failed to parse LLM JSON");
+      logger.warn(
+        {
+          code: ErrorCode.LLM_PARSING_FAILED,
+          originalLength: text.length,
+          cleanedLength: cleaned.length,
+          likelyTruncated,
+          parseError: parseMessage,
+          contentPreview: cleaned.slice(0, 300),
+        },
+        "Failed to parse LLM JSON",
+      );
 
       throw new AgentError(
         "Failed to parse LLM response as JSON",
         ErrorCode.LLM_PARSING_FAILED,
         {
-          content: cleaned.slice(0, 100),
+          content: cleaned.slice(0, 500),
           cause: parseError,
         },
       );

@@ -21,6 +21,7 @@ import {
 } from "./utils/eventQueue";
 import { initializeTelemetry, registerTelemetryShutdownHooks } from "./telemetry/setup";
 import { runWithSpan } from "./telemetry/tracing";
+import { formatLocalTimestamp } from "./utils/time";
 
 // Request validation schema
 const AgentRequestSchema = z.object({
@@ -41,13 +42,18 @@ async function startServer() {
 
     // Load and validate configuration
     const config = await loadConfig();
-    console.log(
-      `Configuration loaded: ${config.server.environment} mode on ${config.server.host}:${config.server.port}`,
-    );
 
     // Initialize logging
     const logger = await initializeLogger();
     logger.info("Logger initialized");
+    logger.info(
+      {
+        environment: config.server.environment,
+        host: config.server.host,
+        port: config.server.port,
+      },
+      "Configuration loaded",
+    );
 
     // Initialize tools
     const toolRegistry = await initializeToolRegistry();
@@ -163,9 +169,13 @@ async function startServer() {
             try {
               const json = JSON.stringify(event) + "\n";
               res.write(json);
-              console.log(`Streamed event to client [${requestId}]: type=${event.type}, stepId=${event.data?.stepId}`);
+              logger.debug("Streamed event to client", {
+                requestId,
+                eventType: event.type,
+                stepId: event.data?.stepId,
+              });
             } catch (error) {
-              console.error(` Error writing event to response: ${error}`);
+              logger.error("Error writing event to response", error, { requestId });
             }
           };
 
@@ -189,6 +199,7 @@ async function startServer() {
                   goal: goal as any,
                   requestId: requestId as any,
                   planAttempts: 0 as any,
+                  llmCalls: 0 as any,
                   stepErrors: {} as any,
                   startTime: startTime as any,
                 }),
@@ -217,9 +228,9 @@ async function startServer() {
                     message: executionError.message,
                     code: executionError.code,
                     isSystemError: true, // This is a real system error
-                    timestamp: new Date().toISOString(),
+                    timestamp: formatLocalTimestamp(),
                   },
-                  timestamp: new Date().toISOString(),
+                  timestamp: formatLocalTimestamp(),
                 }) + "\n",
               );
             } else {
@@ -240,9 +251,9 @@ async function startServer() {
                     message: "Agent execution failed",
                     code: ErrorCode.INTERNAL_ERROR,
                     isSystemError: true,
-                    timestamp: new Date().toISOString(),
+                    timestamp: formatLocalTimestamp(),
                   },
-                  timestamp: new Date().toISOString(),
+                  timestamp: formatLocalTimestamp(),
                 }) + "\n",
               );
             }
@@ -257,10 +268,10 @@ async function startServer() {
                   metadata: {
                     requestId,
                     duration,
-                    timestamp: new Date().toISOString(),
+                    timestamp: formatLocalTimestamp(),
                   },
                 },
-                timestamp: new Date().toISOString(),
+                timestamp: formatLocalTimestamp(),
               }) + "\n",
             );
 
@@ -288,9 +299,9 @@ async function startServer() {
                   data: {
                     chunk: chunk,
                     isComplete: false,
-                    timestamp: new Date().toISOString(),
+                    timestamp: formatLocalTimestamp(),
                   },
-                  timestamp: new Date().toISOString(),
+                  timestamp: formatLocalTimestamp(),
                 }) + "\n",
               );
             }
@@ -306,10 +317,10 @@ async function startServer() {
                   requestId,
                   duration,
                   noResultsFound: result?.noResultsFound,
-                  timestamp: new Date().toISOString(),
+                  timestamp: formatLocalTimestamp(),
                 },
               },
-              timestamp: new Date().toISOString(),
+              timestamp: formatLocalTimestamp(),
             }) + "\n",
           );
 
@@ -334,9 +345,9 @@ async function startServer() {
                 message: "Internal server error",
                 code: ErrorCode.INTERNAL_ERROR,
                 isSystemError: true,
-                timestamp: new Date().toISOString(),
+                timestamp: formatLocalTimestamp(),
               },
-              timestamp: new Date().toISOString(),
+              timestamp: formatLocalTimestamp(),
             }) + "\n",
           );
 
@@ -349,10 +360,10 @@ async function startServer() {
                 metadata: {
                   requestId,
                   duration,
-                  timestamp: new Date().toISOString(),
+                  timestamp: formatLocalTimestamp(),
                 },
               },
-              timestamp: new Date().toISOString(),
+              timestamp: formatLocalTimestamp(),
             }) + "\n",
           );
 
@@ -369,7 +380,7 @@ async function startServer() {
     router.get<{}, any>("/healthz", (req: Request, res: Response) => {
       return res.status(200).json({
         status: "healthy",
-        timestamp: new Date().toISOString(),
+        timestamp: formatLocalTimestamp(),
         version: "1.0.0",
       });
     });
@@ -407,7 +418,12 @@ async function startServer() {
       );
     });
   } catch (error) {
-    console.error("Failed to start server:", error);
+    const startupLogger = await initializeLogger().catch(() => null);
+    if (startupLogger) {
+      startupLogger.error({ error: String(error) }, "Failed to start server");
+    } else {
+      console.error("Failed to start server:", error);
+    }
     process.exit(1);
   }
 }
