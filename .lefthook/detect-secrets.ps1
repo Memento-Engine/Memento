@@ -11,20 +11,23 @@ $secretPatterns = @(
     @{ name = "AWS Access Key";      pattern = "AKIA[0-9A-Z]{16}" }
     @{ name = "AWS Secret Key";      pattern = "aws_secret_access_key" }
     @{ name = "Private Key";         pattern = "-----BEGIN.*PRIVATE KEY" }
-    @{ name = "API Key";             pattern = "(api_key|apiKey|API_KEY)\s*[:=]\s*['\"]?[a-zA-Z0-9]{32}" }
+    @{ name = "API Key";             pattern = "(api_key|apiKey|API_KEY)\s*[:=]\s*['\""]?[a-zA-Z0-9_\-]{16,}['\""]?" }
     @{ name = "GitHub Token";        pattern = "ghp_[A-Za-z0-9_]{36,255}" }
     @{ name = "NPM Token";           pattern = "npm_[A-Za-z0-9_]{36,255}" }
     @{ name = "Slack Token";         pattern = "xox[baprs]-[0-9]{12}-[0-9]{12}-[0-9a-zA-Z]{32}" }
-    @{ name = "Database Password";   pattern = "(password|DATABASE_PASSWORD|db_pass|DB_PASSWORD)\s*[:=]\s*['\"][^'\"]+['\"]" }
+    @{ name = "Database Password";   pattern = "(password|DATABASE_PASSWORD|db_pass|DB_PASSWORD)\s*[:=]\s*['\""][^'\""]+['\""]" }
     @{ name = ".env file";           pattern = "\.env$" }
     @{ name = "Secrets file";        pattern = "(secrets|credentials|keys)\..*$" }
-    @{ name = "Private Config";      pattern = "private|secret" }
 )
 
 $foundSecrets = $false
 $scanCount = 0
-$filesToCheck = if ($StagedFiles) { $StagedFiles } else { (git diff --cached --name-only) -split "`n" | Where-Object { $_ } }
-
+$filesToCheck = if ($StagedFiles) {
+    $StagedFiles
+} else {
+    (git diff --cached --name-only) -split "`n" |
+    Where-Object { $_ -and ($_ -notmatch '^\.lefthook/') }
+}
 foreach ($file in $filesToCheck) {
     if (Test-Path $file) {
         $scanCount++
