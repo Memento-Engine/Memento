@@ -41,10 +41,10 @@ const ConfigSchema = z.object({
 
   // Agent execution configuration
   agent: z.object({
-    maxPlanRetries: z.number().int().min(1).default(3),
-    maxStepRetries: z.number().int().min(1).default(2),
-    stepTimeoutMs: z.number().int().min(1000).default(60000),
-    maxReplanAttempts: z.number().int().min(1).default(3),
+    maxPlanRetries: z.number().int().min(1).default(2),
+    maxStepRetries: z.number().int().min(1).default(1),
+    stepTimeoutMs: z.number().int().min(1000).default(20000),
+    maxReplanAttempts: z.number().int().min(1).default(2),
   }),
 });
 

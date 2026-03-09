@@ -27,7 +27,7 @@ export function validateStepOutput(
 
     return {
       valid: false,
-      error: `Expected value type (string|number|boolean|null) but got ${typeof result}`,
+      error: `Expected value type (string|number|boolean|null) but got ${typeof result}. Received: ${JSON.stringify(result).slice(0, 200)}`,
     };
   }
 
@@ -40,7 +40,7 @@ export function validateStepOutput(
       valid: false,
       error: `Expected table type (array of objects) but got ${
         Array.isArray(result) ? "array of non-objects" : typeof result
-      }`,
+      }. Received: ${JSON.stringify(result).slice(0, 200)}`,
     };
   }
 
@@ -51,7 +51,7 @@ export function validateStepOutput(
 
     return {
       valid: false,
-      error: `Expected list type (array) but got ${typeof result}`,
+      error: `Expected list type (array) but got ${typeof result}. Received: ${JSON.stringify(result).slice(0, 200)}`,
     };
   }
 
@@ -75,7 +75,7 @@ export function validateStepOutput(
       valid: false,
       error: `Expected object type but got ${
         Array.isArray(result) ? "array" : typeof result
-      }`,
+      }. Received: ${JSON.stringify(result).slice(0, 200)}`,
     };
   }
 

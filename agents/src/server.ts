@@ -19,6 +19,8 @@ import {
   initializeEventQueue,
   cleanupEventQueue,
 } from "./utils/eventQueue";
+import { initializeTelemetry, registerTelemetryShutdownHooks } from "./telemetry/setup";
+import { runWithSpan } from "./telemetry/tracing";
 
 // Request validation schema
 const AgentRequestSchema = z.object({
@@ -34,6 +36,9 @@ const AgentRequestSchema = z.object({
  */
 async function startServer() {
   try {
+    await initializeTelemetry();
+    registerTelemetryShutdownHooks();
+
     // Load and validate configuration
     const config = await loadConfig();
     console.log(
@@ -112,6 +117,14 @@ async function startServer() {
 
         const startTime = Date.now();
 
+        return runWithSpan(
+          "agent.request",
+          {
+            request_id: requestId,
+            endpoint: "/api/v1/agent",
+            method: "POST",
+          },
+          async () => {
         try {
           logger.info("Received agent request");
 
@@ -164,13 +177,22 @@ async function startServer() {
           let executionError: any = null;
 
           try {
-            result = await (await graph).invoke({
-              goal: goal as any,
-              requestId: requestId as any,
-              planAttempts: 0 as any,
-              stepErrors: {} as any,
-              startTime: startTime as any,
-            });
+            result = await runWithSpan(
+              "agent.graph.invoke",
+              {
+                request_id: requestId,
+                endpoint: "/api/v1/agent",
+                goal_length: goal.length,
+              },
+              async () =>
+                (await graph).invoke({
+                  goal: goal as any,
+                  requestId: requestId as any,
+                  planAttempts: 0 as any,
+                  stepErrors: {} as any,
+                  startTime: startTime as any,
+                }),
+            );
           } catch (error) {
             executionError = error;
             result = null;
@@ -297,7 +319,7 @@ async function startServer() {
         } catch (error) {
           const duration = Date.now() - startTime;
 
-          logger.error("Unexpected error in agent endpoint", String(error), {
+          logger.error("Unexpected error in agent endpoint", error, {
             duration,
             error,
           });
@@ -336,6 +358,8 @@ async function startServer() {
 
           return res.end();
         }
+          },
+        );
       },
     );
 

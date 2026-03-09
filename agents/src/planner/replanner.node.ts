@@ -9,6 +9,7 @@ import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser, ErrorHandler, withRetry } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
+import { runWithSpan } from "../telemetry/tracing";
 
 /**
  * Find a step by ID in a plan.
@@ -47,6 +48,14 @@ export async function replannerNode(
   state: AgentStateType,
   config?: RunnableConfig,
 ): Promise<AgentStateType> {
+  return runWithSpan(
+    "agent.node.replanner",
+    {
+      request_id: state.requestId,
+      node: "replanner",
+      replan_attempts: state.replanAttempts ?? 0,
+    },
+    async () => {
   const logger = await createContextLogger(state.requestId, {
     node: "replanner",
     goal: state.goal,
@@ -118,7 +127,15 @@ export async function replannerNode(
           failureReason: state.failureReason ?? "Unknown",
         });
 
-        const response = await llm.invoke(prompt);
+        const response = await runWithSpan(
+          "agent.node.replanner.llm",
+          {
+            request_id: state.requestId,
+            node: "replanner",
+            replan_attempts: currentReplanAttempts + 1,
+          },
+          async () => llm.invoke(prompt),
+        );
         const parsedContent = await SafeJsonParser.parseContent(response.content);
 
         logger.info("Replanner LLM response parsed", {
@@ -190,7 +207,7 @@ export async function replannerNode(
       },
     );
 
-    logger.error("Replanner node failed", String(error), {
+    logger.error("Replanner node failed", error, {
       error: agentError.code,
       message: agentError.message,
       replanAttempts: currentReplanAttempts + 1,
@@ -198,4 +215,6 @@ export async function replannerNode(
 
     throw agentError;
   }
+    },
+  );
 }

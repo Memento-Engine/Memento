@@ -1,5 +1,6 @@
 import { Annotation } from "@langchain/langgraph";
 import { PlannerPlan } from "./planner/planner.schema";
+import { ExecutionPlan } from "./types/llmPlan";
 
 /**
  * Agent execution state representing the complete workflow state.
@@ -9,6 +10,11 @@ export const AgentState = Annotation.Root({
   // Request context
   goal: Annotation<string>(),
   requestId: Annotation<string>(),
+
+  // Router + planner merged outputs
+  executionPlan: Annotation<ExecutionPlan | undefined>(),
+  needsClarification: Annotation<boolean | undefined>(),
+  clarificationQuestion: Annotation<string | undefined>(),
 
   // Planning phase
   plan: Annotation<PlannerPlan | undefined>(),

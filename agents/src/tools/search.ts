@@ -5,6 +5,7 @@ import { DatabaseQuery, DatabaseQuerySchema } from "../planner/planner.schema";
 import { getConfig } from "../config/config";
 import { getLogger } from "../utils/logger";
 import { ToolError, ErrorCode } from "../types/errors";
+import { runWithSpan } from "../telemetry/tracing";
 
 /**
  * Search tool for querying the activity database.
@@ -19,6 +20,14 @@ export class SearchTool implements Tool<DatabaseQuery, any[]> {
     input: DatabaseQuery,
     context: ToolContext,
   ): Promise<ToolResult<any[]>> {
+    return runWithSpan(
+      "agent.tool.search.execute",
+      {
+        request_id: context.requestId,
+        step_id: context.stepId,
+        attempt: context.attemptNumber,
+      },
+      async () => {
     const logger = await getLogger();
     const config =  await getConfig();
 
@@ -50,6 +59,8 @@ export class SearchTool implements Tool<DatabaseQuery, any[]> {
     } catch (error) {
       return this.handleError(error, context);
     }
+      },
+    );
   }
 
   private async handleError(error: unknown, context: ToolContext): Promise<ToolResult> {

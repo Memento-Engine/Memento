@@ -97,14 +97,57 @@ export class ContextLogger {
     this.logger.warn(this.mergeContext(metadata), message);
   }
 
+  private extractSource(stack?: string): string | undefined {
+    if (!stack) return undefined;
+
+    const lines = stack.split("\n").map((line) => line.trim());
+    const sourceLine = lines.find(
+      (line) =>
+        (line.includes("agents\\src") || line.includes("agents/src")) &&
+        !line.includes("utils\\logger.ts") &&
+        !line.includes("utils/logger.ts"),
+    );
+
+    if (!sourceLine) {
+      return undefined;
+    }
+
+    return sourceLine.replace(/^at\s+/, "");
+  }
+
   error(message: string, error?: Error | unknown, metadata?: Record<string, any>) {
     const context = this.mergeContext(metadata);
     if (error instanceof Error) {
-      this.logger.error({ ...context, error: error.message }, message);
+      this.logger.error(
+        {
+          ...context,
+          error: error.message,
+          stack: error.stack,
+          source: this.extractSource(error.stack),
+        },
+        message,
+      );
     } else if (error) {
-      this.logger.error({ ...context, error: String(error) }, message);
+      const wrapped = new Error(String(error));
+      this.logger.error(
+        {
+          ...context,
+          error: String(error),
+          stack: wrapped.stack,
+          source: this.extractSource(wrapped.stack),
+        },
+        message,
+      );
     } else {
-      this.logger.error(context, message);
+      const wrapped = new Error(message);
+      this.logger.error(
+        {
+          ...context,
+          stack: wrapped.stack,
+          source: this.extractSource(wrapped.stack),
+        },
+        message,
+      );
     }
   }
 

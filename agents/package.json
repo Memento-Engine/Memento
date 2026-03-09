@@ -2,7 +2,9 @@
   "scripts": {
     "dev:agent": "tsx watch --include src/**/*.ts src/server.ts",
     "typecheck": "tsc --noEmit --watch",
-    "dev": "concurrently \"npm run dev:agent\" \"npm run typecheck\""
+    "dev": "concurrently \"npm run dev:agent\" \"npm run typecheck\"",
+    "latency:tail": "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force logs | Out-Null; if (!(Test-Path logs/latency.log)) { New-Item -ItemType File logs/latency.log | Out-Null }; Get-Content logs/latency.log -Wait\"",
+    "latency:clear": "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force logs | Out-Null; Clear-Content logs/latency.log -ErrorAction SilentlyContinue\""
   },
   "dependencies": {
     "@langchain/core": "^1.1.30",

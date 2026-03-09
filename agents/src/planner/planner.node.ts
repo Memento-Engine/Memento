@@ -1,5 +1,5 @@
 import { ChatOpenAI } from "@langchain/openai";
-import { PlannerPlan, PlannerPlanSchema } from "./planner.schema";
+import { PlannerPlan } from "./planner.schema";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { plannerPrompt } from "../prompts/plannerPrompt";
 import { AgentStateType } from "../agentState";
@@ -9,7 +9,8 @@ import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser, ErrorHandler, withRetry } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
 import { emitError, emitStepEvent } from "../utils/eventQueue";
-import util from "util";
+import { ExecutionPlan, RouterPlannerOutputSchema } from "../types/llmPlan";
+import { runWithSpan } from "../telemetry/tracing";
 
 let llmInstance: ChatOpenAI | null = null;
 
@@ -85,8 +86,24 @@ export async function plannerNode(
   const llm = await getLLM();
   const appConfig = await getConfig();
 
+  return runWithSpan(
+    "agent.node.planner",
+    {
+      request_id: state.requestId,
+      node: "planner",
+      goal_length: state.goal.length,
+    },
+    async () => {
   try {
     let lastValidationError = "";
+    let executionPlan: ExecutionPlan | undefined;
+    let routeMeta:
+      | {
+          intent: string;
+          needsClarification: boolean;
+          clarificationQuestion?: string;
+        }
+      | undefined;
 
     // Attempt to generate and validate plan with retries
     const plan = await withRetry(
@@ -102,7 +119,15 @@ export async function plannerNode(
         });
 
         logger.debug("Response Invoking planner LLM Started");
-        const response = await llm.invoke(prompt);
+        const response = await runWithSpan(
+          "agent.node.planner.llm",
+          {
+            request_id: state.requestId,
+            node: "planner",
+            retry_attempt: (state.planAttempts ?? 0) + 1,
+          },
+          async () => llm.invoke(prompt),
+        );
         logger.debug("Response Invoking planner LLM Complted");
 
         const parsedContent = await SafeJsonParser.parseContent(response.content);
@@ -111,7 +136,14 @@ export async function plannerNode(
           parsedContent,
         });
 
-        const rawPlan = parsedContent as PlannerPlan;
+        const combinedOutput = RouterPlannerOutputSchema.parse(parsedContent);
+        const rawPlan = combinedOutput.plannerPlan as PlannerPlan;
+        executionPlan = combinedOutput.executionPlan;
+        routeMeta = {
+          intent: combinedOutput.executionPlan.retrieval_depth,
+          needsClarification: combinedOutput.needsClarification,
+          clarificationQuestion: combinedOutput.clarificationQuestion,
+        };
 
         // Validate plan structure
         const validation = validatePlan(rawPlan);
@@ -154,7 +186,9 @@ export async function plannerNode(
       "completed",
       state.requestId,
       {
-        description: `Created plan with ${plan.steps.length} steps`,
+        description: routeMeta?.needsClarification
+          ? routeMeta.clarificationQuestion ?? `Created plan with ${plan.steps.length} steps`
+          : `Created plan with ${plan.steps.length} steps`,
         query: state.goal,
         queries: plan.steps.map((s) => s.query),
       }
@@ -163,6 +197,9 @@ export async function plannerNode(
     return {
       ...state,
       plan,
+      executionPlan,
+      needsClarification: routeMeta?.needsClarification,
+      clarificationQuestion: routeMeta?.clarificationQuestion,
       currentStep: 0,
       planAttempts: (state.planAttempts ?? 0) + 1,
       plannerErrors: "",
@@ -172,7 +209,7 @@ export async function plannerNode(
       goal: state.goal,
     });
 
-    logger.error("Planner node failed", String(error), {
+    logger.error("Planner node failed", error, {
       error: agentError.code,
       message: agentError.message,
     });
@@ -181,4 +218,6 @@ export async function plannerNode(
 
     throw agentError;
   }
+    },
+  );
 }

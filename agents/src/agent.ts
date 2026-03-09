@@ -6,6 +6,7 @@ import { executorNode } from "./executor/executor.node";
 import { finalAnswerNode } from "./finalLlm/finalAnswer.node";
 import { getLogger } from "./utils/logger";
 import { getConfig } from "./config/config";
+import { runWithSpan } from "./telemetry/tracing";
 
 /**
  * Route function to determine if replanning is needed.
@@ -37,6 +38,12 @@ async function shouldReplanRoute(state: typeof AgentState.State): Promise<string
  * Workflow: Planner → Executor → [Replanner → Executor (loop) or FinalAnswer] → END
  */
 async function buildAgentGraph() {
+  return runWithSpan(
+    "agent.graph.build",
+    {
+      workflow: "planner-executor-replanner-finalAnswer",
+    },
+    async () => {
   const logger = await getLogger();
   
   try {
@@ -75,6 +82,8 @@ async function buildAgentGraph() {
     logger.error("Failed to build agent workflow graph");
     throw error;
   }
+    },
+  );
 }
 
 // Build and export the compiled graph

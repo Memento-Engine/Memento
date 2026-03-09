@@ -6,6 +6,7 @@ import { SafeJsonParser, ErrorHandler, withTimeout } from "../utils/parser";
 import { getConfig } from "../config/config";
 import { ExecutorError, ErrorCode } from "../types/errors";
 import { emitCompletion } from "../utils/eventQueue";
+import { runWithSpan } from "../telemetry/tracing";
 
 /**
  * Final answer node: Synthesize step results into final answer.
@@ -15,6 +16,13 @@ import { emitCompletion } from "../utils/eventQueue";
 export async function finalAnswerNode(
   state: AgentStateType,
 ): Promise<AgentStateType> {
+  return runWithSpan(
+    "agent.node.final_answer",
+    {
+      request_id: state.requestId,
+      node: "finalAnswer",
+    },
+    async () => {
   const logger = await createContextLogger(state.requestId, {
     node: "finalAnswer",
   });
@@ -64,10 +72,18 @@ export async function finalAnswerNode(
     });
 
     // Call LLM with timeout
-    const llmResult = await withTimeout(
-      llm.invoke(prompt),
-      config.llm.timeout,
-      "Final answer LLM request timed out",
+    const llmResult = await runWithSpan(
+      "agent.node.final_answer.llm",
+      {
+        request_id: state.requestId,
+        node: "finalAnswer",
+      },
+      async () =>
+        withTimeout(
+          llm.invoke(prompt),
+          config.llm.timeout,
+          "Final answer LLM request timed out",
+        ),
     );
 
     // Extract content as plain text (not JSON)
@@ -117,7 +133,7 @@ export async function finalAnswerNode(
       },
     );
 
-    logger.error("Final answer node failed", String(error), {
+    logger.error("Final answer node failed", error, {
       error: agentError.code,
       message: agentError.message,
     });
@@ -128,4 +144,6 @@ export async function finalAnswerNode(
 
     throw agentError;
   }
+    },
+  );
 }

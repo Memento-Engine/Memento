@@ -10,6 +10,7 @@ import { getToolRegistry } from "../tools/registry";
 import { ExecutorError, ToolError, ErrorCode, AgentError } from "../types/errors";
 import { ToolContext } from "../types/tools";
 import { emitError, emitStepEvent } from "../utils/eventQueue";
+import { runWithSpan } from "../telemetry/tracing";
 
 /**
  * Check if a result is empty or invalid.
@@ -174,6 +175,49 @@ async function executeStep(
   return await executeReasoningStep(step, stepResults, state, logger, config, llm);
 }
 
+function normalizeReasoningOutput(step: PlannerStep, parsed: any): any {
+  if (parsed === null || parsed === undefined) {
+    return parsed;
+  }
+
+  const expectedType = step.expectedOutput.type;
+  const variableName = step.expectedOutput.variableName;
+
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (variableName in parsed) {
+    return (parsed as Record<string, any>)[variableName];
+  }
+
+  if ("output" in parsed) {
+    return (parsed as Record<string, any>).output;
+  }
+
+  if ("result" in parsed) {
+    return (parsed as Record<string, any>).result;
+  }
+
+  if ("data" in parsed) {
+    return (parsed as Record<string, any>).data;
+  }
+
+  if (expectedType === "value" && "value" in parsed) {
+    return (parsed as Record<string, any>).value;
+  }
+
+  if (expectedType === "list" && "items" in parsed && Array.isArray((parsed as Record<string, any>).items)) {
+    return (parsed as Record<string, any>).items;
+  }
+
+  if (expectedType === "table" && "rows" in parsed && Array.isArray((parsed as Record<string, any>).rows)) {
+    return (parsed as Record<string, any>).rows;
+  }
+
+  return parsed;
+}
+
 /**
  * Execute a reasoning or computation step using the LLM.
  * This is only called for non-search steps that require true reasoning.
@@ -186,101 +230,118 @@ async function executeReasoningStep(
   config: any,
   llm: any
 ): Promise<any> {
-  let lastError: string = "";
+  return runWithSpan(
+    "agent.node.executor.reasoning_step",
+    {
+      request_id: state.requestId,
+      step_id: step.id,
+      step_kind: step.kind,
+    },
+    async () => {
+      let lastError: string = "";
 
-  for (let attempt = 1; attempt <= step.maxRetries; attempt++) {
-    logger.info("Reasoning step execution attempt", {
-      stepId: step.id,
-      attempt,
-      maxRetries: step.maxRetries,
-      stepKind: step.kind,
-    });
-
-    try {
-      // Build context from previous step results and current step query
-      const dependencyContext = Object.fromEntries(
-        step.dependsOn.map((depId) => [depId, stepResults[depId]])
-      );
-
-      const prompt = await extractorPrompt.invoke({
-        goal: step.query,
-        previousErrors: lastError,
-        step: JSON.stringify(step, null, 2),
-        dbResults: JSON.stringify(dependencyContext, null, 2),
-        outputType: step.expectedOutput.type,
-        variableName: step.expectedOutput.variableName,
-        outputDescription: step.expectedOutput.description,
-        currentStepDependencyResults: dependencyContext,
-      });
-
-      const llmResult = await withTimeout(
-        llm.invoke(prompt),
-        config.llm.timeout,
-        "Reasoning LLM request timeout"
-      );
-
-      const llmResponse = llmResult as any;
-      logger.debug("LLM response received for reasoning step", {
-        stepId: step.id,
-        contentLength: String(llmResponse.content).length,
-      });
-
-      const parsedContent = SafeJsonParser.parseContent(llmResponse.content);
-
-      logger.debug("Reasoning output parsed", {
-        stepId: step.id,
-        type: typeof parsedContent,
-        goal: step.query,
-      });
-
-      // Validate parsed output against expected schema
-      const validation = validateStepOutput(step, parsedContent);
-
-      if (validation.valid) {
-        logger.info("Reasoning step completed successfully", {
+      for (let attempt = 1; attempt <= step.maxRetries; attempt++) {
+        logger.info("Reasoning step execution attempt", {
           stepId: step.id,
-          outputVariable: step.expectedOutput.variableName,
-          type: step.expectedOutput.type,
+          attempt,
+          maxRetries: step.maxRetries,
+          stepKind: step.kind,
         });
 
-        return parsedContent;
+        try {
+          const dependencyContext = Object.fromEntries(
+            step.dependsOn.map((depId) => [depId, stepResults[depId]]),
+          );
+
+          const prompt = await extractorPrompt.invoke({
+            goal: step.query,
+            previousErrors: lastError,
+            step: JSON.stringify(step, null, 2),
+            dbResults: JSON.stringify(dependencyContext, null, 2),
+            outputType: step.expectedOutput.type,
+            variableName: step.expectedOutput.variableName,
+            outputDescription: step.expectedOutput.description,
+            currentStepDependencyResults: dependencyContext,
+          });
+
+          const llmResult = await runWithSpan(
+            "agent.node.executor.reasoning_llm",
+            {
+              request_id: state.requestId,
+              step_id: step.id,
+              retry_attempt: attempt,
+            },
+            async () =>
+              withTimeout(
+                llm.invoke(prompt),
+                config.llm.timeout,
+                "Reasoning LLM request timeout",
+              ),
+          );
+
+          const llmResponse = llmResult as any;
+          logger.debug("LLM response received for reasoning step", {
+            stepId: step.id,
+            llmContentLength: String(llmResponse.content).length,
+            llmContent: llmResponse.content,
+          });
+
+          const parsedContent = await SafeJsonParser.parseContent(llmResponse.content);
+          const normalizedContent = normalizeReasoningOutput(step, parsedContent);
+
+          logger.debug("Reasoning output parsed", {
+            stepId: step.id,
+            type: typeof normalizedContent,
+            goal: step.query,
+          });
+
+          const validation = validateStepOutput(step, normalizedContent);
+
+          if (validation.valid) {
+            logger.info("Reasoning step completed successfully", {
+              stepId: step.id,
+              outputVariable: step.expectedOutput.variableName,
+              type: step.expectedOutput.type,
+            });
+
+            return normalizedContent;
+          }
+
+          lastError = validation.error;
+          logger.warn("Reasoning output validation failed", {
+            stepId: step.id,
+            error: validation.error,
+            stepKind: step.kind,
+            stepQuery: step.query,
+            stepExpectedOutput: step.expectedOutput,
+            attempt,
+          });
+        } catch (error) {
+          lastError = ErrorHandler.getSafeMessage(error);
+          logger.error("Error during reasoning step", error, {
+            stepId: step.id,
+            attempt,
+            error: lastError,
+          });
+        }
+
+        if (attempt < step.maxRetries) {
+          logger.info("Retrying reasoning step", {
+            stepId: step.id,
+            nextAttempt: attempt + 1,
+          });
+        }
       }
 
-      // Validation failed - prepare for retry
-      lastError = validation.error;
-      logger.warn("Reasoning output validation failed", {
-        stepId: step.id,
-        error: validation.error,
-        stepKind : step.kind,
-        stepQuery: step.query,
-        stepExpectedOutput: step.expectedOutput,
-        attempt,
-      });
-    } catch (error) {
-      lastError = ErrorHandler.getSafeMessage(error);
-      logger.error("Error during reasoning step", String(error), {
-        stepId: step.id,
-        attempt,
-        error: lastError,
-      });
-    }
-
-    if (attempt < step.maxRetries) {
-      logger.info("Retrying reasoning step", {
-        stepId: step.id,
-        nextAttempt: attempt + 1,
-      });
-    }
-  }
-
-  // All retries exhausted
-  throw new ExecutorError(
-    `Reasoning step ${step.id} failed after ${step.maxRetries} attempts: ${lastError}`,
-    {
-      stepId: step.id,
-      maxRetries: step.maxRetries,
-      lastError,
-    }
+      throw new ExecutorError(
+        `Reasoning step ${step.id} failed after ${step.maxRetries} attempts: ${lastError}`,
+        {
+          stepId: step.id,
+          maxRetries: step.maxRetries,
+          lastError,
+        },
+      );
+    },
   );
 }
 
@@ -288,6 +349,14 @@ async function executeReasoningStep(
  * Executor node: Execute planned steps and collect results.
  */
 export async function executorNode(state: AgentStateType): Promise<AgentStateType> {
+  return runWithSpan(
+    "agent.node.executor",
+    {
+      request_id: state.requestId,
+      node: "executor",
+      current_step: state.currentStep,
+    },
+    async () => {
   const logger = await createContextLogger(state.requestId, {
     node: "executor",
     currentStep: state.currentStep,
@@ -333,7 +402,16 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
 
       try {
         // Execute the step
-        const result = await executeStep(step, stepResults, logger, state);
+        const result = await runWithSpan(
+          "agent.node.executor.step",
+          {
+            request_id: state.requestId,
+            step_id: step.id,
+            step_kind: step.kind,
+            step_index: i,
+          },
+          async () => executeStep(step, stepResults, logger, state),
+        );
 
         // Evaluate if result is empty or invalid
         const isResultEmpty = isEmptyResult(result);
@@ -444,7 +522,7 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
         const errorMsg = ErrorHandler.getSafeMessage(error);
         stepErrors[step.id] = errorMsg;
 
-        logger.error("Step execution failed", String(error), {
+        logger.error("Step execution failed", error, {
           stepId: step.id,
           error: errorMsg,
         });
@@ -498,7 +576,7 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
       stepErrors,
     });
 
-    logger.error("Executor node failed", String(error), {
+    logger.error("Executor node failed", error, {
       error: agentError.code,
       completedSteps,
       stepResults,
@@ -506,4 +584,6 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
 
     throw agentError;
   }
+    },
+  );
 }

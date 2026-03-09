@@ -3,9 +3,12 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 export const plannerPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    `You are a planning agent for a personal memory search engine.
+      `You are a router+planner agent for a personal memory search engine.
 
-Convert the user's goal into a JSON execution plan with steps.
+In ONE response, do all three:
+1) classify the query intent,
+2) decide if clarification is required,
+3) produce the executable step plan.
 
 STEP TYPES:
 - search: Query database for activity records
@@ -52,19 +55,61 @@ CRITICAL CONSTRAINTS:
    - expectedOutput.type: "value"|"table"|"list"|"object"
    - Propagate filters when searching same application
 
-RETURN ONLY VALID JSON with this structure:
-- goal: string (restated user goal)
-- steps: array of step objects
-  - id: string (step1, step2, etc)
-  - kind: "search"|"reason"|"final"
-  - query: string (human description)
-  - dependsOn: array (step IDs this depends on)
-  - expectedOutput: object with type, variableName, description
-  - status: "pending"
-  - retryCount: 0
-  - maxRetries: 2
+ROUTER / EXECUTION PLAN FORMAT (Rust-equivalent):
+- executionPlan.knowledge_priority: ["PersonalMemory"|"WebSearch"|"LLMKnowledge"]
+- executionPlan.retrieval_depth: "None"|"Shallow"|"Deep"
+- executionPlan.citation_policy: "Mandatory"|"Preferred"|"None"
+- executionPlan.include_images: boolean
+- executionPlan.web_policy.on_results_found: "Return"|"Offer"|"Auto"
+- executionPlan.web_policy.on_no_results: "Return"|"Offer"|"Auto"
+- executionPlan.rewritten_query: string
+- executionPlan.personal_search_queries: string[]
+- executionPlan.web_search_queries: string[]
 
-For search steps, include databaseQuery with: semanticQuery, keywords, filter, limit, sort
+RETURN ONLY VALID JSON with this structure:
+{{
+   "executionPlan": {{
+      "knowledge_priority": ["PersonalMemory"],
+      "retrieval_depth": "Shallow",
+      "citation_policy": "Preferred",
+      "include_images": false,
+      "web_policy": {{
+         "on_results_found": "Return",
+         "on_no_results": "Offer"
+  }},
+      "rewritten_query": "...",
+      "personal_search_queries": ["..."],
+      "web_search_queries": []
+  }},
+   "needsClarification": false,
+   "clarificationQuestion": "optional string only when needsClarification=true",
+   "plannerPlan": {{
+      "goal": "restated user goal",
+      "steps": [
+         {{
+            "id": "step1",
+            "kind": "search",
+            "query": "...",
+            "dependsOn": [],
+            "expectedOutput": {{
+               "type": "table",
+               "variableName": "results",
+               "description": "..."
+            }},
+            "status": "pending",
+            "retryCount": 0,
+            "maxRetries": 2,
+            "databaseQuery": {{
+               "semanticQuery": "...",
+               "keywords": ["..."],
+               "filter": {{}},
+               "sort": {{ "field": "timestamp", "order": "desc" }},
+               "limit": 20
+  }}
+  }}
+      ]
+  }}
+  }}
 
 EXAMPLE SEARCH STEP:
 id: step1
@@ -82,5 +127,5 @@ expectedOutput:
   variableName: prs
   description: GitHub pull request records`,
   ],
-  ["human", "{goal}"],
+   ["human", "{goal}\n\nPrevious validation errors (if any):\n{previousErrors}"],
 ]);

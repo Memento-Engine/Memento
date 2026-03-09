@@ -48,6 +48,14 @@ type: {outputType}
 variableName: {variableName}
 description: {outputDescription}
 
+CRITICAL SHAPE RULE:
+- Return the raw value for the expected type ONLY.
+- Do NOT wrap with keys like {{"output": ...}}, {{"result": ...}}, or {{"data": ...}}.
+- Do NOT wrap output using the variable name key.
+- WRONG: {{"result": [ ... ]}}
+- RIGHT (table): [ ... ]
+- RIGHT (value): "..." or 123 or true or null
+
 ====================================================
 INTERPRETATION RULE
 ====================================================
@@ -75,7 +83,7 @@ Return a single primitive:
 - string
 - number
 - boolean
-- timestamp
+- null
 
 Example:
 "2024-03-10T14:23:10Z"

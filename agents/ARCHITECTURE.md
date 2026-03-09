@@ -258,6 +258,7 @@ query → PLAN(v1) → EXEC(fail) → REPLAN(v2) → EXEC(fail)
 
 3. **Execution Errors**
    - Exception thrown during executeStep()
+
    - Caught and evaluated against max attempts
    - Triggers replan if attempts remaining
 
