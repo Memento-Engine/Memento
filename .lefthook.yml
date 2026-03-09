@@ -11,10 +11,8 @@ no_tty: false
 pre-commit:
   parallel: false
   commands:
-
     branch-validate:
       run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/validate-branch.ps1
-      stage_fixed: true
       skip: merge,rebase
 
     check-file-size:
@@ -25,31 +23,28 @@ pre-commit:
       run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/check-permissions.ps1
       skip: merge,rebase
 
-    # detect-secrets:
-    #   run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/detect-secrets.ps1
-    #   skip: merge,rebase
-
     rustfmt:
-      run: cargo fmt --all -- --check
-      glob: "crates/**/*.rs|app/src-tauri/**/*.rs"
-      fail_text: "Run 'cargo fmt --all' to format Rust code"
+      run: cargo fmt --all
+      glob: "crates/**/*.rs,app/src-tauri/**/*.rs"
       skip: merge,rebase
 
     prettier:
       run: npx prettier --write {staged_files}
-      glob: "agents/**/*.ts|app/**/*.ts|app/**/*.tsx|app/**/*.js"
+      glob: "agents/**/*.{ts,js},app/**/*.{ts,tsx,js}"
+      stage_fixed: true
       skip: merge,rebase
 
     eslint-agents:
-      run: cd agents && npx eslint --fix src/**/*.ts
+      run: cd agents && npx eslint --fix {staged_files}
       glob: "agents/**/*.ts"
+      stage_fixed: true
       skip: merge,rebase
 
     eslint-app:
-      run: cd app && npx eslint --fix .
-      glob: "app/**/*.ts|app/**/*.tsx"
+      run: cd app && npx eslint --fix {staged_files}
+      glob: "app/**/*.{ts,tsx}"
+      stage_fixed: true
       skip: merge,rebase
-
 
 # -----------------------
 # PRE-PUSH HOOK
@@ -57,7 +52,6 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
-
     cargo-check:
       run: cargo check --all --all-features
       fail_text: "Cargo check failed. Fix errors and try again."
@@ -75,13 +69,11 @@ pre-push:
       run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/full-lint.ps1
       skip: merge,rebase
 
-
 # -----------------------
 # COMMIT MESSAGE HOOK
 # -----------------------
 commit-msg:
   commands:
-
     validate-commit-msg:
       run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/validate-commit-msg.ps1 {1}
       skip: merge,rebase,squash
