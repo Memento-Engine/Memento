@@ -1,5 +1,6 @@
 "use client";
 
+import { getBaseUrl } from "@/api/base";
 import {
   chatRequest,
   Citation,
@@ -8,12 +9,12 @@ import {
   thinkingSchema,
   ThinkingStep,
 } from "@/components/types";
-import {
-  AssistantStatus,
-  ChatContext,
-  TRANSITIONS,
-} from "@/contexts/chatContext";
-import { useEffect, useState } from "react";
+import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContext";
+import useSystemHealth from "@/hooks/useSystemHealth";
+import { notify } from "@/lib/notify";
+import { Beaker } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { use, useEffect, useState } from "react";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -21,9 +22,11 @@ interface ChatProviderProps {
 
 export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
-  const [assistantStatus, setAssistantStatus] =
-    useState<AssistantStatus>("Idle");
+  const [assistantStatus, setAssistantStatus] = useState<AssistantStatus>("Idle");
   const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
+
+  const { isRunning } = useSystemHealth();
+  const router = useRouter();
 
   const transitionStatus = (nextState: AssistantStatus): boolean => {
     const allowedNextStates = TRANSITIONS[assistantStatus];
@@ -108,9 +111,9 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       case "thinking": {
         // Step progress/thinking update
         transitionStatus("Thinking");
-        
+
         const thinkingData = event.data;
-        
+
         // Validate the thinking data against schema
         const parsedThinking = thinkingSchema.safeParse(thinkingData);
 
@@ -122,7 +125,14 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         }
 
         console.log("Thinking event validated successfully");
-        console.log("  | Step:", thinkingData.stepId, "Type:", thinkingData.stepType, "Status:", thinkingData.status);
+        console.log(
+          "  | Step:",
+          thinkingData.stepId,
+          "Type:",
+          thinkingData.stepType,
+          "Status:",
+          thinkingData.status
+        );
         console.log("  | Results:", thinkingData.resultCount ?? 0);
 
         const thinkingStep = parsedThinking.data;
@@ -140,8 +150,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               const safeId =
                 typeof crypto.randomUUID === "function"
                   ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
+                  : Date.now().toString() + Math.random().toString(36).substring(2);
 
               return [
                 ...prev,
@@ -205,8 +214,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               const safeId =
                 typeof crypto.randomUUID === "function"
                   ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
+                  : Date.now().toString() + Math.random().toString(36).substring(2);
 
               return [
                 ...prev,
@@ -271,8 +279,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               const safeId =
                 typeof crypto.randomUUID === "function"
                   ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
+                  : Date.now().toString() + Math.random().toString(36).substring(2);
 
               return [
                 ...prev,
@@ -353,8 +360,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
                 const safeId =
                   typeof crypto.randomUUID === "function"
                     ? crypto.randomUUID()
-                    : Date.now().toString() +
-                      Math.random().toString(36).substring(2);
+                    : Date.now().toString() + Math.random().toString(36).substring(2);
 
                 return [
                   ...prev,
@@ -384,9 +390,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
       // Legacy event types (kept for backward compatibility)
       case "citations": {
-        const parsedCitations = citationsSchema.safeParse(
-          getNormalizedCitations(event.data),
-        );
+        const parsedCitations = citationsSchema.safeParse(getNormalizedCitations(event.data));
 
         if (!parsedCitations.success) {
           console.log("Failed to parse the Citations schema", parsedCitations.error);
@@ -401,8 +405,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               const safeId =
                 typeof crypto.randomUUID === "function"
                   ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
+                  : Date.now().toString() + Math.random().toString(36).substring(2);
 
               return [
                 ...prev,
@@ -456,11 +459,20 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   }
 
   const sendMessage = async (message: string): Promise<void> => {
+    if (!isRunning) {
+      notify.error(
+        "Memento is offline. Please start the memento by clicking on floating widget or from settings."
+      );
+      return;
+    }
+
+    router.push("/chat/123");
+
     console.log("Message from chat input", message);
 
     transitionStatus("LocalPending");
     setStepUpdates([]); // Reset step updates for new message
-    
+
     try {
       const currentChat: MementoUIMessage = {
         id: "12",
@@ -494,7 +506,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
       if (!res.body) throw new Error("No response body");
 
-      console.log("🔷 Streaming response received from backend");
+      console.log("Streaming response received from backend");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder("utf-8");
@@ -505,7 +517,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          console.log(`🏁 Stream ended. Total events received: ${eventCount}`);
+          console.log(`Stream ended. Total events received: ${eventCount}`);
           break;
         }
 
@@ -516,6 +528,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
         // Keep the last incomplete line in the buffer
         buffer = lines.pop() || "";
+        let isError : boolean = false;
 
         for (const line of lines) {
           if (!line.trim()) continue;
@@ -523,16 +536,34 @@ export default function ChatProvider({ children }: ChatProviderProps) {
           try {
             const event = JSON.parse(line);
             eventCount++;
-            console.log(`🎯 [Event #${eventCount}] Received: type=${event.type}, Keys:`, Object.keys(event));
+            console.log(
+              ` [Event #${eventCount}] Received: type=${event.type}, Keys:`,
+              Object.keys(event)
+            );
             if (event.data) {
               console.log(`   Data Keys:`, Object.keys(event.data));
               if (event.data.stepId) console.log(`   stepId: ${event.data.stepId}`);
             }
+
+            if (event.type === "error") {
+              isError = true;
+              console.error("Error event received from backend:", event.data?.message);
+              notify.error(`Error: ${event.data?.message || "An error occurred"}`);
+              break;
+            }
+
+
             await handleStreamingEvent(event);
           } catch (e) {
             console.warn("Failed to parse streaming event:", line, e);
           }
         }
+
+        if (isError) {
+          console.warn("Stopping stream processing due to error event");
+          break;
+        }
+
       }
     } catch (err: unknown) {
       console.error("Error while sending message:", err);
@@ -560,5 +591,4 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       {children}
     </ChatContext.Provider>
   );
-} 
-
+}

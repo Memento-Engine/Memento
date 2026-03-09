@@ -9,12 +9,12 @@ let httpLoggerInstance: pino.Logger | null = null;
  * Initialize the logger with configuration.
  * Should be called once at application startup.
  */
-export function initializeLogger(): pino.Logger {
+export async function initializeLogger(): Promise<pino.Logger> {
   if (loggerInstance) {
     return loggerInstance;
   }
 
-  const config = getConfig();
+  const config = await getConfig();
   const isProd = config.server.environment === "production";
 
   loggerInstance = pino(
@@ -48,9 +48,9 @@ export function initializeLogger(): pino.Logger {
  * Get the logger instance.
  * Initializes if not already initialized.
  */
-export function getLogger(): pino.Logger {
+export async function getLogger(): Promise<pino.Logger> {
   if (!loggerInstance) {
-    initializeLogger();
+    await initializeLogger();
   }
   return loggerInstance!;
 }
@@ -59,9 +59,9 @@ export function getLogger(): pino.Logger {
  * Get the HTTP logger middleware.
  * Initializes if not already initialized.
  */
-export function getHttpLogger() {
+export async function getHttpLogger() {
   if (!httpLoggerInstance) {
-    const logger = getLogger();
+    const logger = await getLogger();
     httpLoggerInstance = pinoHttp({
       logger,
       customAttributeKeys: {
@@ -119,11 +119,11 @@ export class ContextLogger {
 /**
  * Create a context logger for a specific operation.
  */
-export function createContextLogger(
+export async function createContextLogger(
   requestId: string,
   metadata?: Record<string, any>,
-): ContextLogger {
-  const logger = getLogger();
+): Promise<ContextLogger> {
+  const logger = await getLogger();
   return new ContextLogger(logger, {
     requestId,
     ...metadata,
@@ -132,8 +132,8 @@ export function createContextLogger(
 
 // Export singleton for backward compatibility
 export const logger = new Proxy(new ContextLogger(null as any), {
-  get(target, prop) {
-    const actualLogger = getLogger();
+  async get(target, prop) {
+    const actualLogger = await getLogger();
     const contextLogger = new ContextLogger(actualLogger);
     return (contextLogger as any)[prop];
   },

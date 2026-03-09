@@ -6,10 +6,10 @@
   "permissions": [
     "core:default",
     {
-      "identifier": "fs:default",
+      "identifier": "fs:allow-read-text-file",
       "allow": [
         {
-          "path": "C:/Users/pavan/Pictures/Screenshots/**"
+          "path": "$LOCALDATA/memento/**"
         }
       ]
     }

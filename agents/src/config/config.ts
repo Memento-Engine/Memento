@@ -19,7 +19,9 @@ const ConfigSchema = z.object({
   llm: z.object({
     provider: z.string().default("openrouter"),
     model: z.string(),
-    apiKey: z.string().default("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"),
+    apiKey: z
+      .string()
+      .default("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"),
     baseUrl: z.string().url(),
     temperature: z.number().min(0).max(2).default(0),
     timeout: z.number().int().min(11000).default(300000),
@@ -48,11 +50,31 @@ const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 
+import fs from "fs/promises";
+import path from "path";
+
+export async function readDaemonPort(): Promise<number> {
+  const filePath = path.join(process.env.LOCALAPPDATA || "", "memento", "memento-daemon.port");
+
+  const content = await fs.readFile(filePath, "utf-8");
+  const port = parseInt(content.trim(), 10);
+
+  if (Number.isNaN(port)) {
+    throw new Error("Invalid port in memento-daemon.port");
+  }
+
+  return port;
+}
+
 /**
  * Load and validate configuration from environment variables.
  * Throws if required configuration is missing or invalid.
  */
-export function loadConfig(): Config {
+export async function loadConfig(): Promise<Config> {
+  const daemonPort = await readDaemonPort().catch((error) => {
+    console.log("Could not read daemon port, using default 4173");
+    return 55941;
+  });
   const config = {
     server: {
       port: parseInt(process.env.SERVER_PORT ?? "4173", 10),
@@ -63,7 +85,7 @@ export function loadConfig(): Config {
       provider: process.env.LLM_PROVIDER ?? "openrouter",
       model: process.env.LLM_MODEL ?? "deepseek/deepseek-chat",
       apiKey:
-        process.env.OPENROUTER_API_KEY ?? 
+        process.env.OPENROUTER_API_KEY ??
         "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",
       baseUrl: process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1",
       temperature: parseFloat(process.env.LLM_TEMPERATURE ?? "0"),
@@ -71,12 +93,11 @@ export function loadConfig(): Config {
     },
     backend: {
       searchToolUrl:
-        process.env.SEARCH_TOOL_URL ??
-        "http://localhost:9090/api/v1/search_tool",
+        process.env.SEARCH_TOOL_URL ?? `http://localhost:${daemonPort}/api/v1/search_tool`,
       timeout: parseInt(process.env.BACKEND_TIMEOUT ?? "30000", 10),
     },
     logging: {
-      level: process.env.LOG_LEVEL ?? "info",
+      level: process.env.LOG_LEVEL ?? "debug",
       format: process.env.LOG_FORMAT ?? "pretty",
     },
     agent: {
@@ -103,9 +124,9 @@ export function loadConfig(): Config {
 // Load and export singleton instance
 let cachedConfig: Config | null = null;
 
-export function getConfig(): Config {
+export async function getConfig(): Promise<Config> {
   if (!cachedConfig) {
-    cachedConfig = loadConfig();
+    cachedConfig = await loadConfig();
   }
   return cachedConfig;
 }

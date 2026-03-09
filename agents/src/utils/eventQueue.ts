@@ -28,7 +28,7 @@ class EventQueue {
 
   add(event: QueuedEvent): void {
     this.events.push(event);
-    
+
     // If stream writer is configured, emit event immediately
     if (this.streamWriter) {
       try {
@@ -138,7 +138,7 @@ export function emitStepEvent(
     reasoning?: string;
     queries?: string[];
     duration?: number;
-  },
+  }
 ): void {
   // Try to get queue from global map first (preferred for LangGraph compatibility)
   let queue = getEventQueue(requestId);
@@ -149,12 +149,12 @@ export function emitStepEvent(
   }
 
   if (!queue) {
-    console.warn("❌ Event queue not initialized - event not emitted");
+    console.warn(" Event queue not initialized - event not emitted");
     console.warn(`   Step: ${stepId}, Type: ${stepType}, Title: ${title}, RequestId: ${requestId}`);
     return;
   }
 
-  const event = {
+  const event : QueuedEvent = {
     type: "thinking",
     data: {
       stepId,
@@ -175,7 +175,9 @@ export function emitStepEvent(
   };
 
   queue.add(event);
-  console.log(`✅ Event emitted to queue [${requestId}]: stepId=${stepId}, type=${stepType}, status=${status}, resultCount=${details?.resultCount}`);
+  console.log(
+    `Event emitted to queue [${requestId}]: stepId=${stepId}, type=${stepType}, status=${status}, resultCount=${details?.resultCount}`
+  );
 }
 
 /**
@@ -191,7 +193,7 @@ export function emitCompletion(content: string, requestId: string, stepId: strin
   }
 
   if (!queue) {
-    console.warn("❌ Event queue not initialized - completion not emitted");
+    console.warn("Event queue not initialized - completion not emitted");
     return;
   }
 
@@ -220,7 +222,7 @@ export function emitError(
   message: string,
   code: string,
   requestId: string,
-  isSystemError: boolean = true,
+  isSystemError: boolean = true
 ): void {
   let queue = getEventQueue(requestId);
   if (!queue) {
@@ -228,7 +230,7 @@ export function emitError(
   }
 
   if (!queue) {
-    console.warn("❌ Event queue not initialized - error not emitted");
+    console.warn("Event queue not initialized - error not emitted");
     return;
   }
 
@@ -274,15 +276,15 @@ export function drainQueuedEvents(requestId: string): QueuedEvent[] {
     const legacyQueue = eventQueueStorage.getStore();
     if (legacyQueue) {
       const events = legacyQueue.drain();
-      console.log(`📊 Legacy queue drained: ${events.length} events`);
+      console.log(`Legacy queue drained: ${events.length} events`);
       return events;
     }
-    console.warn("❌ No event queue found in map or AsyncLocalStorage when draining");
+    console.warn(" No event queue found in map or AsyncLocalStorage when draining");
     return [];
   }
 
   const events = queue.drain();
-  console.log(`📊 Queue drained: ${events.length} events`);
+  console.log(`Queue drained: ${events.length} events`);
   events.forEach((ev, i) => {
     console.log(`   [${i}] type=${ev.type}, stepId=${(ev.data as any).stepId}`);
   });

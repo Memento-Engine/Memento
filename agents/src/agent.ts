@@ -12,8 +12,8 @@ import { getConfig } from "./config/config";
  * Returns "replanner" if shouldReplan is true AND we haven't exceeded max attempts,
  * otherwise "finalAnswer" to generate a response (with or without results).
  */
-function shouldReplanRoute(state: typeof AgentState.State): string {
-  const config = getConfig();
+async function shouldReplanRoute(state: typeof AgentState.State): Promise<string> {
+  const config = await getConfig();
   const maxReplanAttempts = config.agent.maxReplanAttempts ?? 3;
   const currentReplanAttempts = state.replanAttempts ?? 0;
 
@@ -36,8 +36,8 @@ function shouldReplanRoute(state: typeof AgentState.State): string {
  * Build and compile the agent workflow graph.
  * Workflow: Planner → Executor → [Replanner → Executor (loop) or FinalAnswer] → END
  */
-function buildAgentGraph() {
-  const logger = getLogger();
+async function buildAgentGraph() {
+  const logger = await getLogger();
   
   try {
     const workflow = new StateGraph(AgentState);

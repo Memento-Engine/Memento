@@ -12,6 +12,14 @@ import LeftSidebar from "@/components/layout/Sidebar";
 import { GeistSans } from "geist/font/sans";
 import { Toaster } from "sonner";
 import DraggableCaptureAgent from "@/components/DraggableCaptureAgent";
+import SystemHealthProvider from "@/providers/SystemHealthProvider";
+
+import { Inter } from "next/font/google";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
 
 export default function RootLayout({
   children,
@@ -21,7 +29,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.className} ${GeistSans.variable} antialiased`}
+      className={`${inter.className} ${inter.variable} antialiased`}
     >
       <body className="bg-background text-foreground">
         <Toaster
@@ -31,12 +39,14 @@ export default function RootLayout({
           }}
         />
 
-        <ChatProvider>
-          <ReferenceProvider>
-            <LayoutContent>{children}</LayoutContent>
-            <DraggableCaptureAgent />
-          </ReferenceProvider>
-        </ChatProvider>
+        <SystemHealthProvider>
+          <ChatProvider>
+            <ReferenceProvider>
+              <LayoutContent>{children}</LayoutContent>
+              <DraggableCaptureAgent />
+            </ReferenceProvider>
+          </ChatProvider>
+        </SystemHealthProvider>
       </body>
     </html>
   );
@@ -56,6 +66,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         <div className="flex h-screen w-screen ">
           <LeftSidebar />
 
+    
           <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
             <div className="flex-1 overflow-y-auto">{children}</div>
           </main>

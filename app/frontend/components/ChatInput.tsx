@@ -40,12 +40,6 @@ function ChatInput({
               setQuery("");
             }
           }}
-          onClick={(e): void => {
-            e.preventDefault();
-            const message = query; // snapshot
-            handleSend(message);
-            setQuery("");
-          }}
         />
 
         <div className="flex items-center justify-between px-1 pt-2 pb-1">
@@ -63,7 +57,6 @@ function ChatInput({
           {/* Send Button */}
           <Button
             onClick={(): void => {
-              console.log("quer", query);
               handleSend(query);
             }}
             disabled={!query.trim()}

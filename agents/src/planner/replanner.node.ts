@@ -47,7 +47,7 @@ export async function replannerNode(
   state: AgentStateType,
   config?: RunnableConfig,
 ): Promise<AgentStateType> {
-  const logger = createContextLogger(state.requestId, {
+  const logger = await createContextLogger(state.requestId, {
     node: "replanner",
     goal: state.goal,
     failedStepId: state.lastFailedStepId,
@@ -58,8 +58,8 @@ export async function replannerNode(
     failedStepId: state.lastFailedStepId,
   });
 
-  const llm = getLLM();
-  const appConfig = getConfig();
+  const llm = await getLLM();
+  const appConfig = await getConfig();
 
   // Safety check: prevent infinite replanning loops
   const maxReplanAttempts = appConfig.agent.maxReplanAttempts ?? 3;
@@ -119,7 +119,7 @@ export async function replannerNode(
         });
 
         const response = await llm.invoke(prompt);
-        const parsedContent = SafeJsonParser.parseContent(response.content);
+        const parsedContent = await SafeJsonParser.parseContent(response.content);
 
         logger.info("Replanner LLM response parsed", {
           stepCount: parsedContent?.steps?.length ?? 0,

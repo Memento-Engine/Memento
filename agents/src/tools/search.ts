@@ -19,8 +19,8 @@ export class SearchTool implements Tool<DatabaseQuery, any[]> {
     input: DatabaseQuery,
     context: ToolContext,
   ): Promise<ToolResult<any[]>> {
-    const logger = getLogger();
-    const config = getConfig();
+    const logger = await getLogger();
+    const config =  await getConfig();
 
     logger.info("Executing search tool");
 
@@ -52,8 +52,8 @@ export class SearchTool implements Tool<DatabaseQuery, any[]> {
     }
   }
 
-  private handleError(error: unknown, context: ToolContext): ToolResult {
-    const logger = getLogger();
+  private async handleError(error: unknown, context: ToolContext): Promise<ToolResult> {
+    const logger = await getLogger();
 
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError;

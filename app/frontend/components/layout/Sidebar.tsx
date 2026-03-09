@@ -71,7 +71,7 @@ function LeftSidebar(): React.ReactElement {
             <Image
               src="/blackLogo.svg"
               alt="logo"
-              className="dark:invert shrink-0"
+              className="dark:invert shrink-0 text-muted-foreground/80"
               width={40}
               height={40}
             />
@@ -93,16 +93,16 @@ function LeftSidebar(): React.ReactElement {
       </SidebarHeader>
 
       <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4">
-        <SidebarMenuItem onClick={goToHome} className="group/menuitem">
+        <SidebarMenuItem onClick={goToHome} className="group/menuitem list-none">
           <SidebarMenuButton
             variant="default"
             className="
-      w-full flex items-center cursor-pointer justify-start px-3
+      w-full flex items-center full text-muted-foreground/90 cursor-pointer justify-start px-3
     "
           >
             <SquarePen className="h-5 w-5 shrink-0" />
             <span className="flex w-full items-center justify-between  ml-2 overflow-hidden">
-              <span className="whitespace-nowrap text-sm">New Memory</span>
+              <span className="whitespace-nowrap text-sm">Chat</span>
               <span className="text-xs text-muted-foreground/50 opacity-0 transition-opacity group-hover/menuitem:opacity-100 whitespace-nowrap">
                 Ctrl + Shift + O
               </span>
@@ -110,10 +110,10 @@ function LeftSidebar(): React.ReactElement {
           </SidebarMenuButton>
         </SidebarMenuItem>
 
-        <SidebarMenuItem className="group/menuitem">
+        <SidebarMenuItem className="group/menuitem list-none">
           <SidebarMenuButton
             variant="default"
-            className="w-full flex items-center cursor-pointer justify-start px-3"
+            className="w-full text-muted-foreground/90  flex items-center cursor-pointer justify-start px-3"
           >
             <Search className="h-5 w-5 shrink-0" />
             <span className="flex w-full items-center justify-between  ml-2 overflow-hidden">
@@ -131,7 +131,7 @@ function LeftSidebar(): React.ReactElement {
             isCollapsed ? "h-0 opacity-0" : "h-auto opacity-100",
           )}
         >
-          <p className="mb-2 px-3 text-sm text-muted-foreground/60 whitespace-nowrap">
+          <p className="mb-2 px-3 text-sm text-muted-foreground/50 whitespace-nowrap">
             Your chats
           </p>
           <SidebarMenu>
@@ -143,9 +143,11 @@ function LeftSidebar(): React.ReactElement {
                   w-full
                   flex
                   items-center
+                  full text-muted-foreground/90
                   justify-between
                   cursor-pointer
                   px-3
+                  font-normal
                   group-data-[collapsible=icon]:justify-center
                   group-data-[collapsible=icon]:px-0
                   "
@@ -210,10 +212,10 @@ function LeftSidebar(): React.ReactElement {
                 <User2 className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="flex flex-col gap-1 text-left  overflow-hidden">
-                <span className="text-sm font-semibold leading-none text-foreground whitespace-nowrap">
+                <span className="text-sm font-medium leading-none text-foreground whitespace-nowrap">
                   Bruce Wayne
                 </span>
-                <span className="text-xs leading-none text-muted-foreground whitespace-nowrap">
+                <span className="text-xs leading-none truncate text-muted-foreground whitespace-nowrap">
                   brucewayne@enterprises.com
                 </span>
               </div>

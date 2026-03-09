@@ -35,17 +35,17 @@ const AgentRequestSchema = z.object({
 async function startServer() {
   try {
     // Load and validate configuration
-    const config = loadConfig();
+    const config = await loadConfig();
     console.log(
       `Configuration loaded: ${config.server.environment} mode on ${config.server.host}:${config.server.port}`,
     );
 
     // Initialize logging
-    const logger = initializeLogger();
+    const logger = await initializeLogger();
     logger.info("Logger initialized");
 
     // Initialize tools
-    const toolRegistry = initializeToolRegistry();
+    const toolRegistry = await initializeToolRegistry();
     logger.info(
       "Tool registry initialized with tools: " +
         toolRegistry
@@ -60,7 +60,7 @@ async function startServer() {
     // Middleware
     app.use(cors());
     app.use(express.json({ limit: "1mb" }));
-    app.use(getHttpLogger());
+    app.use(await getHttpLogger());
 
     // Request ID middleware
     app.use((req: Request, res: Response, next: NextFunction) => {
@@ -71,8 +71,8 @@ async function startServer() {
     });
 
     // Error handling middleware
-    app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-      const logger = createContextLogger((req as any).requestId);
+    app.use(async (err: any, req: Request, res: Response, next: NextFunction) => {
+      const logger = await createContextLogger((req as any).requestId);
 
       if (err instanceof SyntaxError && "body" in err) {
         logger.warn("Invalid JSON in request body");
@@ -105,7 +105,7 @@ async function startServer() {
       "/agent",
       async (req: Request, res: Response, next: NextFunction) => {
         const requestId = (req as any).requestId;
-        const logger = createContextLogger(requestId, {
+        const logger = await createContextLogger(requestId, {
           endpoint: "/api/v1/agent",
           method: "POST",
         });
@@ -164,7 +164,7 @@ async function startServer() {
           let executionError: any = null;
 
           try {
-            result = await graph.invoke({
+            result = await (await graph).invoke({
               goal: goal as any,
               requestId: requestId as any,
               planAttempts: 0 as any,

@@ -8,7 +8,7 @@ import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser, ErrorHandler, withRetry } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
-import { emitStepEvent } from "../utils/eventQueue";
+import { emitError, emitStepEvent } from "../utils/eventQueue";
 import util from "util";
 
 let llmInstance: ChatOpenAI | null = null;
@@ -17,12 +17,12 @@ let llmInstance: ChatOpenAI | null = null;
  * Initialize the LLM with configuration.
  * Uses singleton pattern to avoid multiple instances.
  */
-function initializeLLM(): ChatOpenAI {
+async function initializeLLM(): Promise<ChatOpenAI> {
   if (llmInstance) {
     return llmInstance;
   }
 
-  const config = getConfig();
+  const config = await getConfig();
 
   llmInstance = new ChatOpenAI({
     model: config.llm.model,
@@ -40,9 +40,9 @@ function initializeLLM(): ChatOpenAI {
 /**
  * Get the LLM instance.
  */
-export function getLLM(): ChatOpenAI {
+export async function getLLM(): Promise<ChatOpenAI> {
   if (!llmInstance) {
-    initializeLLM();
+    await initializeLLM();
   }
   return llmInstance!;
 }
@@ -57,10 +57,7 @@ function propagateFilters(plan: PlannerPlan): void {
 
     for (const dep of step.dependsOn) {
       const parent = plan.steps.find((s) => s.id === dep);
-      if (
-        parent?.kind === "search" &&
-        parent?.databaseQuery?.filter?.app_name
-      ) {
+      if (parent?.kind === "search" && parent?.databaseQuery?.filter?.app_name) {
         step.databaseQuery.filter = {
           ...parent.databaseQuery.filter,
           ...step.databaseQuery.filter,
@@ -76,26 +73,26 @@ function propagateFilters(plan: PlannerPlan): void {
  */
 export async function plannerNode(
   state: AgentStateType,
-  config?: RunnableConfig,
+  config?: RunnableConfig
 ): Promise<AgentStateType> {
-  const logger = createContextLogger(state.requestId, {
+  const logger = await createContextLogger(state.requestId, {
     node: "planner",
     goal: state.goal,
   });
 
   logger.info("Planner node started");
 
-  const llm = getLLM();
-  const appConfig = getConfig();
+  const llm = await getLLM();
+  const appConfig = await getConfig();
 
   try {
     let lastValidationError = "";
-    
+
     // Attempt to generate and validate plan with retries
     const plan = await withRetry(
       async () => {
         // Build error message for LLM to learn from previous failures
-        const errorContext = lastValidationError 
+        const errorContext = lastValidationError
           ? `PREVIOUS ATTEMPT FAILED:\n\nValidation Error:\n${lastValidationError}\n\nFix the JSON to resolve these errors. Pay special attention to:\n- Filter fields MUST be arrays: "app_name": ["value1", "value2"]\n- limit MUST be between 1-100\n`
           : "";
 
@@ -104,13 +101,16 @@ export async function plannerNode(
           previousErrors: errorContext,
         });
 
+        logger.debug("Response Invoking planner LLM Started");
         const response = await llm.invoke(prompt);
-        const parsedContent = SafeJsonParser.parseContent(response.content);
+        logger.debug("Response Invoking planner LLM Complted");
+
+        const parsedContent = await SafeJsonParser.parseContent(response.content);
 
         logger.info("Planner LLM response parsed", {
-          parsedContent
+          parsedContent,
         });
- 
+
         const rawPlan = parsedContent as PlannerPlan;
 
         // Validate plan structure
@@ -119,16 +119,15 @@ export async function plannerNode(
         if (!validation.valid) {
           // Store error for next retry attempt
           lastValidationError = validation.error;
-          
+
           logger.warn("Plan validation failed - will retry", {
             error: validation.error,
             attempt: (state.planAttempts ?? 0) + 1,
           });
 
-          throw new PlannerError(
-            `Plan validation failed: ${validation.error}`,
-            { validation: validation.error },
-          );
+          throw new PlannerError(`Plan validation failed: ${validation.error}`, {
+            validation: validation.error,
+          });
         }
 
         return validation.data;
@@ -137,7 +136,7 @@ export async function plannerNode(
         maxAttempts: appConfig.agent.maxPlanRetries,
         initialDelayMs: 100,
         maxDelayMs: 1000,
-      },
+      }
     );
 
     propagateFilters(plan);
@@ -151,14 +150,14 @@ export async function plannerNode(
     emitStepEvent(
       "plan_0",
       "planning",
-      "Create Execution Plan",
+      "Searching your memories for relevant information...",
       "completed",
       state.requestId,
       {
         description: `Created plan with ${plan.steps.length} steps`,
         query: state.goal,
         queries: plan.steps.map((s) => s.query),
-      },
+      }
     );
 
     return {
@@ -169,16 +168,16 @@ export async function plannerNode(
       plannerErrors: "",
     };
   } catch (error) {
-    const agentError = ErrorHandler.toAgentError(
-      error,
-      ErrorCode.PLANNER_FAILED,
-      { goal: state.goal },
-    );
+    const agentError = ErrorHandler.toAgentError(error, ErrorCode.PLANNER_FAILED, {
+      goal: state.goal,
+    });
 
     logger.error("Planner node failed", String(error), {
       error: agentError.code,
       message: agentError.message,
     });
+
+    emitError(agentError.message, agentError.code, state.requestId, true);
 
     throw agentError;
   }

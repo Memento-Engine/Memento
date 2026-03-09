@@ -85,9 +85,9 @@ pub struct ProcessedOcrResult {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SearchQuery {
-    pub app_name: Option<String>,
-    pub window_name: Option<String>,
-    pub browser_url: Option<String>,
+    pub app_name: Option<Vec<String>>,
+    pub window_name: Option<Vec<String>>,
+    pub browser_url: Option<Vec<String>>,
     pub query: String,
     pub semantic_query: Option<String>,
     pub key_words: Option<Vec<String>>,
@@ -99,9 +99,9 @@ pub struct SearchQuery {
 // Intermediate Struct for getting struct from rewritten query
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StructuredQuery {
-    pub app_name: Option<String>,
-    pub window_name: Option<String>,
-    pub browser_url: Option<String>,
+    pub app_name: Option<Vec<String>>,
+    pub window_name: Option<Vec<String>>,
+    pub browser_url: Option<Vec<String>>,
     pub query: String,
     pub semantic_query: Option<String>,
     pub key_words: Option<Vec<String>>,
@@ -751,30 +751,30 @@ filtered_chunks AS (
         Ok(())
     }
 
-    // Changed return type from Vec<u64> to Vec<i64>
-    pub async fn check_frame_hash(&self) -> Result<Vec<i64>> {
-        sqlx
-            ::query_scalar(r#"
-        SELECT image_hash FROM frames
-    "#)
-            .fetch_all(&self.pool).await
-    }
-
     pub async fn perform_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
         let embedding_json = serde_json
             ::to_string(&search.embedding)
             .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
 
-        let keywords_str = search.key_words
-            .as_ref()
-            .map(|k| {
-                k.iter()
-                    .filter(|w| !w.trim().is_empty())
-                    .map(|w| format!("\"{}\"*", w))
-                    .collect::<Vec<_>>()
-                    .join(" OR ")
-            })
-            .unwrap_or_default();
+        // Pro-tip: Let's also merge `entities` into the FTS keywords so you don't lose that valuable data!
+        let mut all_keywords = search.key_words.clone().unwrap_or_default();
+        if let Some(entities) = &search.entities {
+            all_keywords.extend(entities.clone());
+        }
+
+        let keywords_str = if all_keywords.is_empty() {
+            String::new()
+        } else {
+            all_keywords
+                .iter()
+                .filter(|w| !w.trim().is_empty())
+                .map(|w| format!("\"{}\"*", w))
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        };
+
+        info!("Keyword str : {:#?}", keywords_str);
+
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             r#"
 WITH
@@ -792,18 +792,55 @@ filtered_chunks AS (
 "#
         );
 
-        // Metadata filter: App Name
-        if let Some(app) = &search.app_name {
-            qb.push(" AND LOWER(f.app_name) LIKE ");
-            qb.push_bind(format!("%{}%", app.to_lowercase()));
+        // 1️⃣ Metadata filter: App Name (Now an array of aliases)
+        if let Some(app_names) = &search.app_name {
+            if !app_names.is_empty() {
+                qb.push(" AND (");
+                let mut first = true;
+
+                for app in app_names {
+                    if !first {
+                        qb.push(" OR ");
+                    }
+                    first = false;
+
+                    let term = format!("%{}%", app.to_lowercase());
+
+                    // Check if this specific alias matches the app, window, or URL
+                    qb.push("(");
+                    qb.push("LOWER(f.app_name) LIKE ");
+                    qb.push_bind(term.clone());
+
+                    qb.push(" OR LOWER(f.window_title) LIKE ");
+                    qb.push_bind(term.clone());
+
+                    qb.push(" OR LOWER(f.browser_url) LIKE ");
+                    qb.push_bind(term);
+                    qb.push(")");
+                }
+                qb.push(") ");
+            }
         }
 
-        // Metadata filter: Window Title
-        if let Some(win) = &search.window_name {
-            qb.push(" AND LOWER(f.window_title) LIKE ");
-            qb.push_bind(format!("%{}%", win.to_lowercase()));
-        }
+        // 2️⃣ Metadata filter: Window Title (Also an array)
+        if let Some(win_names) = &search.window_name {
+            if !win_names.is_empty() {
+                qb.push(" AND (");
+                let mut first = true;
 
+                for win in win_names {
+                    if !first {
+                        qb.push(" OR ");
+                    }
+                    first = false;
+
+                    let term = format!("%{}%", win.to_lowercase());
+                    qb.push("LOWER(f.window_title) LIKE ");
+                    qb.push_bind(term);
+                }
+                qb.push(") ");
+            }
+        }
         // Metadata filter: Time range
         if let Some((start, end)) = search.time_range {
             qb.push(" AND datetime(f.captured_at) BETWEEN datetime(");
@@ -832,7 +869,7 @@ filtered_chunks AS (
     FROM vec_chunks v
     JOIN filtered_chunks fc ON fc.id = v.chunk_id
     ORDER BY semantic_score ASC
-    LIMIT 150
+    LIMIT 50
 ),
 
         -- 2️ Keyword Retrieval (ONLY filtered)
@@ -843,7 +880,7 @@ filtered_chunks AS (
         if !keywords_str.is_empty() {
             qb.push(
                 "SELECT rowid as id, 1.0 as keyword_hit FROM chunks_fts 
-         WHERE chunks_fts MATCH "
+                        WHERE chunks_fts MATCH "
             );
             qb.push_bind(keywords_str);
             qb.push(" AND rowid IN (SELECT id FROM filtered_chunks)");
@@ -897,11 +934,13 @@ ORDER BY final_score DESC
 LIMIT 50
 "#
         );
+
         let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
+
+        info!("Database results right into the db: {:#?}", results);
 
         Ok(results)
     }
-
     async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         debug!("Running database migrations");
 

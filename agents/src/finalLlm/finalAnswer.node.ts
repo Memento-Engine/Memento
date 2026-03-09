@@ -15,7 +15,7 @@ import { emitCompletion } from "../utils/eventQueue";
 export async function finalAnswerNode(
   state: AgentStateType,
 ): Promise<AgentStateType> {
-  const logger = createContextLogger(state.requestId, {
+  const logger = await createContextLogger(state.requestId, {
     node: "finalAnswer",
   });
 
@@ -27,8 +27,8 @@ export async function finalAnswerNode(
   });
 
   const { stepResults, goal, noResultsFound, hasSearchResults } = state;
-  const config = getConfig();
-  const llm = getLLM();
+  const config = await getConfig();
+  const llm = await getLLM();
 
   // Handle case where no results were found
   if (!hasSearchResults || !stepResults || Object.keys(stepResults).length === 0) {

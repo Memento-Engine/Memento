@@ -7,12 +7,12 @@ let registryInstance: ToolRegistry | null = null;
 /**
  * Initialize the tool registry with built-in tools.
  */
-export function initializeToolRegistry(): ToolRegistry {
+export async function initializeToolRegistry(): Promise<ToolRegistry> {
   if (registryInstance) {
     return registryInstance;
   }
 
-  const logger = getLogger();
+  const logger = await getLogger();
   registryInstance = new ToolRegistry();
 
   // Register built-in tools
@@ -27,9 +27,9 @@ export function initializeToolRegistry(): ToolRegistry {
 /**
  * Get the tool registry instance.
  */
-export function getToolRegistry(): ToolRegistry {
+export async function getToolRegistry(): Promise<ToolRegistry> {
   if (!registryInstance) {
-    initializeToolRegistry();
+    await initializeToolRegistry();
   }
   return registryInstance!;
 }
@@ -37,8 +37,9 @@ export function getToolRegistry(): ToolRegistry {
 /**
  * Register a custom tool.
  */
-export function registerTool(tool: Tool): void {
-  const registry = getToolRegistry();
+export async function registerTool(tool: Tool): Promise<void> {
+  const registry = await getToolRegistry();
   registry.register(tool);
-  getLogger().info(`Tool registered: ${tool.name}`);
+  const logger = await getLogger();
+  logger.info(`Tool registered: ${tool.name}`);
 }

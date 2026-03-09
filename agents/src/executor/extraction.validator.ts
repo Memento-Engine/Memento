@@ -90,12 +90,12 @@ export function validateStepOutput(
  * Replaces {{stepX.output}} with actual step results.
  * Throws if references are invalid or circular.
  */
-export function resolveDatabaseQuery(
+export async function resolveDatabaseQuery(
   databaseQuery: DatabaseQuery,
   dependsOn: string[],
   stepResults: Record<string, any>,
-): DatabaseQuery {
-  const logger = getLogger();
+): Promise<DatabaseQuery> {
+  const logger = await getLogger();
   const query = _.cloneDeep(databaseQuery);
 
   function traverse(obj: any, path: string[] = []) {

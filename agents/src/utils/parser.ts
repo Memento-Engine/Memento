@@ -11,8 +11,8 @@ export class SafeJsonParser {
    * Parse LLM response content to JSON.
    * Handles both string and array formats from different LLM providers.
    */
-  static parseContent(content: unknown): any {
-    const logger = getLogger();
+  static async parseContent(content: unknown): Promise<any> {
+    const logger = await getLogger();
 
     if (content === null || content === undefined) {
       throw new AgentError(
@@ -88,13 +88,13 @@ export class SafeJsonParser {
   /**
    * Parse and validate content against a schema.
    */
-  static parseAndValidate<T>(content: unknown, schema: z.ZodSchema<T>): T {
-    const parsed = this.parseContent(content);
+  static async parseAndValidate<T>(content: unknown, schema: z.ZodSchema<T>): Promise<T> {
+    const parsed = await this.parseContent(content);
 
     try {
       return schema.parse(parsed);
     } catch (validationError) {
-      const logger = getLogger();
+      const logger = await getLogger();
       logger.warn("Schema validation failed for LLM output");
 
       const message =

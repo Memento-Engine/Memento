@@ -34,10 +34,11 @@ const CHAT_STATUS = {
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Citation, MementoUIMessage } from "./types";
-import { StepThinking } from "./StepThinking";
+import { mockSteps, StepThinking } from "./StepThinking";
 import useChatContext from "@/hooks/useChatContext";
 import MementoBreathing from "./MementoBreathing";
 import ThinkingBubble from "./ThinkingBubble";
+import ImageSearchGrid from "./ImageSearchGrid";
 
 function MessageItem({
   message,
@@ -52,11 +53,11 @@ function MessageItem({
   showAssistant,
 }: MessageItemProps): React.ReactElement {
   const { assistantStatus } = useChatContext();
-  const isStreaming: boolean = isLastMessage && (
-    assistantStatus == "LocalPending" || 
-    assistantStatus == "Thinking" || 
-      assistantStatus == "Streaming" 
-  );
+  const isStreaming: boolean =
+    isLastMessage &&
+    (assistantStatus == "LocalPending" ||
+      assistantStatus == "Thinking" ||
+      assistantStatus == "Streaming");
 
   const citationMap = new Map<number, Citation>();
   for (const part of message.parts) {
@@ -130,10 +131,6 @@ function MessageItem({
       return null;
     }
 
-    // const url = convertFileSrc(
-    //   "C:/Users/pavan/Pictures/Screenshots/testOne.png"
-    // );
-
     return (
       <div key={`${message.id}-${partIndex}`} className="w-full">
         {message.role === "user" ? (
@@ -183,6 +180,8 @@ function MessageItem({
         .filter((p) => p.type === "data-thinking")
         .map((p) => p.data);
 
+
+
       return <StepThinking steps={steps} />;
     }
     return <></>;
@@ -230,10 +229,18 @@ function MessageItem({
     }
     return null;
   };
+
+  const renderImageGrid = (): React.ReactElement => {
+    if (message.role === "assistant") {
+      return <ImageSearchGrid />;
+    }
+    return <></>;
+  };
+
   return (
     <>
       {renderStepThinking()}
-
+      {/* {renderImageGrid()} */}
       <div className="w-full mb-4">
         {message.parts.map((part, i) => {
           switch (part.type) {
@@ -269,11 +276,7 @@ function MessageItem({
         {message.role === "assistant" && (
           <div className="flex items-center gap-2 text-muted-foreground text-xs mt-2">
             <div
-              className={cn(
-                "flex items-center gap-1",
-              isStreaming &&
-                  "hidden",
-              )}
+              className={cn("flex items-center gap-1", isStreaming && "hidden")}
             >
               <CopyButton text={getFullTextContent()} />
 
@@ -298,14 +301,14 @@ function MessageItem({
 
 export default React.memo(MessageItem, (prevProps, nextProps) => {
   // Always re-render if streaming and this is the last message
-  if (nextProps.isLastMessage){
+  if (nextProps.isLastMessage) {
     return false;
   }
 
   return (
     prevProps.message === nextProps.message &&
     prevProps.isFirstMessage === nextProps.isFirstMessage &&
-    // prevProps.isLastMessage === nextProps.isLastMessage &&
+    prevProps.isLastMessage === nextProps.isLastMessage &&
     prevProps.status === nextProps.status &&
     prevProps.showAssistant === nextProps.showAssistant
   );

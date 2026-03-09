@@ -162,7 +162,12 @@ pub async fn processing_ocr_results(
                     error!("DB insert failed: {:?}", e);
 
                     // rollback file
-                    let _ = std::fs::remove_file(&file_path);
+                    let _ = match std::fs::remove_file(&file_path) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            error!("Failed to remove the image: {:#?}", e);
+                        }
+                    };
                 }
             }
         }

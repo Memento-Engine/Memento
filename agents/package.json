@@ -1,6 +1,8 @@
 {
   "scripts": {
-    "dev:agent": "tsx watch --include src/**/*.ts src/server.ts"
+    "dev:agent": "tsx watch --include src/**/*.ts src/server.ts",
+    "typecheck": "tsc --noEmit --watch",
+    "dev": "concurrently \"npm run dev:agent\" \"npm run typecheck\""
   },
   "dependencies": {
     "@langchain/core": "^1.1.30",
@@ -9,6 +11,7 @@
     "axios": "^1.13.6",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "env-paths": "^4.0.0",
     "express": "^5.2.1",
     "lodash": "^4.17.23",
     "pino": "^10.3.1",
@@ -23,6 +26,8 @@
     "@types/lodash": "^4.17.24",
     "@types/node": "^25.3.3",
     "@types/uuid": "^9.0.1",
-    "tsx": "^4.20.0"
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3"
   }
 }

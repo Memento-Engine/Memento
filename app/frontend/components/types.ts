@@ -1,6 +1,5 @@
-import { app } from "@tauri-apps/api";
-import { InferUITools, UIMessage, tool } from "ai";
-import { string, z } from "zod";
+import { UIMessage } from "ai";
+import { z } from "zod";
 
 // Step search results schema
 export const StepSearchResultsSchema = z.object({
@@ -77,7 +76,7 @@ export type Citations = z.infer<typeof citationsSchema>;
 
 const dataSchemas = {
   thinking: thinkingSchema,
-  citations: citationsSchema,   // plural
+  citations: citationsSchema, // plural
 };
 
 export type MyDataPart = {
