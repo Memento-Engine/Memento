@@ -3,6 +3,7 @@ import { RunnableConfig } from "@langchain/core/runnables";
 import { plannerPrompt } from "../prompts/plannerPrompt";
 import { AgentStateType } from "../agentState";
 import { validatePlan } from "./planner.validator";
+import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser, ErrorHandler } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
@@ -55,19 +56,11 @@ export async function plannerNode(
     },
     async () => {
       try {
-        let executionPlan: ExecutionPlan | undefined;
-        let routeMeta:
-          | {
-              intent: string;
-              needsClarification: boolean;
-              clarificationQuestion?: string;
-            }
-          | undefined;
+        const appConfig = await getConfig();
+        const maxPlannerAttempts = Math.max(1, appConfig.agent.maxPlanRetries ?? 2);
 
-        const prompt = await plannerPrompt.invoke({
-          goal: state.goal,
-          previousErrors: "",
-        });
+        let plannerAttemptErrors = "";
+        let lastPlannerError: unknown = undefined;
 
         emitStepEvent(
           "plan_0",
@@ -81,86 +74,136 @@ export async function plannerNode(
           }
         );
 
-        logger.debug("Invoking planner LLM");
+        for (let attempt = 0; attempt < maxPlannerAttempts; attempt++) {
+          try {
+            const prompt = await plannerPrompt.invoke({
+              goal: state.goal,
+              previousErrors: plannerAttemptErrors,
+            });
 
-        const llmInvocation = await invokeRoleLlm({
-          role: "planner",
-          prompt,
-          requestId: state.requestId,
-          spanName: "agent.node.planner.llm",
-          spanAttributes: {
-            node: "planner",
-            retry_attempt: (state.planAttempts ?? 0) + 1,
-          },
-        });
+            logger.debug("Invoking planner LLM", {
+              attempt: attempt + 1,
+              maxPlannerAttempts,
+            });
 
+            const llmInvocation = await invokeRoleLlm({
+              role: "planner",
+              prompt,
+              requestId: state.requestId,
+              spanName: "agent.node.planner.llm",
+              spanAttributes: {
+                node: "planner",
+                retry_attempt: (state.planAttempts ?? 0) + attempt + 1,
+              },
+            });
 
-        const parsedContent = await SafeJsonParser.parseContent(llmInvocation.response.content);
+            const parsedContent = await SafeJsonParser.parseContent(llmInvocation.response.content);
+            const combinedOutput = RouterPlannerOutputSchema.parse(parsedContent);
+            const rawPlan = combinedOutput.plannerPlan as PlannerPlan;
+            const executionPlan: ExecutionPlan = combinedOutput.executionPlan;
 
-        const combinedOutput = RouterPlannerOutputSchema.parse(parsedContent);
-        const rawPlan = combinedOutput.plannerPlan as PlannerPlan;
-        executionPlan = combinedOutput.executionPlan;
-        routeMeta = {
-          intent: combinedOutput.executionPlan.retrieval_depth,
-          needsClarification: combinedOutput.needsClarification,
-          clarificationQuestion: combinedOutput.clarificationQuestion,
-        };
+            const routeMeta = {
+              intent: combinedOutput.executionPlan.retrieval_depth,
+              needsClarification: combinedOutput.needsClarification,
+              clarificationQuestion: combinedOutput.clarificationQuestion,
+            };
 
-        const validation = validatePlan(rawPlan);
-        if (!validation.valid) {
-          throw new PlannerError(`Plan validation failed: ${validation.error}`, {
-            validation: validation.error,
-          });
+            const validation = validatePlan(rawPlan);
+            if (!validation.valid) {
+              throw new PlannerError(`Plan validation failed: ${validation.error}`, {
+                validation: validation.error,
+              });
+            }
+
+            const plan = validation.data;
+            propagateFilters(plan);
+
+            logger.info("Plan created successfully", {
+              attempt: attempt + 1,
+              stepCount: plan.steps.length,
+              stepIds: plan.steps.map((s) => s.id),
+            });
+
+            emitStepEvent(
+              "plan_0",
+              "planning",
+              "Search your memories...",
+              "completed",
+              state.requestId,
+              {
+                description: routeMeta?.needsClarification
+                  ? (routeMeta.clarificationQuestion ?? `Created plan with ${plan.steps.length} steps`)
+                  : `Created plan with ${plan.steps.length} steps`,
+                query: state.goal,
+                queries: executionPlan?.personal_search_queries ?? [],
+              }
+            );
+
+            return {
+              ...state,
+              plan,
+              executionPlan,
+              needsClarification: routeMeta?.needsClarification,
+              clarificationQuestion: routeMeta?.clarificationQuestion,
+              currentStep: 0,
+              planAttempts: (state.planAttempts ?? 0) + attempt + 1,
+              llmCalls: (state.llmCalls ?? 0) + attempt + 1,
+              plannerErrors: "",
+            };
+          } catch (attemptError) {
+            lastPlannerError = attemptError;
+            plannerAttemptErrors = ErrorHandler.getSafeMessage(attemptError);
+
+            const isLastAttempt = attempt === maxPlannerAttempts - 1;
+            if (!isLastAttempt) {
+              emitStepEvent(
+                "plan_0",
+                "planning",
+                "Refining plan...",
+                "running",
+                state.requestId,
+                {
+                  description: `Planner attempt ${attempt + 1} failed. Retrying...`,
+                  message: plannerAttemptErrors,
+                  query: state.goal,
+                }
+              );
+            }
+          }
         }
 
-        const plan = validation.data;
-
-        propagateFilters(plan);
-
-        logger.info("Plan created successfully", {
-          stepCount: plan.steps.length,
-          stepIds: plan.steps.map((s) => s.id),
+        throw lastPlannerError ?? new PlannerError("Planner retries exhausted", {
+          maxPlannerAttempts,
+        });
+      } catch (error) {
+        const agentError = ErrorHandler.toAgentError(error, ErrorCode.PLANNER_FAILED, {
+          goal: state.goal,
         });
 
         emitStepEvent(
           "plan_0",
           "planning",
-          "Search your memories...",
-          "completed",
+          "Planning failed",
+          "failed",
           state.requestId,
           {
-            description: routeMeta?.needsClarification
-              ? (routeMeta.clarificationQuestion ?? `Created plan with ${plan.steps.length} steps`)
-              : `Created plan with ${plan.steps.length} steps`,
+            description: agentError.message,
             query: state.goal,
-            queries: executionPlan?.personal_search_queries ?? [],
           }
         );
-
-        return {
-          ...state,
-          plan,
-          executionPlan,
-          needsClarification: routeMeta?.needsClarification,
-          clarificationQuestion: routeMeta?.clarificationQuestion,
-          currentStep: 0,
-          planAttempts: (state.planAttempts ?? 0) + 1,
-          llmCalls: (state.llmCalls ?? 0) + 1,
-          plannerErrors: "",
-        };
-      } catch (error) {
-        const agentError = ErrorHandler.toAgentError(error, ErrorCode.PLANNER_FAILED, {
-          goal: state.goal,
-        });
 
         logger.error("Planner node failed", error, {
           error: agentError.code,
           message: agentError.message,
         });
 
-        emitError("Failed to answer the query", agentError.code, state.requestId, true);
-
-        throw agentError;
+        return {
+          ...state,
+          shouldReplan: true,
+          plannerErrors: agentError.message,
+          failureReason: `Planner failed: ${agentError.message}`,
+          planAttempts: (state.planAttempts ?? 0) + 1,
+        };
       }
     }
   );

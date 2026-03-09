@@ -9,6 +9,18 @@ import { getConfig } from "./config/config";
 import { runWithSpan } from "./telemetry/tracing";
 
 /**
+ * Route function after planner node.
+ * Sends failures to replanner, otherwise continues to executor.
+ */
+async function plannerRoute(state: typeof AgentState.State): Promise<string> {
+  if (state.shouldReplan) {
+    return "replanner";
+  }
+
+  return "executor";
+}
+
+/**
  * Route function to determine if replanning is needed.
  * Returns "replanner" if shouldReplan is true AND we haven't exceeded max attempts,
  * otherwise "finalAnswer" to generate a response (with or without results).
@@ -57,7 +69,10 @@ async function buildAgentGraph() {
 
         // Define edges
         graphBuilder.addEdge(START, "planner");
-        graphBuilder.addEdge("planner", "executor");
+        graphBuilder.addConditionalEdges("planner", plannerRoute, {
+          replanner: "replanner",
+          executor: "executor",
+        });
 
         // Conditional edge from executor: replan or finalize
         graphBuilder.addConditionalEdges("executor", shouldReplanRoute, {

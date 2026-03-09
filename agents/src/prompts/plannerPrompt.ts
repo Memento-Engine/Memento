@@ -14,6 +14,9 @@ STEP TYPES AND RULES:
 - search: Query database with filters and semantic search
   - MUST have databaseQuery field with semanticQuery, keywords as strings array, filters, sort, limit (1-100)
   - All filter fields (app_name, window_title_contains, browser_url_contains) MUST be arrays, NEVER strings
+  - Evidence-only filters: add app_name/window_title_contains/browser_url_contains ONLY when explicitly supported by the user query or strongly implied by explicit context
+  - If evidence is missing or uncertain, leave filter empty/omitted (do NOT guess)
+  - Never narrow recall with speculative filters that were not requested
   - Keywords: meaningful terms only, not stop words ("the", "and", "did", etc.)
 - reason: Analyze/synthesize results from prior steps
   - NO databaseQuery field
@@ -90,6 +93,17 @@ JSON STRUCTURE (example):
 CRITICAL RULES:
 - Return ONLY JSON, no markdown, no explanation text
 - All filter arrays must contain string values
+- FILTER EVIDENCE POLICY (strict):
+  - Allowed direct evidence examples:
+    - "in VS Code" -> app_name: ["VS Code", "Visual Studio Code", "vscode"]
+    - "from github.com" -> browser_url_contains: ["github.com"]
+    - "window title contains sprint review" -> window_title_contains: ["sprint review"]
+  - Allowed strong indirect evidence examples:
+    - "Chrome tabs on stackoverflow" -> app_name may include browser + browser_url_contains: ["stackoverflow.com"]
+  - Disallowed speculative inference examples:
+    - "retrieve all coding tasks and snippets with timestamps" -> DO NOT force app_name/window_title_contains/browser_url_contains
+    - "what did I work on yesterday" -> keep these filters empty unless user specifies app/site/title
+  - When uncertain, prefer broader retrieval: keep app_name/window_title_contains/browser_url_contains empty/omitted and rely on semanticQuery + keywords
 - Limit must be between 1 and 100
 - step IDs must be unique (step1, step2, etc.)
 - dependsOn array references prior step IDs
