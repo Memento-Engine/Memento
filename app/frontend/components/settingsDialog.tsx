@@ -55,7 +55,7 @@ function ProfileTab(): React.ReactElement {
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-400 to-indigo-500 flex items-center justify-center text-white font-semibold text-xl shadow-sm">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted text-xl font-semibold text-foreground shadow-sm">
           A
         </div>
 
@@ -154,10 +154,10 @@ function AppearanceTab() {
                     className={cn(
                       "rounded-lg p-3 space-y-3",
                       t === "dark"
-                        ? "bg-slate-900"
+                        ? "bg-foreground/10"
                         : t === "light"
-                          ? "bg-gray-100"
-                          : "bg-gradient-to-br from-gray-100 to-slate-900",
+                          ? "bg-muted"
+                          : "bg-secondary",
                     )}
                   >
                     <div className="h-3 w-2/3 rounded bg-muted-foreground/30" />
@@ -204,7 +204,7 @@ function DataTab() {
         </div>
         <div className="h-2 rounded-full bg-muted overflow-hidden">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all"
+            className="h-full rounded-full bg-primary transition-all"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -212,7 +212,7 @@ function DataTab() {
           {100 - pct}% free remaining
         </p>
       </div>
-      <button className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted transition-colors text-muted-foreground">
+      <button className="h-9 rounded-lg border border-border px-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
         Clear cache
       </button>
     </div>
@@ -236,7 +236,7 @@ function SystemTab() {
       </div>
       <div className="rounded-xl border p-4 space-y-1">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <div className="h-2 w-2 rounded-full bg-primary" />
           <p className="text-sm font-medium">Service is running</p>
         </div>
         <p className="text-xs text-muted-foreground pl-4">

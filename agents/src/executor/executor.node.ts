@@ -522,13 +522,16 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
               });
             }
 
+            logger.info("Came This Far..");
+
             if (step.kind === "search") {
               const rows = Array.isArray(stepResults[step.id]) ? stepResults[step.id] : [];
+              logger.info("Emitting search step event with results");
               emitStepEvent(
                 step.id,
                 "searching",
                 "Found search results",
-                "completed",
+                "running",
                 state.requestId,
                 {
                   description: `Found ${rows.length} result${rows.length === 1 ? "" : "s"}`,
@@ -542,7 +545,7 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
                 step.id,
                 "reasoning",
                 "Evaluation complete",
-                "completed",
+                "running",
                 state.requestId,
                 {
                   description: step.query,

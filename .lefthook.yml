@@ -35,13 +35,13 @@ pre-commit:
       skip: merge,rebase
 
     eslint-agents:
-      run: cd agents && npx eslint --fix {staged_files}
+      run: npx eslint --fix {staged_files}
       glob: "agents/**/*.ts"
       stage_fixed: true
       skip: merge,rebase
 
     eslint-app:
-      run: cd app && npx eslint --fix {staged_files}
+      run: npx eslint --fix {staged_files}
       glob: "app/**/*.{ts,tsx}"
       stage_fixed: true
       skip: merge,rebase

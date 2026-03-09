@@ -8,7 +8,7 @@ export default function ThinkingDots() {
       {[0, 1, 2].map((i) => (
         <motion.div
           key={i}
-          className="w-2 h-2 rounded-full bg-neutral-400"
+          className="h-2 w-2 rounded-full bg-muted-foreground/60"
           animate={{
             scale: [0.5, 0.8, 0.5],
             opacity: [0.5, 1, 0.5],

@@ -1,12 +1,6 @@
 import {
   ArrowUp,
   Plus,
-  Globe,
-  Brain,
-  FileText,
-  GraduationCap,
-  Layers,
-  Mail,
 } from "lucide-react";
 import { AutosizeTextarea } from "./ChatHome"; // Ensure this path is correct
 import { Button } from "./ui/button";
@@ -23,13 +17,13 @@ function ChatInput({
   const [query, setQuery] = useState<string>("");
 
   return (
-    <div className="border rounded-xl dark:bg-[#0a0a0a]">
+    <div className="rounded-xl border border-border bg-card">
       <div className="w-full p-2">
         <AutosizeTextarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask followup..."
-          className={cn("text-base py-2 dark:bg-[#0a0a0a]  px-3  max-h-60 ")}
+          className={cn("max-h-60 px-3 py-2 text-base")}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -48,7 +42,7 @@ function ChatInput({
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-slate-500 rounded-full hover:bg-slate-100"
+              className="h-8 w-8 rounded-full text-muted-foreground"
             >
               <Plus size={18} />
             </Button>
@@ -61,7 +55,7 @@ function ChatInput({
             }}
             disabled={!query.trim()}
             size="icon"
-            className="h-8 w-8 rounded-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400 transition-all"
+            className="h-8 w-8 rounded-full"
           >
             <ArrowUp size={18} />
           </Button>

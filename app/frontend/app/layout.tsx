@@ -9,7 +9,6 @@ import useReferenceContext from "@/hooks/useReferenceContext";
 import KeyboardProvider from "@/providers/KeyboardProvider";
 import ChatProvider from "@/providers/ChatProvider";
 import LeftSidebar from "@/components/layout/Sidebar";
-import { GeistSans } from "geist/font/sans";
 import { Toaster } from "sonner";
 import DraggableCaptureAgent from "@/components/DraggableCaptureAgent";
 import SystemHealthProvider from "@/providers/SystemHealthProvider";
@@ -35,7 +34,7 @@ export default function RootLayout({
         <Toaster
           position="bottom-right"
           toastOptions={{
-            className: "rounded-xl border text-sm font-medium shadow-lg",
+            className: "rounded-lg border border-border bg-card text-sm font-medium text-card-foreground shadow-md",
           }}
         />
 
@@ -63,16 +62,17 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         enableSystem={false}
       >
         <KeyboardProvider />
-        <div className="flex h-screen w-screen ">
+        <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background">
           <LeftSidebar />
 
-    
-          <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
-            <div className="flex-1 overflow-y-auto">{children}</div>
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
           </main>
 
           {/* Right side */}
-          {referenceMeta && <RightSidebar />}
+          {/* {referenceMeta && <RightSidebar />}
+           */}
+           <RightSidebar />
         </div>
       </ThemeProvider>
     </SidebarProvider>

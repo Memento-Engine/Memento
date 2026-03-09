@@ -26,7 +26,7 @@ import { redirect } from "next/navigation";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { SettingsDialog } from "../settingsDialog";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
 import { useBreakpoint } from "@/hooks/useBreakpoints";
 import {
@@ -59,11 +59,16 @@ function LeftSidebar(): React.ReactElement {
     <>
       <SidebarHeader
         className={cn(
-          "py-3 flex items-center",
+          "flex items-center py-3",
           isCollapsed ? "justify-center px-0" : "px-3 justify-between",
         )}
       >
-        <div className="flex items-center justify-between w-full">
+        <div
+          className={cn(
+            "flex w-full items-center",
+            isCollapsed ? "justify-center" : "justify-between",
+          )}
+        >
           <span
             onClick={toggleSidebar}
             className="cursor-pointer text-base flex shrink-0 items-center"
@@ -92,38 +97,42 @@ function LeftSidebar(): React.ReactElement {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4">
-        <SidebarMenuItem onClick={goToHome} className="group/menuitem list-none">
-          <SidebarMenuButton
-            variant="default"
-            className="
-      w-full flex items-center full text-muted-foreground/90 cursor-pointer justify-start px-3
-    "
-          >
-            <SquarePen className="h-5 w-5 shrink-0" />
-            <span className="flex w-full items-center justify-between  ml-2 overflow-hidden">
-              <span className="whitespace-nowrap text-sm">Chat</span>
-              <span className="text-xs text-muted-foreground/50 opacity-0 transition-opacity group-hover/menuitem:opacity-100 whitespace-nowrap">
-                Ctrl + Shift + O
+      <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4 group-data-[collapsible=icon]:px-2">
+        <SidebarMenu>
+          <SidebarMenuItem onClick={goToHome} className="group/menuitem list-none">
+            <SidebarMenuButton
+              variant="default"
+              className="
+                w-full flex items-center text-muted-foreground/90 cursor-pointer justify-start px-3
+                group-data-[collapsible=icon]:justify-center
+                group-data-[collapsible=icon]:px-0
+                "
+            >
+              <SquarePen className="h-5 w-5 shrink-0" />
+              <span className="ml-2 flex w-full min-w-0 items-center justify-between overflow-hidden group-data-[collapsible=icon]:hidden">
+                <span className="whitespace-nowrap text-sm">Chat</span>
+                <span className="text-xs text-muted-foreground/50 opacity-0 transition-opacity group-hover/menuitem:opacity-100 whitespace-nowrap">
+                  Ctrl + Shift + O
+                </span>
               </span>
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
 
-        <SidebarMenuItem className="group/menuitem list-none">
-          <SidebarMenuButton
-            variant="default"
-            className="w-full text-muted-foreground/90  flex items-center cursor-pointer justify-start px-3"
-          >
-            <Search className="h-5 w-5 shrink-0" />
-            <span className="flex w-full items-center justify-between  ml-2 overflow-hidden">
-              <span className="text-sm whitespace-nowrap">Search chats</span>
-              <span className="text-xs text-muted-foreground/50 opacity-0 transition-opacity group-hover/menuitem:opacity-100 whitespace-nowrap">
-                Ctrl + K
+          <SidebarMenuItem className="group/menuitem list-none">
+            <SidebarMenuButton
+              variant="default"
+              className="w-full text-muted-foreground/90 flex items-center cursor-pointer justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+            >
+              <Search className="h-5 w-5 shrink-0" />
+              <span className="ml-2 flex w-full min-w-0 items-center justify-between overflow-hidden group-data-[collapsible=icon]:hidden">
+                <span className="text-sm whitespace-nowrap">Search chats</span>
+                <span className="text-xs text-muted-foreground/50 opacity-0 transition-opacity group-hover/menuitem:opacity-100 whitespace-nowrap">
+                  Ctrl + K
+                </span>
               </span>
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
 
         <div
           className={cn(
@@ -143,7 +152,7 @@ function LeftSidebar(): React.ReactElement {
                   w-full
                   flex
                   items-center
-                  full text-muted-foreground/90
+                  text-muted-foreground/90
                   justify-between
                   cursor-pointer
                   px-3
@@ -152,11 +161,11 @@ function LeftSidebar(): React.ReactElement {
                   group-data-[collapsible=icon]:px-0
                   "
                 >
-                  <span className="truncate">{topic}</span>
+                  <span className="truncate group-data-[collapsible=icon]:hidden">{topic}</span>
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100" />
+                        <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden" />
                     </DropdownMenuTrigger>
 
                     <DropdownMenuContent
@@ -200,18 +209,18 @@ function LeftSidebar(): React.ReactElement {
             setMobileOpen(!isMobileOpen);
           }
         }}
-        className="p-3"
+        className={cn("p-3", isCollapsed && "px-2")}
       >
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="lg"
-              className="w-full cursor-pointer flex items-center justify-start px-3"
+              className="w-full cursor-pointer flex items-center justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
             >
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
                 <User2 className="h-4 w-4 text-muted-foreground" />
               </div>
-              <div className="flex flex-col gap-1 text-left  overflow-hidden">
+              <div className="flex flex-col gap-1 text-left overflow-hidden group-data-[collapsible=icon]:hidden">
                 <span className="text-sm font-medium leading-none text-foreground whitespace-nowrap">
                   Bruce Wayne
                 </span>
