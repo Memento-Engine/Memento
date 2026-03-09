@@ -5,10 +5,14 @@
   "private": true,
   "workspaces": [
     "agents",
+    "ai-gateway",
     "app"
   ],
   "scripts": {
-    "dev": "npm --prefix agents run dev:agent",
+    "dev": "concurrently \"npm --prefix ai-gateway run dev\" \"npm --prefix agents run dev:agent\"",
+    "dev:agents": "npm --prefix agents run dev:agent",
+    "dev:gateway": "npm --prefix ai-gateway run dev",
+    "typecheck:gateway": "npm --prefix ai-gateway run typecheck",
     "build": "cargo build --all && npm --prefix app run build",
     "test": "cargo test --all && npm --prefix agents test && npm --prefix app test",
     "format": "cargo fmt --all && npx prettier --write . --ignore-path .gitignore",

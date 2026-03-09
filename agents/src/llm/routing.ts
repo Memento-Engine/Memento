@@ -1,4 +1,3 @@
-import { ChatOpenAI } from "@langchain/openai";
 import { getConfig } from "../config/config";
 import { AgentError, ErrorCode } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
@@ -6,11 +5,6 @@ import { runWithSpan } from "../telemetry/tracing";
 export type LlmRole = "planner" | "executor" | "final";
 
 type SpanAttributes = Record<string, string | number | boolean | undefined>;
-
-type ModelCandidate = {
-  model: string;
-  timeoutMs: number;
-};
 
 type TokenUsage = {
   promptTokens?: number;
@@ -25,82 +19,56 @@ type InvokeRoleParams = {
   spanAttributes?: SpanAttributes;
 };
 
-const llmCache = new Map<string, ChatOpenAI>();
+type GatewayMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
 
-function getCachedLlm(
-  model: string,
-  timeoutMs: number,
-  maxTokens: number,
-  baseUrl: string,
-  apiKey: string,
-  temperature: number,
-): ChatOpenAI {
-  const cacheKey = `${model}:${timeoutMs}:${maxTokens}`;
-  const cached = llmCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
+type GatewayResponse = {
+  model?: string;
+  content: string;
+  attempts?: number;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
+};
 
-  const llm = new ChatOpenAI({
-    model,
-    temperature,
-    apiKey,
-    maxTokens,
-    configuration: {
-      baseURL: baseUrl,
-    },
-    timeout: timeoutMs,
-  });
-
-  llmCache.set(cacheKey, llm);
-  return llm;
+function mapRole(type: string): "system" | "user" | "assistant" {
+  if (type === "system") return "system";
+  if (type === "human") return "user";
+  return "assistant";
 }
 
-function getCandidates(role: LlmRole, config: Awaited<ReturnType<typeof getConfig>>): {
-  candidates: ModelCandidate[];
-  maxOutputTokens: number;
-} {
-  if (role === "planner") {
-    return {
-      candidates: [
-        { model: config.llm.plannerModel, timeoutMs: config.llm.plannerTimeoutMs },
-        { model: config.llm.plannerFallbackModel, timeoutMs: config.llm.plannerTimeoutMs },
-      ],
-      maxOutputTokens: config.llm.plannerMaxOutputTokens,
-    };
+async function toGatewayMessages(prompt: any): Promise<GatewayMessage[]> {
+  if (Array.isArray(prompt)) {
+    return prompt
+      .filter((item) => item && typeof item.content === "string")
+      .map((item) => ({
+        role: mapRole(typeof item.getType === "function" ? item.getType() : "assistant"),
+        content: item.content,
+      }));
   }
 
-  if (role === "executor") {
-    return {
-      candidates: [
-        {
-          model: config.llm.executorPrimaryModel,
-          timeoutMs: config.llm.executorPrimaryTimeoutMs,
-        },
-        {
-          model: config.llm.executorFallbackModel1,
-          timeoutMs: config.llm.executorFallbackTimeoutMs1,
-        },
-        {
-          model: config.llm.executorFallbackModel2,
-          timeoutMs: config.llm.executorFallbackTimeoutMs2,
-        },
-      ],
-      maxOutputTokens: config.llm.executorMaxOutputTokens,
-    };
+  if (prompt && typeof prompt.toChatMessages === "function") {
+    const messages = await prompt.toChatMessages();
+    return messages
+      .filter((item: any) => item && typeof item.content === "string")
+      .map((item: any) => ({
+        role: mapRole(typeof item.getType === "function" ? item.getType() : "assistant"),
+        content: item.content,
+      }));
   }
 
-  return {
-    candidates: [
-      { model: config.llm.finalModel, timeoutMs: config.llm.finalTimeoutMs },
-      { model: config.llm.finalFallbackModel, timeoutMs: config.llm.finalTimeoutMs },
-    ],
-    maxOutputTokens: config.llm.finalMaxOutputTokens,
-  };
+  if (prompt && typeof prompt.content === "string") {
+    return [{ role: "user", content: prompt.content }];
+  }
+
+  return [{ role: "user", content: String(prompt ?? "") }];
 }
 
 function extractTokenUsage(response: any): TokenUsage {
-  const usage = response?.response_metadata?.tokenUsage ?? response?.usage_metadata;
+  const usage = response?.usage ?? response?.response_metadata?.tokenUsage ?? response?.usage_metadata;
   if (!usage || typeof usage !== "object") {
     return {};
   }
@@ -138,67 +106,81 @@ export async function invokeRoleLlm({
   spanAttributes = {},
 }: InvokeRoleParams): Promise<{ response: any; modelName: string; retryCount: number }> {
   const config = await getConfig();
-  const { candidates, maxOutputTokens } = getCandidates(role, config);
+  const messages = await toGatewayMessages(prompt);
 
-  let lastError: unknown;
+  const callMetrics: SpanAttributes = {
+    ...spanAttributes,
+    request_id: requestId,
+    model_name: "ai-gateway",
+    retry_count: 0,
+    error_type: "none",
+    prompt_tokens: undefined,
+    completion_tokens: undefined,
+  };
 
-  for (let index = 0; index < candidates.length; index++) {
-    const candidate = candidates[index];
-    const llm = getCachedLlm(
-      candidate.model,
-      candidate.timeoutMs,
-      maxOutputTokens,
-      config.llm.baseUrl,
-      config.llm.apiKey,
-      config.llm.temperature,
-    );
+  try {
+    const response = await runWithSpan(spanName, callMetrics, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), config.aiGateway.timeoutMs);
 
-    const callMetrics: SpanAttributes = {
-      ...spanAttributes,
-      request_id: requestId,
-      model_name: candidate.model,
-      retry_count: index,
-      error_type: "none",
-      prompt_tokens: undefined,
-      completion_tokens: undefined,
-    };
+      try {
+        const gatewayResponse = await fetch(`${config.aiGateway.baseUrl}/v1/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messages,
+            temperature: 0,
+            max_tokens: 65536,
+            user_id: config.aiGateway.userId,
+            role,
+          }),
+          signal: controller.signal,
+        });
 
-    try {
-      const response = await runWithSpan(spanName, callMetrics, async () => {
-        try {
-          const result = await llm.invoke(prompt);
-          const usage = extractTokenUsage(result);
-          callMetrics.prompt_tokens = usage.promptTokens;
-          callMetrics.completion_tokens = usage.completionTokens;
-          return result;
-        } catch (error) {
-          callMetrics.error_type = isTimeoutError(error) ? "timeout" : "error";
-          throw error;
+        if (!gatewayResponse.ok) {
+          const body = await gatewayResponse.text();
+          throw new Error(`ai-gateway request failed (${gatewayResponse.status}): ${body}`);
         }
-      });
 
-      return {
-        response,
-        modelName: candidate.model,
-        retryCount: index,
-      };
-    } catch (error) {
-      lastError = error;
+        const result = (await gatewayResponse.json()) as GatewayResponse;
+        const usage = extractTokenUsage(result);
+        callMetrics.prompt_tokens = usage.promptTokens;
+        callMetrics.completion_tokens = usage.completionTokens;
+        callMetrics.model_name = result.model ?? "ai-gateway";
+        callMetrics.retry_count = Math.max(0, (result.attempts ?? 1) - 1);
 
-      if (!isTimeoutError(error)) {
-        throw error;
+
+        console.log("ai-gateway response", {
+          model: result.model,
+          content: result.content,
+          attempts: result.attempts,
+          usage,
+        });
+        return result;
+      } finally {
+        clearTimeout(timeout);
       }
-    }
-  }
+    });
 
-  throw new AgentError(
-    "All model candidates timed out",
-    ErrorCode.TIMEOUT_ERROR,
-    {
-      role,
-      candidates: candidates.map((c) => c.model),
-      cause: lastError,
-    },
-    504,
-  );
+    return {
+      response: {
+        content: response.content,
+      },
+      modelName: response.model ?? "ai-gateway",
+      retryCount: Math.max(0, (response.attempts ?? 1) - 1),
+    };
+  } catch (error) {
+    console.error("ai-gateway invocation failed", error);
+    throw new AgentError(
+      "ai-gateway invocation failed",
+      isTimeoutError(error) ? ErrorCode.TIMEOUT_ERROR : ErrorCode.INTERNAL_ERROR,
+      {
+        role,
+        cause: error,
+      },
+      isTimeoutError(error) ? 504 : 502,
+    );
+  }
 }

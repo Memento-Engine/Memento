@@ -15,34 +15,11 @@ const ConfigSchema = z.object({
     environment: z.enum(["development", "production"]).default("development"),
   }),
 
-  // LLM configuration
-  llm: z.object({
-    provider: z.string().default("openrouter"),
-    model: z.string(),
-    apiKey: z
-      .string()
-      .default("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"),
+  // AI gateway configuration
+  aiGateway: z.object({
     baseUrl: z.string().url(),
-    temperature: z.number().min(0).max(2).default(0),
-    timeout: z.number().int().min(1000).default(30000),
-    plannerModel: z.string().default("openai/gpt-4o-mini"),
-    plannerFallbackModel: z.string().default("anthropic/claude-3-haiku"),
-    plannerTimeoutMs: z.number().int().min(1000).default(7000),
-    plannerMaxInputTokens: z.number().int().min(256).default(2500),
-    plannerMaxOutputTokens: z.number().int().min(64).default(900),
-
-    executorPrimaryModel: z.string().default("deepseek/deepseek-chat"),
-    executorFallbackModel1: z.string().default("mistralai/mistral-large"),
-    executorFallbackModel2: z.string().default("openai/gpt-4o-mini"),
-    executorPrimaryTimeoutMs: z.number().int().min(1000).default(10000),
-    executorFallbackTimeoutMs1: z.number().int().min(1000).default(8000),
-    executorFallbackTimeoutMs2: z.number().int().min(1000).default(6000),
-    executorMaxOutputTokens: z.number().int().min(64).default(600),
-
-    finalModel: z.string().default("openai/gpt-4o-mini"),
-    finalFallbackModel: z.string().default("anthropic/claude-3-haiku"),
-    finalTimeoutMs: z.number().int().min(1000).default(7000),
-    finalMaxOutputTokens: z.number().int().min(64).default(900),
+    timeoutMs: z.number().int().min(1000).default(30000),
+    userId: z.string().min(1).default("agents-service"),
   }),
 
   // Backend service configuration
@@ -102,41 +79,10 @@ export async function loadConfig(): Promise<Config> {
       host: process.env.SERVER_HOST ?? "127.0.0.1",
       environment: process.env.NODE_ENV ?? "development",
     },
-    llm: {
-      provider: process.env.LLM_PROVIDER ?? "openrouter",
-      model: process.env.LLM_MODEL ?? "deepseek/deepseek-chat",
-      apiKey:
-        process.env.OPENROUTER_API_KEY ??
-        "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",
-      baseUrl: process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1",
-      temperature: parseFloat(process.env.LLM_TEMPERATURE ?? "0"),
-      timeout: parseInt(process.env.LLM_TIMEOUT ?? "30000", 10),
-      plannerModel: process.env.LLM_PLANNER_MODEL ?? "gpt-4o-mini",
-      plannerFallbackModel: process.env.LLM_PLANNER_FALLBACK_MODEL ?? "anthropic/claude-3-haiku",
-      plannerTimeoutMs: parseInt(process.env.LLM_PLANNER_TIMEOUT_MS ?? "8000", 10),
-      plannerMaxInputTokens: parseInt(process.env.LLM_PLANNER_MAX_INPUT_TOKENS ?? "2000", 10),
-      plannerMaxOutputTokens: parseInt(process.env.LLM_PLANNER_MAX_OUTPUT_TOKENS ?? "900", 10),
-      executorPrimaryModel: process.env.LLM_EXECUTOR_PRIMARY_MODEL ?? "deepseek/deepseek-chat",
-      executorFallbackModel1:
-        process.env.LLM_EXECUTOR_FALLBACK_MODEL_1 ?? "mistralai/mistral-large",
-      executorFallbackModel2: process.env.LLM_EXECUTOR_FALLBACK_MODEL_2 ?? "gpt-4o-mini",
-      executorPrimaryTimeoutMs: parseInt(
-        process.env.LLM_EXECUTOR_PRIMARY_TIMEOUT_MS ?? "10000",
-        10
-      ),
-      executorFallbackTimeoutMs1: parseInt(
-        process.env.LLM_EXECUTOR_FALLBACK_TIMEOUT_MS_1 ?? "8000",
-        10
-      ),
-      executorFallbackTimeoutMs2: parseInt(
-        process.env.LLM_EXECUTOR_FALLBACK_TIMEOUT_MS_2 ?? "5000",
-        10
-      ),
-      executorMaxOutputTokens: parseInt(process.env.LLM_EXECUTOR_MAX_OUTPUT_TOKENS ?? "500", 10),
-      finalModel: process.env.LLM_FINAL_MODEL ?? "gpt-4o-mini",
-      finalFallbackModel: process.env.LLM_FINAL_FALLBACK_MODEL ?? "anthropic/claude-3-haiku",
-      finalTimeoutMs: parseInt(process.env.LLM_FINAL_TIMEOUT_MS ?? "8000", 10),
-      finalMaxOutputTokens: parseInt(process.env.LLM_FINAL_MAX_OUTPUT_TOKENS ?? "800", 10),
+    aiGateway: {
+      baseUrl: process.env.AI_GATEWAY_URL ?? "http://127.0.0.1:4180",
+      timeoutMs: parseInt(process.env.AI_GATEWAY_TIMEOUT_MS ?? "30000", 10),
+      userId: process.env.AI_GATEWAY_USER_ID ?? "agents-service",
     },
     backend: {
       searchToolUrl:

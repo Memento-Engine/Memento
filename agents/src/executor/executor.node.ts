@@ -403,6 +403,18 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
             query: step.query,
           });
 
+          emitStepEvent(
+            step.id,
+            step.kind === "search" ? "searching" : "reasoning",
+            step.kind === "search" ? "Searching your memories..." : "Evaluating search results...",
+            "running",
+            state.requestId,
+            {
+              description: step.query,
+              query: step.query,
+            }
+          );
+
           // Verify dependencies are satisfied
           for (const dep of step.dependsOn) {
             if (!(dep in stepResults)) {
@@ -510,19 +522,33 @@ export async function executorNode(state: AgentStateType): Promise<AgentStateTyp
               });
             }
 
-            // Emit successful step event
-            if (step.kind === "search" && Array.isArray(result) && result.length > 0) {
-              emitStepEvent(step.id, "searching", step.query, "running", state.requestId, {
-                description: step.query,
-                query: step.query,
-                results: result,
-                resultCount: result.length,
-              });
-            } else if (step.kind === "reason") {
-              emitStepEvent(step.id, "reasoning", step.query, "running", state.requestId, {
-                description: step.query,
-                query: step.query,
-              });
+            if (step.kind === "search") {
+              const rows = Array.isArray(stepResults[step.id]) ? stepResults[step.id] : [];
+              emitStepEvent(
+                step.id,
+                "searching",
+                "Found search results",
+                "completed",
+                state.requestId,
+                {
+                  description: `Found ${rows.length} result${rows.length === 1 ? "" : "s"}`,
+                  query: step.query,
+                  results: rows,
+                  resultCount: rows.length,
+                }
+              );
+            } else {
+              emitStepEvent(
+                step.id,
+                "reasoning",
+                "Evaluation complete",
+                "completed",
+                state.requestId,
+                {
+                  description: step.query,
+                  query: step.query,
+                }
+              );
             }
 
             completedSteps++;

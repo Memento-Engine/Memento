@@ -79,11 +79,14 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
         });
 
         emitStepEvent(
-          "final_answer_generation",
-          "reasoning",
-          "Generating final answer based on retrieved information...",
+          "finalize_0",
+          "completion",
+          "Finalizing the answer...",
           "running",
-          state.requestId
+          state.requestId,
+          {
+            description: "Synthesizing the final response",
+          }
         );
 
         const llmInvocation = await invokeRoleLlm({
@@ -126,13 +129,16 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
           resultLength: finalResult.length,
         });
 
-        
         emitStepEvent(
-          "final_answer_generation",
-          "reasoning",
-          "Generating final answer based on retrieved information...",
+          "finalize_0",
+          "completion",
+          "Finished",
           "completed",
-          state.requestId
+          state.requestId,
+          {
+            description: "Final answer generated",
+            duration: Math.max(1, Math.round(((Date.now() - (state.startTime ?? Date.now())) / 1000) * 10) / 10),
+          }
         );
         // Emit completion event
         emitCompletion(finalResult, state.requestId);

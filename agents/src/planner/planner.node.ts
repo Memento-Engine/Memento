@@ -3,14 +3,13 @@ import { RunnableConfig } from "@langchain/core/runnables";
 import { plannerPrompt } from "../prompts/plannerPrompt";
 import { AgentStateType } from "../agentState";
 import { validatePlan } from "./planner.validator";
-import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser, ErrorHandler } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
 import { emitError, emitStepEvent } from "../utils/eventQueue";
 import { ExecutionPlan, RouterPlannerOutputSchema } from "../types/llmPlan";
 import { runWithSpan } from "../telemetry/tracing";
-import { invokeRoleLlm, truncateToApproxTokens } from "../llm/routing";
+import { invokeRoleLlm } from "../llm/routing";
 
 /**
  * Propagate filters from parent steps to dependent steps.
@@ -47,8 +46,6 @@ export async function plannerNode(
 
   logger.info("Planner node started");
 
-  const appConfig = await getConfig();
-
   return runWithSpan(
     "agent.node.planner",
     {
@@ -67,16 +64,22 @@ export async function plannerNode(
             }
           | undefined;
 
-        const plannerInputBudget = appConfig.llm.plannerMaxInputTokens;
-        const boundedGoal = truncateToApproxTokens(
-          state.goal,
-          Math.floor(plannerInputBudget * 0.8)
-        );
-
         const prompt = await plannerPrompt.invoke({
-          goal: boundedGoal,
+          goal: state.goal,
           previousErrors: "",
         });
+
+        emitStepEvent(
+          "plan_0",
+          "planning",
+          "Search your memories...",
+          "running",
+          state.requestId,
+          {
+            description: "Creating an execution plan from your query",
+            query: state.goal,
+          }
+        );
 
         logger.debug("Invoking planner LLM");
 
@@ -90,6 +93,7 @@ export async function plannerNode(
             retry_attempt: (state.planAttempts ?? 0) + 1,
           },
         });
+
 
         const parsedContent = await SafeJsonParser.parseContent(llmInvocation.response.content);
 
@@ -118,24 +122,20 @@ export async function plannerNode(
           stepIds: plan.steps.map((s) => s.id),
         });
 
-        // Emit planning step event
-        if ((state?.executionPlan?.personal_search_queries ?? []).length > 0) {
-          emitStepEvent(
-            "plan_0",
-            "planning",
-            "Searching your memories for relevant information...",
-            "running",
-            state.requestId,
-            {
-              description: routeMeta?.needsClarification
-                ? (routeMeta.clarificationQuestion ??
-                  `Created plan with ${plan.steps.length} steps`)
-                : `Created plan with ${plan.steps.length} steps`,
-              query: state.goal,
-              queries: state.executionPlan?.personal_search_queries ?? [],
-            }
-          );
-        }
+        emitStepEvent(
+          "plan_0",
+          "planning",
+          "Search your memories...",
+          "completed",
+          state.requestId,
+          {
+            description: routeMeta?.needsClarification
+              ? (routeMeta.clarificationQuestion ?? `Created plan with ${plan.steps.length} steps`)
+              : `Created plan with ${plan.steps.length} steps`,
+            query: state.goal,
+            queries: executionPlan?.personal_search_queries ?? [],
+          }
+        );
 
         return {
           ...state,

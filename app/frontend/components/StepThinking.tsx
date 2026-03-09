@@ -43,21 +43,31 @@ export const mockSteps = [
 ];
 
 export function StepThinking({ steps }: Props) {
+  const mergedSteps = steps.reduce<ThinkingStep[]>((acc, step) => {
+    const existingIndex = acc.findIndex((item) => item.stepId === step.stepId);
+    if (existingIndex >= 0) {
+      acc[existingIndex] = {
+        ...acc[existingIndex],
+        ...step,
+      };
+      return acc;
+    }
+
+    acc.push(step);
+    return acc;
+  }, []);
+
   const isDone =
-    steps.length > 0 && steps[steps.length - 1].status === "completed";
+    mergedSteps.length > 0 &&
+    ["completed", "final"].includes(mergedSteps[mergedSteps.length - 1].status);
+
+  const completedDuration =
+    mergedSteps
+      .map((step) => step.duration)
+      .find((value) => typeof value === "number" && value > 0) ?? 2;
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const { setReferenceMeta } = useReferenceContext();
-
-  // Debug
-  useEffect((): void => {
-    if (steps.length > 0) {
-      console.log("✅ STEPS from step thinking component (count=" + steps.length + ")");
-      steps.forEach((step, i) => {
-        console.log(`  Step ${i}: ${step.stepId} (${step.stepType}) - Status: ${step.status}, Results: ${step.resultCount ?? 0}`);
-      });
-    }
-  }, [steps]);
 
   // Auto-collapse when finished
   useEffect(() => {
@@ -71,7 +81,7 @@ export function StepThinking({ steps }: Props) {
     }
   }, [isDone]);
 
-  if (steps.length === 0) return null;
+  if (mergedSteps.length === 0) return null;
 
   return (
     <div className="flex w-full flex-col rounded-lg bg-background">
@@ -89,7 +99,7 @@ export function StepThinking({ steps }: Props) {
         <span
           className={cn("text-foreground/70", !isDone && "thinking-shimmer")}
         >
-          {isDone ? "Thought process completed" : "Thinking..."}
+          {isDone ? `Thought ${completedDuration}s` : "Thinking..."}
         </span>
       </button>
       <AnimatePresence initial={false}>
@@ -102,13 +112,20 @@ export function StepThinking({ steps }: Props) {
             className="overflow-hidden"
           >
             <div className="space-y-0 pb-4 pt-1">
-              {steps.map((step, index) => {
-                const isLastStep = index === steps.length - 1;
+              {mergedSteps.map((step, index) => {
+                const isLastStep = index === mergedSteps.length - 1;
                 const isActive = isLastStep && !isDone;
+                const hasCompleted = ["completed", "final"].includes(step.status);
+                const normalizedResults = (step.results ?? []).map((result: any) => ({
+                  app_name: result.app_name,
+                  window_name: result.window_name ?? result.window_title ?? "",
+                  image_path: result.image_path,
+                  captured_at: result.captured_at ?? result.timestamp ?? "",
+                }));
 
                 return (
                   <motion.div
-                    key={index}
+                    key={step.stepId}
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{
@@ -119,7 +136,7 @@ export function StepThinking({ steps }: Props) {
                   >
                     {/* Vertical Line - Centered perfectly to the 10px dot */}
                     {!isLastStep && (
-                      <div className="absolute bottom-0 left-[4.5px] top-[18px] w-px bg-border" />
+                      <div className="absolute bottom-0 left-[5px] top-[16px] w-px bg-border" />
                     )}
 
                     {/* Row */}
@@ -128,7 +145,7 @@ export function StepThinking({ steps }: Props) {
                       <div className="relative mt-[3px] shrink-0">
                         <div
                           className={`h-2.5 w-2.5 rounded-full ${
-                            isActive ? "bg-primary" : "bg-muted-foreground/40"
+                            isActive ? "bg-primary" : hasCompleted ? "bg-foreground/70" : "bg-muted-foreground/40"
                           }`}
                         />
                       </div>
@@ -141,7 +158,9 @@ export function StepThinking({ steps }: Props) {
                             className={`text-xs leading-none ${
                               isActive
                                 ? "text-foreground thinking-shimmer"
-                                : "text-muted-foreground"
+                                : hasCompleted
+                                  ? "text-foreground/90"
+                                  : "text-muted-foreground"
                             }`}
                           >
                             {step.title}
@@ -171,10 +190,10 @@ export function StepThinking({ steps }: Props) {
                         )}
 
                         {/* Results */}
-                        {step.results && step.results.length > 0 && (
+                        {normalizedResults.length > 0 && (
                           <div className="mt-3 max-w-2xl overflow-hidden rounded-lg border border-border bg-sidebar shadow-sm">
                             <div className="max-h-48 divide-y divide-border overflow-y-auto">
-                              {step.results.map((result, i) => (
+                              {normalizedResults.map((result, i) => (
                                 <div
                                   key={i}
                                   onClick={() => {

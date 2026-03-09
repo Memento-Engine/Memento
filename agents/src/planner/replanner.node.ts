@@ -8,7 +8,7 @@ import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser, ErrorHandler } from "../utils/parser";
 import { PlannerError, ErrorCode } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
-import { invokeRoleLlm, truncateToApproxTokens } from "../llm/routing";
+import { invokeRoleLlm } from "../llm/routing";
 
 /**
  * Find a step by ID in a plan.
@@ -114,25 +114,12 @@ export async function replannerNode(
         : failedStepResult ? "non-array" : "empty",
     });
 
-    const plannerInputBudget = appConfig.llm.plannerMaxInputTokens;
     const prompt = await replanPrompt.invoke({
-      goal: truncateToApproxTokens(state.goal, Math.floor(plannerInputBudget * 0.2)),
-      previousPlan: truncateToApproxTokens(
-        JSON.stringify(state.plan, null, 2),
-        Math.floor(plannerInputBudget * 0.45),
-      ),
-      failedStep: truncateToApproxTokens(
-        JSON.stringify(failedStep, null, 2),
-        Math.floor(plannerInputBudget * 0.15),
-      ),
-      executionResult: truncateToApproxTokens(
-        JSON.stringify(failedStepResult ?? "empty", null, 2),
-        Math.floor(plannerInputBudget * 0.15),
-      ),
-      failureReason: truncateToApproxTokens(
-        state.failureReason ?? "Unknown",
-        Math.floor(plannerInputBudget * 0.05),
-      ),
+      goal: state.goal,
+      previousPlan: JSON.stringify(state.plan, null, 2),
+      failedStep: JSON.stringify(failedStep, null, 2),
+      executionResult: JSON.stringify(failedStepResult ?? "empty", null, 2),
+      failureReason: state.failureReason ?? "Unknown",
     });
 
     const llmInvocation = await invokeRoleLlm({
