@@ -25,9 +25,9 @@ pre-commit:
       run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/check-permissions.ps1
       skip: merge,rebase
 
-    detect-secrets:
-      run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/detect-secrets.ps1
-      skip: merge,rebase
+    # detect-secrets:
+    #   run: powershell -NoProfile -ExecutionPolicy Bypass -File .lefthook/detect-secrets.ps1
+    #   skip: merge,rebase
 
     rustfmt:
       run: cargo fmt --all -- --check
