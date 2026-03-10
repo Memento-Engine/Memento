@@ -2,19 +2,17 @@
 
 import { getBaseUrl } from "@/api/base";
 import {
-  chatRequest,
-  Citation,
-  citationsSchema,
   MementoUIMessage,
+  sourceSchema,
+  sourcesPayloadSchema,
   thinkingSchema,
   ThinkingStep,
 } from "@/components/types";
 import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContext";
 import useSystemHealth from "@/hooks/useSystemHealth";
 import { notify } from "@/lib/notify";
-import { Beaker } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -24,6 +22,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus>("Idle");
   const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
+  const activeRequestRef = useRef<AbortController | null>(null);
 
   const { isRunning } = useSystemHealth();
   const router = useRouter();
@@ -46,60 +45,80 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
   const BASE_URL = "http://localhost:4173/api/v1";
 
-  function parseSSEEvent(raw: string) {
-    const lines = raw.split("\n");
-
-    let eventType = "";
-    let data = "";
-
-    for (const line of lines) {
-      if (line.startsWith("event:")) {
-        eventType = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        data += line.slice(5).trim();
-      }
-    }
-
-    if (!data) return null;
-
-    try {
-      return {
-        eventType,
-        data: JSON.parse(data),
-      };
-    } catch {
-      return null;
-    }
+  function createMessageId(): string {
+    return typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
-  function normalizeCitation(data: any): Citation {
+  const isGenerating =
+    assistantStatus === "LocalPending" ||
+    assistantStatus === "Thinking" ||
+    assistantStatus === "Streaming";
+
+  const stopMessage = (): void => {
+    if (!activeRequestRef.current) return;
+    activeRequestRef.current.abort();
+    activeRequestRef.current = null;
+    setAssistantStatus("Idle");
+    notify.info("Generation stopped");
+  };
+
+  const rewrite = async (messageId: string): Promise<void> => {
+    const assistantIndex = messages.findIndex(
+      (message) => message.id === messageId && message.role === "assistant"
+    );
+
+    if (assistantIndex < 0) {
+      notify.warning("Could not regenerate this message");
+      return;
+    }
+
+    const userBeforeAssistant = [...messages]
+      .slice(0, assistantIndex)
+      .reverse()
+      .find((message) => message.role === "user");
+
+    const userPrompt =
+      userBeforeAssistant?.parts
+        .filter((part: any) => part.type === "text")
+        .map((part: any) => part.text)
+        .join("\n")
+        .trim() ?? "";
+
+    if (!userPrompt) {
+      notify.warning("No user prompt found for regeneration");
+      return;
+    }
+
+    await sendMessage(userPrompt, messageId, true);
+  };
+
+  function normalizeSource(data: any) {
+    const rawChunkId = data.chunkId ?? data.chunk_id ?? data.sourceId ?? data.source_id;
+    const chunkId = String(rawChunkId ?? "").startsWith("chunk_")
+      ? String(rawChunkId)
+      : `chunk_${String(rawChunkId ?? "")}`;
+
     return {
-      sourceId: data.source_id,
-      appName: data.app_name,
-      windowName: data.window_name,
-      capturedAt: data.captured_at,
-      url: data.url,
-
-      bbox: {
-        x: data.bbox.x,
-        y: data.bbox.y,
-        width: data.bbox.width,
-        height: data.bbox.height,
-        textStart: data.bbox.text_start,
-        textEnds: data.bbox.text_ends,
-      },
-
-      imagePath: data.image_path,
+      chunkId,
+      appName: data.appName ?? data.app_name ?? "",
+      windowTitle: data.windowTitle ?? data.window_title ?? data.window_name ?? "",
+      capturedAt: data.capturedAt ?? data.captured_at ?? "",
+      browserUrl: data.browserUrl ?? data.browser_url ?? data.url ?? "",
+      textContent: data.textContent ?? data.text_content ?? "",
+      textJson: data.textJson ?? data.text_json ?? undefined,
+      imagePath: data.imagePath ?? data.image_path ?? "",
+      frameId: data.frameId ?? data.frame_id,
+      windowX: data.windowX ?? data.window_x,
+      windowY: data.windowY ?? data.window_y,
+      windowWidth: data.windowWidth ?? data.window_width,
+      windowHeight: data.windowHeight ?? data.window_height,
     };
   }
 
-  function getNormalizedCitations(rawCitations: any[]): Citation[] {
-    let cleanedCitations: Citation[] = [];
-    for (let rawCitation of rawCitations) {
-      cleanedCitations.push(normalizeCitation(rawCitation));
-    }
-
-    return cleanedCitations;
+  function getNormalizedSources(rawSources: any[]) {
+    return rawSources.map((rawSource) => normalizeSource(rawSource));
   }
 
   async function handleStreamingEvent(event: any) {
@@ -388,12 +407,15 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         break;
       }
 
-      // Legacy event types (kept for backward compatibility)
-      case "citations": {
-        const parsedCitations = citationsSchema.safeParse(getNormalizedCitations(event.data));
+      case "sources": {
+        const normalized = {
+          includeImages: !!event.data?.includeImages,
+          sources: getNormalizedSources(event.data?.sources ?? []),
+        };
 
-        if (!parsedCitations.success) {
-          console.log("Failed to parse the Citations schema", parsedCitations.error);
+        const parsedSources = sourcesPayloadSchema.safeParse(normalized);
+        if (!parsedSources.success) {
+          console.warn("Failed to parse sources payload", parsedSources.error);
           return;
         }
 
@@ -414,8 +436,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
                   role: "assistant",
                   parts: [
                     {
-                      type: "data-citations",
-                      data: parsedCitations.data,
+                      type: "data-sources",
+                      data: parsedSources.data,
                     },
                   ],
                 },
@@ -426,17 +448,19 @@ export default function ChatProvider({ children }: ChatProviderProps) {
             const updatedMessage = { ...lastMessage };
             const updatedParts = [...updatedMessage.parts];
 
-            const lastPart = updatedParts[updatedParts.length - 1];
+            const existingIndex = updatedParts.findIndex(
+              (part: any) => part.type === "data-sources"
+            );
 
-            if (lastPart && lastPart.type === "data-citations") {
-              updatedParts[updatedParts.length - 1] = {
-                ...lastPart,
-                data: parsedCitations.data,
+            if (existingIndex >= 0) {
+              updatedParts[existingIndex] = {
+                type: "data-sources",
+                data: parsedSources.data,
               };
             } else {
               updatedParts.push({
-                type: "data-citations",
-                data: parsedCitations.data,
+                type: "data-sources",
+                data: parsedSources.data,
               });
             }
 
@@ -458,13 +482,25 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     }
   }
 
-  const sendMessage = async (message: string): Promise<void> => {
+  const sendMessage = async (
+    message: string,
+    rewriteTargetId?: string,
+    isRewrite: boolean = false
+  ): Promise<void> => {
     if (!isRunning) {
       notify.error(
         "Memento is offline. Please start the memento by clicking on floating widget or from settings."
       );
       return;
     }
+
+    if (activeRequestRef.current) {
+      activeRequestRef.current.abort();
+      activeRequestRef.current = null;
+    }
+
+    const abortController = new AbortController();
+    activeRequestRef.current = abortController;
 
     router.push("/chat/123");
 
@@ -475,7 +511,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
     try {
       const currentChat: MementoUIMessage = {
-        id: "12",
+        id: createMessageId(),
         parts: [
           {
             type: "text",
@@ -490,13 +526,22 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         parts: m.parts.filter((p) => p.type === "text"),
       }));
 
-      setMessages((prev) => [...prev, currentChat]);
+      if (isRewrite && rewriteTargetId) {
+        setMessages((prev) => {
+          const targetIndex = prev.findIndex((item) => item.id === rewriteTargetId);
+          if (targetIndex < 0) return prev;
+          return prev.slice(0, targetIndex);
+        });
+      } else {
+        setMessages((prev) => [...prev, currentChat]);
+      }
 
       const res = await fetch(`${BASE_URL}/agent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: abortController.signal,
         body: JSON.stringify({ goal: message }),
       });
 
@@ -518,6 +563,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         const { done, value } = await reader.read();
         if (done) {
           console.log(`Stream ended. Total events received: ${eventCount}`);
+          activeRequestRef.current = null;
           break;
         }
 
@@ -528,7 +574,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
         // Keep the last incomplete line in the buffer
         buffer = lines.pop() || "";
-        let isError : boolean = false;
+        let isError: boolean = false;
 
         for (const line of lines) {
           if (!line.trim()) continue;
@@ -552,7 +598,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
               break;
             }
 
-
             await handleStreamingEvent(event);
           } catch (e) {
             console.warn("Failed to parse streaming event:", line, e);
@@ -563,11 +608,19 @@ export default function ChatProvider({ children }: ChatProviderProps) {
           console.warn("Stopping stream processing due to error event");
           break;
         }
-
       }
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        console.log("Streaming aborted by user");
+        return;
+      }
+
       console.error("Error while sending message:", err);
       transitionStatus("Error");
+    } finally {
+      if (activeRequestRef.current === abortController) {
+        activeRequestRef.current = null;
+      }
     }
   };
 
@@ -582,7 +635,9 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         chatId: "",
         isMessagesLoaded: false,
         messages,
-        rewrite: () => {},
+        rewrite,
+        stopMessage,
+        isGenerating,
         assistantStatus,
         makeTransition: transitionStatus,
         stepUpdates,

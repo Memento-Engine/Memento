@@ -71,7 +71,7 @@ export async function readDaemonPort(): Promise<number> {
  */
 export async function loadConfig(): Promise<Config> {
   const daemonPort = await readDaemonPort().catch(() => {
-    return 55941;
+    return 59414;
   });
   const config = {
     server: {

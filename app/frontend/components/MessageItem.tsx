@@ -2,7 +2,7 @@
 
 import { extractFilesFromPrompt, FileMetadata } from "@/lib/fileMetadata";
 import type { ChatStatus } from "ai";
-import { Loader2, Paperclip, RefreshCwIcon } from "lucide-react";
+import { Paperclip, RefreshCwIcon, Share2, ThumbsDown, ThumbsUp } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -33,12 +33,14 @@ const CHAT_STATUS = {
 } as const;
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
-import { Citation, MementoUIMessage } from "./types";
+import { MementoUIMessage, SourceRecord } from "./types";
 import { mockSteps, StepThinking } from "./StepThinking";
 import useChatContext from "@/hooks/useChatContext";
 import MementoBreathing from "./MementoBreathing";
 import ThinkingBubble from "./ThinkingBubble";
 import ImageSearchGrid from "./ImageSearchGrid";
+import useReferenceContext from "@/hooks/useReferenceContext";
+import { notify } from "@/lib/notify";
 
 function MessageItem({
   message,
@@ -53,34 +55,36 @@ function MessageItem({
   showAssistant,
 }: MessageItemProps): React.ReactElement {
   const { assistantStatus } = useChatContext();
+  const { setReferenceMeta, setSourceList } = useReferenceContext();
+  const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
   const isStreaming: boolean =
     isLastMessage &&
     (assistantStatus == "LocalPending" ||
       assistantStatus == "Thinking" ||
       assistantStatus == "Streaming");
 
-  const citationMap = new Map<number, Citation>();
+  const sourceMap = new Map<string, SourceRecord>();
+  let includeImages = false;
   for (const part of message.parts) {
-    console.log("Part in all ", part);
-    if (part.type === "data-citations") {
-      const citations = part.data;
-      for (let citation of citations) {
-        if (!citationMap.has(citation.sourceId)) {
-          citationMap.set(citation.sourceId, citation);
+    if (part.type === "data-sources") {
+      includeImages = !!part.data?.includeImages;
+      const sources = part.data?.sources ?? [];
+      for (const source of sources) {
+        if (!sourceMap.has(source.chunkId)) {
+          sourceMap.set(source.chunkId, source);
         }
       }
     }
   }
 
-  console.log("Citation Map", citationMap);
+  const sourceList = Array.from(sourceMap.values());
 
   // Extract file metadata from message text (for user messages with attachments)
   const attachedFiles = useMemo(() => {
     if (message.role !== "user") return [];
 
     const textParts = message.parts.filter(
-      (part): part is { type: "text"; text: string } =>
-        part.type === CONTENT_TYPE.TEXT,
+      (part): part is { type: "text"; text: string } => part.type === CONTENT_TYPE.TEXT
     );
 
     if (textParts.length === 0) return [];
@@ -92,10 +96,7 @@ function MessageItem({
   // Get full text content for copy button
   const getFullTextContent = useCallback(() => {
     return message.parts
-      .filter(
-        (part): part is { type: "text"; text: string } =>
-          part.type === CONTENT_TYPE.TEXT,
-      )
+      .filter((part): part is { type: "text"; text: string } => part.type === CONTENT_TYPE.TEXT)
       .map((part) => part.text)
       .join("\n");
   }, [message.parts]);
@@ -104,14 +105,30 @@ function MessageItem({
     (newText: string) => {
       onEdit?.(message.id, newText);
     },
-    [onEdit, message.id],
+    [onEdit, message.id]
   );
 
-  const renderTextPart = (
-    part: { type: "text"; text: string },
-    partIndex: number,
-  ) => {
-    console.log("error", part.text, part.type);
+  const handleShare = useCallback(async () => {
+    const text = getFullTextContent();
+    if (!text.trim()) return;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "Memento Response",
+          text,
+        });
+        return;
+      }
+
+      await navigator.clipboard.writeText(text);
+      notify.success("Message copied to clipboard");
+    } catch {
+      notify.error("Unable to share message");
+    }
+  }, [getFullTextContent]);
+
+  const renderTextPart = (part: { type: "text"; text: string }, partIndex: number) => {
     if (!part.text || part.text.trim() === "") {
       return null;
     }
@@ -119,15 +136,9 @@ function MessageItem({
 
     // For user messages, extract and clean the text from file metadata
     const displayText =
-      message.role === "user"
-        ? extractFilesFromPrompt(part.text).cleanPrompt
-        : part.text;
+      message.role === "user" ? extractFilesFromPrompt(part.text).cleanPrompt : part.text;
 
-    if (
-      !displayText.trim() &&
-      message.role === "user" &&
-      attachedFiles.length === 0
-    ) {
+    if (!displayText.trim() && message.role === "user" && attachedFiles.length === 0) {
       return null;
     }
 
@@ -147,27 +158,43 @@ function MessageItem({
                       <Paperclip size={14} className="text-muted-foreground" />
                       <span className="font-medium">{file.name}</span>
                       {file.injectionMode && (
-                        <span className="text-muted-foreground">
-                          ({file.injectionMode})
-                        </span>
+                        <span className="text-muted-foreground">({file.injectionMode})</span>
                       )}
                     </div>
                   ))}
                 </div>
               )}
               {displayText && (
-                <div className="select-text text-sm whitespace-pre-wrap">
-                  {displayText}
-                </div>
+                <div className="select-text text-sm whitespace-pre-wrap">{displayText}</div>
               )}
             </div>
           </div>
         ) : (
           <RenderMarkdown
-            citationMap={citationMap}
+            sourceMap={sourceMap}
             content={part.text}
             isStreaming={isStreaming && isLastPart}
             messageId={message.id}
+            onMemoryClick={(chunkId) => {
+              const source = sourceMap.get(chunkId);
+              if (!source) return;
+
+              setSourceList(sourceList);
+              setReferenceMeta({
+                app_name: source.appName,
+                browser_url: source.browserUrl,
+                captured_at: source.capturedAt,
+                chunk_id: source.chunkId,
+                image_path: source.imagePath,
+                text_content: source.textContent,
+                text_json: source.textJson ?? undefined,
+                window_height: source.windowHeight ?? 0,
+                window_title: source.windowTitle,
+                window_width: source.windowWidth ?? 0,
+                window_x: source.windowX ?? 0,
+                window_y: source.windowY ?? 0,
+              });
+            }}
           />
         )}
       </div>
@@ -176,11 +203,7 @@ function MessageItem({
 
   const renderStepThinking = (): React.ReactElement => {
     if (message.role === "assistant" && isLastMessage) {
-      const steps = message.parts
-        .filter((p) => p.type === "data-thinking")
-        .map((p) => p.data);
-
-
+      const steps = message.parts.filter((p) => p.type === "data-thinking").map((p) => p.data);
 
       return <StepThinking steps={steps} />;
     }
@@ -198,11 +221,10 @@ function MessageItem({
           return (
             <div className="flex items-center gap-2 mt-4 p-3 rounded-md bg-destructive/10 border border-destructive/20">
               <div className="flex-1">
-                <p className="text-sm text-destructive font-medium">
-                  Something went wrong
-                </p>
+                <p className="text-sm text-destructive font-medium">Something went wrong</p>
                 <p className="text-xs text-destructive/70 mt-1">
-                  An error occurred while processing your request. Please check your connection and try again.
+                  An error occurred while processing your request. Please check your connection and
+                  try again.
                 </p>
               </div>
               {onRegenerate && (
@@ -231,8 +253,29 @@ function MessageItem({
   };
 
   const renderImageGrid = (): React.ReactElement => {
-    if (message.role === "assistant") {
-      return <ImageSearchGrid />;
+    if (message.role === "assistant" && includeImages && sourceList.length > 0) {
+      return (
+        <ImageSearchGrid
+          sources={sourceList}
+          onSelect={(source) => {
+            setSourceList(sourceList);
+            setReferenceMeta({
+              app_name: source.appName,
+              browser_url: source.browserUrl,
+              captured_at: source.capturedAt,
+              chunk_id: source.chunkId,
+              image_path: source.imagePath,
+              text_content: source.textContent,
+              text_json: source.textJson ?? undefined,
+              window_height: source.windowHeight ?? 0,
+              window_title: source.windowTitle,
+              window_width: source.windowWidth ?? 0,
+              window_x: source.windowX ?? 0,
+              window_y: source.windowY ?? 0,
+            });
+          }}
+        />
+      );
     }
     return <></>;
   };
@@ -240,7 +283,7 @@ function MessageItem({
   return (
     <>
       {renderStepThinking()}
-      {/* {renderImageGrid()} */}
+      {renderImageGrid()}
       <div className="w-full mb-4">
         {message.parts.map((part, i) => {
           switch (part.type) {
@@ -275,22 +318,58 @@ function MessageItem({
         {/* Message actions for assistant messages (non-tool) */}
         {message.role === "assistant" && (
           <div className="flex items-center gap-2 text-muted-foreground text-xs mt-2">
-            <div
-              className={cn("flex items-center gap-1", isStreaming && "hidden")}
-            >
+            <div className={cn("flex items-center gap-1", isStreaming && "hidden")}>
               <CopyButton text={getFullTextContent()} />
 
-              {!isStreaming && isLastMessage && (
+              {!isStreaming && onRegenerate && (
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  // onClick={handleRegenerate}
+                  onClick={() => onRegenerate(message.id)}
                   title="Regenerate response"
                 >
                   <RefreshCwIcon size={16} />
                 </Button>
               )}
+
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setFeedback(feedback === "like" ? null : "like")}
+                title="Like"
+                className={cn(feedback === "like" && "text-primary")}
+              >
+                <ThumbsUp size={16} />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setFeedback(feedback === "dislike" ? null : "dislike")}
+                title="Dislike"
+                className={cn(feedback === "dislike" && "text-primary")}
+              >
+                <ThumbsDown size={16} />
+              </Button>
+
+              <Button variant="ghost" size="icon-xs" onClick={handleShare} title="Share">
+                <Share2 size={16} />
+              </Button>
             </div>
+
+            {sourceList.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  setReferenceMeta(undefined);
+                  setSourceList(sourceList);
+                }}
+              >
+                Sources ({sourceList.length})
+              </Button>
+            )}
           </div>
         )}
       </div>

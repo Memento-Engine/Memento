@@ -34,7 +34,9 @@ export interface ExecutionPlan {
   knowledge_priority: KnowledgeSource[];
   retrieval_depth: RetrievalDepth;
   citation_policy: CitationPolicy;
+  include_citations: boolean;
   include_images: boolean;
+  include_text_layout: boolean;
   web_policy: WebIntegrationPolicy;
   rewritten_query: string;
   personal_search_queries: string[];
@@ -55,7 +57,9 @@ export const ExecutionPlanSchema = z.object({
   knowledge_priority: z.array(KnowledgeSourceSchema),
   retrieval_depth: RetrievalDepthSchema,
   citation_policy: CitationPolicySchema,
-  include_images: z.boolean(),
+  include_citations: z.boolean().default(false),
+  include_images: z.boolean().default(false),
+  include_text_layout: z.boolean().default(false),
   web_policy: WebIntegrationPolicySchema,
   rewritten_query: z.string(),
   personal_search_queries: z.array(z.string()),

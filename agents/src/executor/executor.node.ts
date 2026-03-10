@@ -127,9 +127,12 @@ async function executeStep(
         stepResults
       );
 
+      step.databaseQuery.includeTextLayout = state.executionPlan?.include_text_layout ?? false;
+
       logger.debug("Resolved database query", {
         stepId: step.id,
         semanticQuery: step.databaseQuery.semanticQuery,
+        includeTextLayout: step.databaseQuery.includeTextLayout,
       });
 
       // Execute search tool

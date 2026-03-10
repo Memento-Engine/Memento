@@ -30,7 +30,9 @@ type ChatContext = {
     messageId?: string,
     rewrite?: boolean,
   ) => Promise<void>;
-  rewrite: (messageId: string) => void;
+  rewrite: (messageId: string) => Promise<void>;
+  stopMessage: () => void;
+  isGenerating: boolean;
   assistantStatus: AssistantStatus; // Use the raw string type here
   makeTransition: (nextState: AssistantStatus) => boolean;
   stepUpdates: any[]; // Array of step thinking events
@@ -42,7 +44,9 @@ export function chatContextEmptyState(): ChatContext {
     isMessagesLoaded: false,
     messages: [],
     sendMessage: async () => {},
-    rewrite: () => {},
+    rewrite: async () => {},
+    stopMessage: () => {},
+    isGenerating: false,
     assistantStatus: "Idle",
     makeTransition: () => false,
     stepUpdates: [],

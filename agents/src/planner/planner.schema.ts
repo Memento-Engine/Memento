@@ -108,6 +108,11 @@ export const DatabaseQuerySchema = z.object({
     .max(100)
     .default(10)
     .describe("Maximum number of records returned by the query."),
+
+  includeTextLayout: z
+    .boolean()
+    .default(false)
+    .describe("When true, include text_json layout payload in search results."),
 });
 
 export const PlannerStepKindSchema = z.enum([

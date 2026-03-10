@@ -11,7 +11,7 @@ import MessageItem from "./MessageItem";
 import useChatContext from "@/hooks/useChatContext";
 
 function Thread(): React.ReactElement {
-  const { messages, sendMessage } = useChatContext();
+  const { messages, sendMessage, rewrite, stopMessage, isGenerating } = useChatContext();
 
   const handleSend = useCallback(
     async (query: string) => {
@@ -29,10 +29,11 @@ function Thread(): React.ReactElement {
             <div key={m.id} className="flex flex-col gap-4">
               <MessageItem
                 onEdit={() => console.log("editing")}
+                onRegenerate={(messageId) => rewrite(messageId)}
                 message={m}
                 isFirstMessage={index === 0}
                 isLastMessage={index === messages.length - 1}
-                status="streaming"
+                status={isGenerating ? "streaming" : "submitted"}
                 showAssistant={m.role === "assistant"}
                 assistant={{
                   name: "Gemini",
@@ -52,6 +53,8 @@ function Thread(): React.ReactElement {
       <div className="p-4 bg-background">
         <div className="mx-auto w-full md:w-4/5 xl:w-4/6">
           <ChatInput
+            isGenerating={isGenerating}
+            onStop={stopMessage}
             handleSend={(q) => {
               handleSend(q);
             }}

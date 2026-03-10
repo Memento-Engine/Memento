@@ -1,6 +1,7 @@
 import {
   ArrowUp,
   Plus,
+  Square,
 } from "lucide-react";
 import { AutosizeTextarea } from "./ChatHome"; // Ensure this path is correct
 import { Button } from "./ui/button";
@@ -9,10 +10,14 @@ import { cn } from "@/lib/utils";
 
 export interface ChatInputProps {
   handleSend: (query: string) => void;
+  isGenerating?: boolean;
+  onStop?: () => void;
 }
 
 function ChatInput({
   handleSend,
+  isGenerating = false,
+  onStop,
 }: ChatInputProps): React.ReactElement {
   const [query, setQuery] = useState<string>("");
 
@@ -25,6 +30,10 @@ function ChatInput({
           placeholder="Ask followup..."
           className={cn("max-h-60 px-3 py-2 text-base")}
           onKeyDown={(e) => {
+            if (isGenerating) {
+              return;
+            }
+
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
 
@@ -49,16 +58,30 @@ function ChatInput({
           </div>
 
           {/* Send Button */}
-          <Button
-            onClick={(): void => {
-              handleSend(query);
-            }}
-            disabled={!query.trim()}
-            size="icon"
-            className="h-8 w-8 rounded-full"
-          >
-            <ArrowUp size={18} />
-          </Button>
+          {isGenerating ? (
+            <Button
+              onClick={(): void => onStop?.()}
+              size="icon"
+              className="h-8 w-8 rounded-full"
+              variant="secondary"
+              title="Stop generation"
+            >
+              <Square size={14} />
+            </Button>
+          ) : (
+            <Button
+              onClick={(): void => {
+                handleSend(query);
+                setQuery("");
+              }}
+              disabled={!query.trim()}
+              size="icon"
+              className="h-8 w-8 rounded-full"
+              title="Send message"
+            >
+              <ArrowUp size={18} />
+            </Button>
+          )}
         </div>
       </div>
     </div>

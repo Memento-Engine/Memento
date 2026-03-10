@@ -2,6 +2,45 @@ import { PlannerPlan, PlannerPlanSchema, PlannerStep } from "./planner.schema";
 
 export type ValidState<T> = { valid: true; data: T } | { valid: false; error: string };
 export const PLACEHOLDER_REGEX = /\{\{(step\d+)\.output\}\}/g;
+const MIN_DB_LIMIT = 1;
+const MAX_DB_LIMIT = 100;
+
+function normalizeLimit(value: unknown): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
+
+  if (!Number.isFinite(parsed)) {
+    return 10;
+  }
+
+  const intValue = Math.trunc(parsed);
+  if (intValue < MIN_DB_LIMIT) return MIN_DB_LIMIT;
+  if (intValue > MAX_DB_LIMIT) return MAX_DB_LIMIT;
+  return intValue;
+}
+
+function sanitizePlan(plan: PlannerPlan): PlannerPlan {
+  return {
+    ...plan,
+    steps: plan.steps.map((step) => {
+      if (step.kind !== "search") {
+        return step;
+      }
+
+      return {
+        ...step,
+        databaseQuery: {
+          ...step.databaseQuery,
+          limit: normalizeLimit(step.databaseQuery?.limit),
+        },
+      };
+    }),
+  };
+}
 
 
 function validateSchema(plan: PlannerPlan): ValidState<PlannerPlan> {
@@ -91,7 +130,8 @@ function validateLogicalRules(plan: PlannerPlan): ValidState<string> {
   return { valid: true, data: "Logic is Correct." };
 }
 export function validatePlan(plan: PlannerPlan): ValidState<PlannerPlan> {
-  const schema = validateSchema(plan);
+  const sanitizedPlan = sanitizePlan(plan);
+  const schema = validateSchema(sanitizedPlan);
   if (!schema.valid) return { valid: false, error: schema.error };
 
   const parsed = schema.data;

@@ -8,6 +8,87 @@ import { emitCompletion, emitStepEvent } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlm } from "../llm/routing";
 
+interface SearchRowLike {
+  chunk_id?: number | string;
+  text_content?: string;
+  text_json?: string;
+  app_name?: string;
+  window_title?: string;
+  browser_url?: string;
+  captured_at?: string;
+  image_path?: string;
+  frame_id?: number;
+  window_x?: number;
+  window_y?: number;
+  window_width?: number;
+  window_height?: number;
+}
+
+interface RetrievedSource {
+  chunk_id: string;
+  text_content: string;
+  text_json?: string;
+  app_name: string;
+  window_title: string;
+  browser_url: string;
+  captured_at: string;
+  image_path: string;
+  frame_id?: number;
+  window_x?: number;
+  window_y?: number;
+  window_width?: number;
+  window_height?: number;
+}
+
+function normalizeChunkId(rawId: number | string | undefined): string | undefined {
+  if (rawId === null || rawId === undefined) return undefined;
+  const asString = String(rawId).trim();
+  if (!asString) return undefined;
+  return asString.startsWith("chunk_") ? asString : `chunk_${asString}`;
+}
+
+function trimText(value: string | undefined, maxChars: number): string {
+  const text = (value ?? "").trim();
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}…`;
+}
+
+function flattenSearchRows(stepResults: Record<string, any> | undefined): SearchRowLike[] {
+  if (!stepResults) return [];
+  return Object.values(stepResults)
+    .flatMap((value) => (Array.isArray(value) ? value : []))
+    .filter((row) => row && typeof row === "object" && "chunk_id" in row);
+}
+
+function buildRetrievedSources(stepResults: Record<string, any> | undefined): RetrievedSource[] {
+  const byChunk = new Map<string, RetrievedSource>();
+
+  for (const row of flattenSearchRows(stepResults)) {
+    const chunkId = normalizeChunkId(row.chunk_id);
+    if (!chunkId) continue;
+
+    if (!byChunk.has(chunkId)) {
+      byChunk.set(chunkId, {
+        chunk_id: chunkId,
+        text_content: row.text_content ?? "",
+        text_json: row.text_json,
+        app_name: row.app_name ?? "",
+        window_title: row.window_title ?? "",
+        browser_url: row.browser_url ?? "",
+        captured_at: row.captured_at ?? "",
+        image_path: row.image_path ?? "",
+        frame_id: row.frame_id,
+        window_x: row.window_x,
+        window_y: row.window_y,
+        window_width: row.window_width,
+        window_height: row.window_height,
+      });
+    }
+  }
+
+  return Array.from(byChunk.values());
+}
+
 /**
  * Final answer node: Synthesize step results into final answer.
  * Generates natural language response for the user.
@@ -34,6 +115,11 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
 
       const { stepResults, goal, noResultsFound, hasSearchResults } = state;
       const config = await getConfig();
+      const retrievedSources = buildRetrievedSources(stepResults);
+      const includeCitations =
+        state.executionPlan?.include_citations ??
+        (state.executionPlan?.citation_policy !== "None" && state.executionPlan?.retrieval_depth !== "None");
+      const includeTextLayout = state.executionPlan?.include_text_layout ?? false;
 
       if ((state.llmCalls ?? 0) >= config.agent.maxLlmCalls) {
         const partialSummary = `Partial answer due to runtime safeguards. I found ${Object.keys(stepResults ?? {}).length} completed result sets for your request: "${goal}".`;
@@ -41,6 +127,7 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
         return {
           ...state,
           finalResult: partialSummary,
+          retrievedSources,
           endTime: Date.now(),
         };
       }
@@ -63,19 +150,42 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
         return {
           ...state,
           finalResult: noResultsMessage,
+          retrievedSources,
           endTime: Date.now(),
         };
       }
 
       try {
+        const llmContext = retrievedSources.slice(0, 12).map((source) => ({
+          chunk_id: source.chunk_id,
+          text: trimText(source.text_content, 1200),
+          app_name: source.app_name,
+          window_title: source.window_title,
+          captured_at: source.captured_at,
+          browser_url: source.browser_url,
+          ...(includeTextLayout
+            ? {
+                text_json: trimText(source.text_json, 2000),
+              }
+            : {}),
+        }));
+
+        const citationInstruction =
+          includeCitations && llmContext.length > 0
+            ? "If you make a factual claim backed by retrieved context, cite using exact syntax [[chunk_id]]. For multiple sources use [[chunk_1][chunk_2]]. Only cite IDs present in Retrieved Context."
+            : "Do not include citation markers in your response.";
+
         // Generate final answer prompt
         const prompt = await finalAnswerPrompt.invoke({
           goal,
-          stepResults: JSON.stringify(stepResults, null, 2),
+          retrievedContext: JSON.stringify(llmContext, null, 2),
+          citationInstruction,
         });
 
         logger.debug("Final answer prompt prepared", {
-          resultSize: JSON.stringify(stepResults).length,
+          sourceCount: llmContext.length,
+          includeCitations,
+          includeTextLayout,
         });
 
         emitStepEvent(
@@ -146,6 +256,7 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
         return {
           ...state,
           finalResult,
+          retrievedSources,
           endTime: Date.now(),
           llmCalls: (state.llmCalls ?? 0) + 1,
         };

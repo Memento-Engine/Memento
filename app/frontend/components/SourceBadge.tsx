@@ -11,17 +11,19 @@ import { Link2Icon } from "lucide-react";
 import { cn, renderDate } from "@/lib/utils";
 
 interface SourceBadgeProps {
-  id: number;
+  id: string;
   title?: string;
+  appName?: string;
   description?: string;
   capturedAt?: string;
   label?: string;
-  onClick?: (id: number) => void;
+  onClick?: (id: string) => void;
 }
 
 export function SourceBadge({
   id,
   title,
+  appName,
   capturedAt,
   description,
   label,
@@ -40,34 +42,24 @@ export function SourceBadge({
           )}
         >
           <Link2Icon className="h-3 w-3" />
-          {label ?? "wikipedia"}
+          {label ?? id}
         </Badge>
       </HoverCardTrigger>
 
       <HoverCardContent className="w-[320px] p-4 space-y-2">
-        {/* Header (logo + site) */}
+        {/* Header */}
         <div className="flex items-center gap-2">
-          <img
-            src="https://www.google.com/chrome/static/images/chrome-logo.svg"
-            alt="chrome"
-            className="w-4 h-4"
-          />
-          <span className="text-xs text-muted-foreground">chrome.com</span>
+          <span className="text-xs text-muted-foreground">{appName ?? "Unknown App"}</span>
         </div>
 
-        {/* Title */}
         <p className="text-sm font-semibold leading-tight">
           {title ?? "Unknown"}
         </p>
 
-        {/* Description */}
         <p className="text-xs text-muted-foreground line-clamp-3">
-          Microservices architecture is an approach to developing a single
-          application as a suite of small services, each running in its own
-          process and communicating with lightweight mechanisms.
+          {description?.trim() || "No preview available."}
         </p>
 
-        {/* Captured date */}
         <p className="text-[10px] text-muted-foreground">
           Captured: {capturedAt ? renderDate(capturedAt) : "Unknown"}
         </p>

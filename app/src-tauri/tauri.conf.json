@@ -20,7 +20,12 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["C:/Users/pavan/Pictures/Screenshots/**"]
+        "scope": [
+          "$HOME/.memento/memories/**",
+          "C:/Users/pavan/Pictures/Screenshots/**",
+          "C:/Users/*/.memento/memories/**",
+          "C:/Users/pavan/.memento/memories/**"
+        ]
       }
     }
   },

@@ -44,6 +44,7 @@ export const AgentState = Annotation.Root({
 
   // Final result
   finalResult: Annotation<string | undefined>(),
+  retrievedSources: Annotation<any[] | undefined>(),
 });
 
 export type AgentStateType = typeof AgentState.State;

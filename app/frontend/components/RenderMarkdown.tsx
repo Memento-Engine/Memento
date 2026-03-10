@@ -13,11 +13,9 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
 import { MermaidError } from "@/components/MermaidError";
-import { Button } from "./ui/button";
-import { Link2Icon } from "lucide-react";
 import { SourceBadge } from "./SourceBadge";
-import { normalize } from "path";
-import { Citation } from "./types";
+import { SourceRecord } from "./types";
+import { resolveImageSrc } from "@/lib/imageSrc";
 
 interface MarkdownProps {
   content: string;
@@ -26,7 +24,7 @@ interface MarkdownProps {
   isUser?: boolean;
   isStreaming?: boolean;
   messageId?: string;
-  citationMap: Map<number, Citation>;
+  sourceMap: Map<string, SourceRecord>;
 }
 
 // =============================
@@ -86,11 +84,57 @@ const normalizeLatex = (input: string): string => {
 // =============================
 
 function preprocessCitations(text: string) {
-  return text.replace(/\[\[(.*?)\]\]/g, (match) => {
-    const ids = [...match.matchAll(/\[(\d+)\]/g)].map((m) => m[1]).join(",");
+  return text.replace(/\[\[((?:\[[^\]]+\])+)]]/g, (match, groups) => {
+    const ids = [...String(groups).matchAll(/\[([a-zA-Z0-9_-]+)]/g)]
+      .map((m) => m[1].trim())
+      .filter(Boolean);
 
-    return `[${ids}](memory://${ids})`;
+    if (ids.length === 0) {
+      return match;
+    }
+
+    return `[${ids.join(",")}](memory://${ids.join(",")})`;
   });
+}
+
+function getCitationSummary(chunkIds: string[], sourceMap: Map<string, SourceRecord>) {
+  const uniqueChunkIds = Array.from(new Set(chunkIds));
+  const mappedSources = uniqueChunkIds
+    .map((chunkId) => ({ chunkId, source: sourceMap.get(chunkId) }))
+    .filter((entry) => !!entry.source);
+
+  const primary = mappedSources[0];
+  const fallbackPrimaryId = uniqueChunkIds[0] ?? "";
+
+  if (!primary) {
+    const remainder = Math.max(0, uniqueChunkIds.length - 1);
+    return {
+      primaryChunkId: fallbackPrimaryId,
+      label: remainder > 0 ? `${fallbackPrimaryId} +${remainder} tabs` : fallbackPrimaryId,
+      title: "Source",
+      appName: "Unknown App",
+      capturedAt: "",
+      description: uniqueChunkIds.join(", "),
+    };
+  }
+
+  const appName = primary.source?.appName?.trim() || "Source";
+  const remainder = Math.max(0, uniqueChunkIds.length - 1);
+  const label = remainder > 0 ? `${appName} +${remainder} tabs` : appName;
+
+  const windowSamples = mappedSources
+    .map((entry) => entry.source?.windowTitle?.trim())
+    .filter((value): value is string => !!value)
+    .slice(0, 3);
+
+  return {
+    primaryChunkId: primary.chunkId,
+    label,
+    title: primary.source?.windowTitle || appName,
+    appName,
+    capturedAt: primary.source?.capturedAt || "",
+    description: windowSamples.length > 0 ? windowSamples.join(" • ") : primary.source?.textContent || "",
+  };
 }
 
 function RenderMarkdownComponent({
@@ -99,7 +143,7 @@ function RenderMarkdownComponent({
   isUser,
   components,
   messageId,
-  citationMap,
+  sourceMap,
   onMemoryClick,
 }: MarkdownProps & { onMemoryClick?: (id: string) => void }) {
   // preprocess content
@@ -113,20 +157,28 @@ function RenderMarkdownComponent({
       ...components,
 
       a: ({ href, children, className }: any) => {
-        const text = String(children);
-
         // MEMORY LINK
         if (href?.startsWith("memory://")) {
-          const chunkId = href.replace("memory://", "");
-          console.log("ChunkId", chunkId);
-          console.log("typeof ChunkId", typeof chunkId);
-          const parsedIntChunkId = Number(chunkId);
+          const chunkIds = href
+            .replace("memory://", "")
+            .split(",")
+            .map((id: string) => id.trim())
+            .filter(Boolean);
+
+          const citation = getCitationSummary(chunkIds, sourceMap);
+
           return (
-            <SourceBadge
-              title={citationMap.get(parsedIntChunkId)?.windowName ?? ""}
-              capturedAt={citationMap.get(parsedIntChunkId)?.capturedAt ?? ""}
-              id={parsedIntChunkId}
-            />
+            <span className="inline-flex flex-wrap items-center gap-1 align-middle">
+              <SourceBadge
+                id={citation.primaryChunkId}
+                title={citation.title}
+                appName={citation.appName}
+                capturedAt={citation.capturedAt}
+                description={citation.description}
+                label={citation.label}
+                onClick={onMemoryClick}
+              />
+            </span>
           );
         }
         // NORMAL LINK
@@ -136,8 +188,8 @@ function RenderMarkdownComponent({
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
-              "font-medium text-blue-600 underline underline-offset-4 decoration-blue-300/50",
-              "hover:decoration-blue-600 hover:text-blue-800 transition-all",
+              "font-medium text-primary underline underline-offset-4 decoration-primary/40",
+              "transition-all hover:text-primary/80 hover:decoration-primary",
               className,
             )}
           >
@@ -153,14 +205,29 @@ function RenderMarkdownComponent({
       ol: ({ children, className }: any) => (
         <ol className={cn("list-decimal pl-6", className)}>{children}</ol>
       ),
+
+      img: ({ src, alt, className }: any) => {
+        const resolvedSrc = resolveImageSrc(typeof src === "string" ? src : "");
+        if (!resolvedSrc) return null;
+
+        return (
+          <img
+            src={resolvedSrc}
+            alt={alt ?? "Image"}
+            loading="lazy"
+            decoding="async"
+            className={cn("h-auto max-w-full rounded-md border border-border", className)}
+          />
+        );
+      },
     }),
-    [components, onMemoryClick],
+    [components, onMemoryClick, sourceMap],
   );
 
   return (
     <div
       className={cn(
-        "markdown wrap-break-word text-sm select-text",
+        "markdown wrap-break-word select-text",
         isUser && "is-user",
         className,
       )}

@@ -27,7 +27,9 @@ EXECUTION PLAN FIELDS:
 - knowledge_priority: array with one or more of ["PersonalMemory", "WebSearch", "LLMKnowledge"]
 - retrieval_depth: one of "None", "Shallow", "Deep"
 - citation_policy: one of "Mandatory", "Preferred", "None"
+- include_citations: boolean
 - include_images: boolean
+- include_text_layout: boolean
 - web_policy: object with on_results_found and on_no_results, each one of "Return", "Offer", "Auto"
 - rewritten_query: string (your improved version of user goal)
 - personal_search_queries: array of strings
@@ -45,7 +47,9 @@ JSON STRUCTURE (example):
     "knowledge_priority": ["PersonalMemory"],
     "retrieval_depth": "Shallow",
     "citation_policy": "Preferred",
+    "include_citations": true,
     "include_images": false,
+    "include_text_layout": false,
     "web_policy": {{
       "on_results_found": "Return",
       "on_no_results": "Offer"
@@ -93,6 +97,10 @@ JSON STRUCTURE (example):
 CRITICAL RULES:
 - Return ONLY JSON, no markdown, no explanation text
 - All filter arrays must contain string values
+- Flag policy:
+  - include_citations=true only when retrieval-backed answering is expected
+  - include_images=true when visual evidence should be shown in UI
+  - include_text_layout=true only for spatial/layout questions (top-left, address bar, position)
 - FILTER EVIDENCE POLICY (strict):
   - Allowed direct evidence examples:
     - "in VS Code" -> app_name: ["VS Code", "Visual Studio Code", "vscode"]

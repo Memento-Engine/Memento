@@ -285,6 +285,19 @@ async function startServer() {
             noResultsFound: result?.noResultsFound,
           });
 
+          if (Array.isArray(result?.retrievedSources) && result.retrievedSources.length > 0) {
+            res.write(
+              JSON.stringify({
+                type: "sources",
+                data: {
+                  includeImages: !!result?.executionPlan?.include_images,
+                  sources: result.retrievedSources,
+                },
+                timestamp: formatLocalTimestamp(),
+              }) + "\n",
+            );
+          }
+
           // Stream final text in chunks for progressive rendering
           if (result?.finalResult) {
             const finalText = result.finalResult;

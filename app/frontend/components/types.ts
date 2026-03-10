@@ -49,6 +49,30 @@ export const thinkingSchema = z.object({
 
 export type ThinkingStep = z.infer<typeof thinkingSchema>;
 
+export const sourceSchema = z.object({
+  chunkId: z.string().min(1),
+  appName: z.string().default(""),
+  windowTitle: z.string().default(""),
+  capturedAt: z.string().default(""),
+  browserUrl: z.string().default(""),
+  textContent: z.string().default(""),
+  textJson: z.string().optional().nullable(),
+  imagePath: z.string().default(""),
+  frameId: z.number().optional(),
+  windowX: z.number().optional(),
+  windowY: z.number().optional(),
+  windowWidth: z.number().optional(),
+  windowHeight: z.number().optional(),
+});
+
+export const sourcesPayloadSchema = z.object({
+  includeImages: z.boolean().default(false),
+  sources: z.array(sourceSchema),
+});
+
+export type SourceRecord = z.infer<typeof sourceSchema>;
+export type SourcesPayload = z.infer<typeof sourcesPayloadSchema>;
+
 // Citation schema
 export const citationSchema = z.object({
   sourceId: z.number().min(1),
@@ -77,6 +101,7 @@ export type Citations = z.infer<typeof citationsSchema>;
 const dataSchemas = {
   thinking: thinkingSchema,
   citations: citationsSchema, // plural
+  sources: sourcesPayloadSchema,
 };
 
 export type MyDataPart = {

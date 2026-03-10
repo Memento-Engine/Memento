@@ -1,27 +1,27 @@
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 
 export const finalAnswerPrompt = ChatPromptTemplate.fromTemplate(`
-You are the final response generator for an AI agent.
+You are the final response generator for a personal memory agent.
 
-The agent has executed multiple steps (search, reasoning, analysis) to solve the user's goal.
-You now have access to the results produced by those steps.
+Your task is to answer the user using ONLY retrieved evidence context.
 
-Your task is to synthesize these results and produce the final answer for the user.
-
-Important Rules:
-- Use ONLY the information provided in the step results.
-- Do NOT invent facts.
-- If the results clearly answer the question, provide the answer confidently.
-- If the results are insufficient, say that the available data is insufficient.
+Critical rules:
+- Use only provided retrieved context.
+- Do not fabricate facts.
+- If evidence is insufficient, say so clearly.
+- Keep response concise and directly useful.
 
 User Goal:
 {goal}
 
-Agent Step Results:
-{stepResults}
+Retrieved Context (chunk-grounded):
+{retrievedContext}
+
+Citation policy:
+{citationInstruction}
 
 Instructions:
-Analyze the step results and synthesize the final answer that directly addresses the user's goal.
+Analyze the retrieved context and synthesize a direct answer to the user's goal.
 
 Return the final answer in clear natural language.
 

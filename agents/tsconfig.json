@@ -7,7 +7,7 @@
     "lib": ["ES2022"],
 
     "rootDir": "./",
-    "outDir": "../dist-agents",
+    "outDir": "./dist-agents",
 
     "strict": true,
     "skipLibCheck": true,

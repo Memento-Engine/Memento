@@ -12,13 +12,22 @@ export interface ToolContext {
   timeout: number;
 }
 
+export interface ToolResultError {
+  code?: string;
+  message: string;
+  stage?: string;
+  details?: string;
+}
+
+export type ToolResultErrorLike = string | ToolResultError;
+
 /**
  * Tool result with status and data.
  */
 export interface ToolResult<T = any> {
   success: boolean;
   data?: T;
-  error?: string;
+  error?: ToolResultErrorLike;
   metadata?: Record<string, any>;
 }
 
