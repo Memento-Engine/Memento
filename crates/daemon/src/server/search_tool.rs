@@ -328,7 +328,7 @@ pub async fn search_tool(
         start_time,
         end_time,
         if keyword_refs.is_empty() { None } else { Some(keyword_refs) },
-        &SearchType::Vector,
+        &SearchType::Hybrid,
         Some(query_limit),
         include_text_layout,
         &embedding_json,

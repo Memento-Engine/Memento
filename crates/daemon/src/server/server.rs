@@ -4,13 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use axum::{ routing::post, routing::get, Router };
 use crate::server::search_tool::search_tool;
-use crate::server::{ app_state::AppState, search_stream_handler::search_stream_handler };
+use crate::server::{ app_state::AppState };
 use tower_http::{ cors::CorsLayer };
 use tower_http::{ cors::Any };
 
 fn api_router() -> Router<Arc<AppState>> {
   Router::new()
-    .route("/search_stream_handler", post(search_stream_handler))
     .route("/search_tool", post(search_tool))
     .route(
       "/healthz",

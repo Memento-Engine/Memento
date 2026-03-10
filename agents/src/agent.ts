@@ -1,99 +1,218 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
-import { AgentState } from "./agentState";
-import { plannerNode } from "./planner/planner.node";
-import { replannerNode } from "./planner/replanner.node";
-import { executorNode } from "./executor/executor.node";
-import { finalAnswerNode } from "./finalLlm/finalAnswer.node";
+import { AgentState, AgentStateType } from "./agentState";
+import { routerNode } from "./router/router.node";
+import { plannerNodeV2 } from "./planner/planner.nodeV2";
+import { executorNodeV2 } from "./executor/executor.nodeV2";
+import { finalAnswerNodeV2 } from "./finalLlm/finalAnswer.nodeV2";
 import { getLogger } from "./utils/logger";
 import { getConfig } from "./config/config";
 import { runWithSpan } from "./telemetry/tracing";
+import { emitCompletion } from "./utils/eventQueue";
+import type { Plan } from "./planner/plan.schema";
+
+/*
+============================================================
+AGENT GRAPH (v2)
+============================================================
+
+  START
+    │
+    ▼
+  router ─────┬── conversation ──► END
+              │── needs_clarification ──► END
+              │── simple_search ──► simpleSearchPlan ──► executor ──► finalAnswer ──► END
+              └── plan ──► planner ─┬── shouldReplan ──► planner (loop)
+                                    └── valid ──► executor ─┬── shouldReplan ──► planner
+                                                            └── done ──► finalAnswer ──► END
+============================================================
+*/
+
+// ── Routing functions ─────────────────────────────────────
 
 /**
- * Route function after planner node.
- * Sends failures to replanner, otherwise continues to executor.
+ * After the router node: decide which branch to take.
  */
-async function plannerRoute(state: typeof AgentState.State): Promise<string> {
-  if (state.shouldReplan) {
-    return "replanner";
+function afterRouter(state: AgentStateType): string {
+  switch (state.route) {
+    case "conversation":
+      return "conversationExit";
+    case "needs_clarification":
+      return "clarificationExit";
+    case "simple_search":
+      return "simpleSearchPlan";
+    case "plan":
+    default:
+      return "planner";
+  }
+}
+
+/**
+ * After the planner node: go to executor or retry planning.
+ */
+async function afterPlanner(state: AgentStateType): Promise<string> {
+  const config = await getConfig();
+  const maxAttempts = config.agent.maxPlanRetries ?? 3;
+
+  if (state.shouldReplan && (state.planAttempts ?? 0) < maxAttempts) {
+    return "planner"; // retry planning
+  }
+
+  if (!state.plan) {
+    // Planning failed completely — go to final answer with no results
+    return "finalAnswer";
   }
 
   return "executor";
 }
 
 /**
- * Route function to determine if replanning is needed.
- * Returns "replanner" if shouldReplan is true AND we haven't exceeded max attempts,
- * otherwise "finalAnswer" to generate a response (with or without results).
+ * After the executor node: replan or go to final answer.
  */
-async function shouldReplanRoute(state: typeof AgentState.State): Promise<string> {
+async function afterExecutor(state: AgentStateType): Promise<string> {
   const config = await getConfig();
-  const maxReplanAttempts = config.agent.maxReplanAttempts ?? 3;
-  const currentReplanAttempts = state.replanAttempts ?? 0;
+  const maxReplan = config.agent.maxReplanAttempts ?? 3;
 
-  // If shouldReplan is true AND we haven't maxed out attempts, go to replanner
-  if (state.shouldReplan && currentReplanAttempts < maxReplanAttempts) {
-    return "replanner";
-  }
-
-  // Otherwise, move to final answer (even with no results)
-  // Mark that we've reached max attempts if shouldReplan was true
-  if (state.shouldReplan && currentReplanAttempts >= maxReplanAttempts) {
-    // This will be handled in finalAnswer node
-    state.noResultsFound = true;
+  if (state.shouldReplan && (state.replanAttempts ?? 0) < maxReplan) {
+    return "planner"; // replan from scratch
   }
 
   return "finalAnswer";
 }
 
+// ── Terminal exit nodes ──────────────────────────────────
+
 /**
- * Build and compile the agent workflow graph.
- * Workflow: Planner → Executor → [Replanner → Executor (loop) or FinalAnswer] → END
+ * Conversation exit: router already generated a direct reply.
+ * Emit as completion and terminate.
  */
+function conversationExit(state: AgentStateType): AgentStateType {
+  const reply =
+    state.conversationResponse ??
+    "I'm a memory search assistant. Ask me about something you've seen on your screen.";
+  emitCompletion(reply, state.requestId);
+  return {
+    ...state,
+    finalResult: reply,
+    endTime: Date.now(),
+  };
+}
+
+/**
+ * Clarification exit: router determined ambiguity.
+ * Emit the clarification question and terminate.
+ */
+function clarificationExit(state: AgentStateType): AgentStateType {
+  const question =
+    state.clarificationQuestion ??
+    "Could you provide more details about what you're looking for?";
+  emitCompletion(question, state.requestId);
+  return {
+    ...state,
+    finalResult: question,
+    endTime: Date.now(),
+  };
+}
+
+/**
+ * Simple search plan: synthesises a minimal 1-step plan
+ * so the executor has something to work with when the
+ * planner is skipped.
+ */
+function simpleSearchPlan(state: AgentStateType): AgentStateType {
+  const plan: Plan = {
+    goal: state.goal,
+    steps: [
+      {
+        id: "step1",
+        kind: "search",
+        intent: state.goal,
+        dependsOn: [],
+        expectedOutput: {
+          type: "table",
+          variableName: "search_results",
+          description: `Search results for: ${state.goal}`,
+        },
+      },
+      {
+        id: "step2",
+        kind: "final",
+        intent: `Answer the user's question based on the search results: ${state.goal}`,
+        dependsOn: ["step1"],
+        expectedOutput: {
+          type: "value",
+          variableName: "final_answer",
+          description: "The final answer to the user's query",
+        },
+      },
+    ],
+  };
+
+  return {
+    ...state,
+    plan,
+  };
+}
+
+// ── Build graph ──────────────────────────────────────────
+
 async function buildAgentGraph() {
   return runWithSpan(
     "agent.graph.build",
-    {
-      workflow: "planner-executor-replanner-finalAnswer",
-    },
+    { workflow: "router-planner-executor-finalAnswer" },
     async () => {
       const logger = await getLogger();
 
       try {
         const workflow = new StateGraph(AgentState);
 
+        // Add nodes
         const graphBuilder = workflow
-          .addNode("planner", plannerNode)
-          .addNode("executor", executorNode)
-          .addNode("replanner", replannerNode)
-          .addNode("finalAnswer", finalAnswerNode);
+          .addNode("router", routerNode)
+          .addNode("planner", plannerNodeV2)
+          .addNode("executor", executorNodeV2)
+          .addNode("finalAnswer", finalAnswerNodeV2)
+          .addNode("conversationExit", conversationExit)
+          .addNode("clarificationExit", clarificationExit)
+          .addNode("simpleSearchPlan", simpleSearchPlan);
 
-        // Define edges
-        graphBuilder.addEdge(START, "planner");
-        graphBuilder.addConditionalEdges("planner", plannerRoute, {
-          replanner: "replanner",
-          executor: "executor",
+        // Edges
+        graphBuilder.addEdge(START, "router");
+
+        graphBuilder.addConditionalEdges("router", afterRouter, {
+          conversationExit: "conversationExit",
+          clarificationExit: "clarificationExit",
+          simpleSearchPlan: "simpleSearchPlan",
+          planner: "planner",
         });
 
-        // Conditional edge from executor: replan or finalize
-        graphBuilder.addConditionalEdges("executor", shouldReplanRoute, {
-          replanner: "replanner",
+        graphBuilder.addEdge("simpleSearchPlan", "executor");
+
+        graphBuilder.addConditionalEdges("planner", afterPlanner, {
+          planner: "planner",
+          executor: "executor",
           finalAnswer: "finalAnswer",
         });
 
-        // Replanner loops back to executor for retry
-        graphBuilder.addEdge("replanner", "executor");
+        graphBuilder.addConditionalEdges("executor", afterExecutor, {
+          planner: "planner",
+          finalAnswer: "finalAnswer",
+        });
 
-        // Final answer goes to end
+        // Terminal edges
+        graphBuilder.addEdge("conversationExit", END);
+        graphBuilder.addEdge("clarificationExit", END);
         graphBuilder.addEdge("finalAnswer", END);
 
-        logger.info("Agent workflow graph built successfully with replanning support");
+        logger.info(
+          "Agent workflow graph v2 built successfully",
+        );
 
         return graphBuilder.compile();
       } catch (error) {
         logger.error("Failed to build agent workflow graph");
         throw error;
       }
-    }
+    },
   );
 }
 

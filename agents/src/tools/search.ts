@@ -1,20 +1,20 @@
 import axios, { AxiosError } from "axios";
 import { Tool, ToolContext, ToolResult, toolSuccess, toolFailure } from "../types/tools";
-import { DatabaseQuery, DatabaseQuerySchema } from "../planner/planner.schema";
+import { ResolvedQuery, ResolvedQuerySchema } from "../executor/query.schema";
 import { getConfig } from "../config/config";
 import { getLogger } from "../utils/logger";
 import { runWithSpan } from "../telemetry/tracing";
 
 /**
  * Search tool for querying the activity database.
- * Executes database queries and returns structured results.
+ * Executes resolved (concrete) queries and returns structured results.
  */
-export class SearchTool implements Tool<DatabaseQuery, any[]> {
+export class SearchTool implements Tool<ResolvedQuery, any[]> {
   name = "search";
   description = "Search the activity database with structured queries";
-  inputSchema = DatabaseQuerySchema;
+  inputSchema = ResolvedQuerySchema;
 
-  async execute(input: DatabaseQuery, context: ToolContext): Promise<ToolResult<any[]>> {
+  async execute(input: ResolvedQuery, context: ToolContext): Promise<ToolResult<any[]>> {
     return runWithSpan(
       "agent.tool.search.execute",
       {
@@ -167,7 +167,7 @@ export class SearchTool implements Tool<DatabaseQuery, any[]> {
  * Tool factory for creating tool instances.
  */
 export class ToolFactory {
-  static createSearchTool(): Tool<DatabaseQuery, any[]> {
+  static createSearchTool(): Tool<ResolvedQuery, any[]> {
     return new SearchTool();
   }
 }

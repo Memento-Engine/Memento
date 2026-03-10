@@ -199,9 +199,14 @@ async function startServer() {
                   goal: goal as any,
                   requestId: requestId as any,
                   planAttempts: 0 as any,
+                  replanAttempts: 0 as any,
                   llmCalls: 0 as any,
                   stepErrors: {} as any,
                   startTime: startTime as any,
+                  currentStep: 0 as any,
+                  shouldReplan: false as any,
+                  noResultsFound: false as any,
+                  hasSearchResults: false as any,
                 }),
             );
           } catch (error) {
@@ -290,7 +295,6 @@ async function startServer() {
               JSON.stringify({
                 type: "sources",
                 data: {
-                  includeImages: !!result?.executionPlan?.include_images,
                   sources: result.retrievedSources,
                 },
                 timestamp: formatLocalTimestamp(),

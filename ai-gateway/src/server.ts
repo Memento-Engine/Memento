@@ -20,10 +20,12 @@ const chatSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   max_tokens: z.number().int().min(1).max(65_536).optional(),
   user_id: z.string().min(1),
-  role: z.enum(["planner", "executor", "final"]).optional(),
+  role: z.enum(["router", "planner", "executor", "query_builder", "final"]).optional(),
 });
 
-function buildProviderRegistry(config: ReturnType<typeof loadConfig>): Map<ProviderName, LlmProviderAdapter> {
+function buildProviderRegistry(
+  config: ReturnType<typeof loadConfig>
+): Map<ProviderName, LlmProviderAdapter> {
   const registry = new Map<ProviderName, LlmProviderAdapter>();
 
   for (const provider of config.providers) {
@@ -33,7 +35,7 @@ function buildProviderRegistry(config: ReturnType<typeof loadConfig>): Map<Provi
         new OpenRouterAdapter({
           baseUrl: provider.baseUrl,
           apiKey: provider.apiKey,
-        }),
+        })
       );
     }
   }
@@ -59,6 +61,12 @@ async function startServer(): Promise<void> {
   app.post("/v1/chat", async (req: Request, res: Response) => {
     try {
       const parsed = chatSchema.parse(req.body);
+
+      console.log("Received chat request", {
+        req: parsed.messages.map((m) => ({ role: m.role, contentLength: m.content.length })),
+        sysRole : parsed.role
+        });
+
       const roleDefaults = parsed.role ? config.roles[parsed.role] : undefined;
       const resolvedMaxTokens = roleDefaults
         ? Math.min(parsed.max_tokens ?? roleDefaults.maxOutputTokens, roleDefaults.maxOutputTokens)
@@ -73,8 +81,8 @@ async function startServer(): Promise<void> {
         role: parsed.role,
       };
 
-    //   const estimatedTokens = Math.max(chatRequest.max_tokens, 256);
-    //   rateLimiter.enforce(chatRequest.user_id, estimatedTokens);
+      //   const estimatedTokens = Math.max(chatRequest.max_tokens, 256);
+      //   rateLimiter.enforce(chatRequest.user_id, estimatedTokens);
 
       const response = await modelRouter.chat(chatRequest);
 
@@ -86,9 +94,6 @@ async function startServer(): Promise<void> {
         total_tokens: response.usage.total_tokens,
         timestamp: Date.now(),
       });
-
-
-      console.log("Response", response.content);
 
       res.status(200).json(response);
     } catch (error) {
@@ -103,9 +108,7 @@ async function startServer(): Promise<void> {
   });
 
   app.listen(config.server.port, config.server.host, () => {
-    console.log(
-      `ai-gateway listening on http://${config.server.host}:${config.server.port}`,
-    );
+    console.log(`ai-gateway listening on http://${config.server.host}:${config.server.port}`);
   });
 }
 

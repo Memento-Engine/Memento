@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DatabaseQuery } from "../planner/planner.schema";
+import { ResolvedQuery } from "../executor/query.schema";
 import { ToolError } from "./errors";
 
 /**
@@ -66,7 +66,7 @@ export interface Tool<TInput = any, TOutput = any> {
  * Tool factory for creating tool instances.
  */
 export interface ToolFactory {
-  createSearchTool(): Tool<DatabaseQuery, any[]>;
+  createSearchTool(): Tool<ResolvedQuery, any[]>;
 }
 
 /**

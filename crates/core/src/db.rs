@@ -11,7 +11,7 @@ use sqlite_vec::sqlite3_vec_init;
 use sqlx::{ QueryBuilder, Sqlite, Result, FromRow };
 use serde::{ Serialize, Deserialize };
 use std::fmt::Debug;
-use std::collections::HashMap;
+use std::collections::{ HashMap, HashSet };
 use std::sync::{ Arc, Mutex };
 // use crate::{ embedding::engine::EmbeddingModel };
 
@@ -23,7 +23,7 @@ pub struct Rect {
   pub height: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum SearchType {
   Vector,
   FTS,
@@ -91,6 +91,8 @@ pub struct SearchQuery {
   pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
   pub entities: Option<Vec<String>>,
   pub embedding: Option<Vec<f32>>,
+  pub rewrite_query: Option<bool>,
+  pub use_cross_encoder: Option<bool>,
 }
 
 // Intermediate Struct for getting struct from rewritten query
@@ -104,10 +106,13 @@ pub struct StructuredQuery {
   pub key_words: Option<Vec<String>>,
   pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
   pub entities: Option<Vec<String>>,
+  pub rewrite_query: Option<bool>,
+  pub use_cross_encoder: Option<bool>,
 }
 
 pub struct DatabaseManager {
   pub pool: SqlitePool,
+  rerank_state: Arc<Mutex<CrossEncoderDecision>>,
 }
 
 pub struct ImmediateTx {
@@ -145,6 +150,27 @@ pub struct SearchResult {
   pub frame_id: i32,
 
   pub image_path: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CrossEncoderDecision {
+  pub should_run: bool,
+  pub candidate_pool: usize,
+  pub requested_limit: usize,
+  pub reason: String,
+  pub decided_at: DateTime<Utc>,
+}
+
+impl Default for CrossEncoderDecision {
+  fn default() -> Self {
+    Self {
+      should_run: false,
+      candidate_pool: 0,
+      requested_limit: 0,
+      reason: "not evaluated yet".to_string(),
+      decided_at: Utc::now(),
+    }
+  }
 }
 
 pub fn group_results(results: &Vec<SearchResult>) -> Vec<GroupedSearchResult> {
@@ -251,7 +277,17 @@ impl DatabaseManager {
 
     Self::run_migrations(&pool).await?;
 
-    Ok(Self { pool })
+    Ok(Self {
+      pool,
+      rerank_state: Arc::new(Mutex::new(CrossEncoderDecision::default())),
+    })
+  }
+
+  pub fn last_rerank_decision(&self) -> CrossEncoderDecision {
+    self.rerank_state
+      .lock()
+      .map(|state| state.clone())
+      .unwrap_or_default()
   }
 
   pub async fn begin_immediate_with_retry(&self) -> Result<ImmediateTx, sqlx::Error> {
@@ -289,30 +325,7 @@ impl DatabaseManager {
     }
   }
 
-  fn build_hybrid_select(
-    &self,
-
-    qb: &mut QueryBuilder<Sqlite>
-  ) {
-    qb.push(r#"
-SELECT *
-FROM combined
-ORDER BY semantic_score ASC, keyword_hit DESC
-LIMIT 50
-"#);
-  }
-  fn build_fts_select(&self, qb: &mut QueryBuilder<Sqlite>) {
-    qb.push(
-      r#"
-        SELECT *
-        FROM keyword_matches
-        WHERE id IS NOT NULL
-        LIMIT 50
-        "#
-    );
-  }
-
-  fn build_vector_select(&self, qb: &mut QueryBuilder<Sqlite>, _include_text_layout: bool) {
+  fn build_fts_select(&self, qb: &mut QueryBuilder<Sqlite>, limit: i32) {
     qb.push(
       r#"
         SELECT
@@ -320,13 +333,38 @@ LIMIT 50
             fc.app_name,
             fc.window_title,
             fc.text_content,
+            fc.text_json,
+            fc.browser_url,
+            fc.window_x,
+            fc.window_y,
+            fc.window_width,
+            fc.window_height,
+            fc.chunk_id,
+            fc.frame_id,
+            fc.image_path
+        FROM keyword_matches km
+        JOIN filtered_chunks fc ON fc.chunk_id = km.id
+        ORDER BY km.keyword_hit DESC, fc.captured_at DESC
+        LIMIT
         "#
     );
+    qb.push_bind(limit);
+  }
 
-    qb.push("fc.text_json");
-
+  fn build_vector_select(
+    &self,
+    qb: &mut QueryBuilder<Sqlite>,
+    _include_text_layout: bool,
+    limit: i32
+  ) {
     qb.push(
-      r#",
+      r#"
+        SELECT
+            fc.captured_at,
+            fc.app_name,
+            fc.window_title,
+            fc.text_content,
+            fc.text_json,
             fc.browser_url,
             fc.window_x,
             fc.window_y,
@@ -338,22 +376,36 @@ LIMIT 50
         FROM vector_matches vm
         JOIN filtered_chunks fc ON fc.chunk_id = vm.id
         ORDER BY vm.semantic_score
-        LIMIT 50
+        LIMIT
         "#
     );
+    qb.push_bind(limit);
   }
 
   fn build_hybrid_merge(&self, qb: &mut QueryBuilder<Sqlite>) {
     qb.push(
       r#"
 combined AS (
-    SELECT id,
-           MIN(semantic_score) as semantic_score,
-           MAX(keyword_hit) as keyword_hit
+    SELECT
+        id,
+        SUM(rrf_component) as rrf_score,
+        MIN(semantic_score) as semantic_score,
+        MAX(keyword_hit) as keyword_hit
     FROM (
-        SELECT id, semantic_score, 0.0 as keyword_hit FROM vector_matches
+        SELECT
+            id,
+            1.0 / (60.0 + ROW_NUMBER() OVER (ORDER BY semantic_score ASC)) as rrf_component,
+            semantic_score,
+            0.0 as keyword_hit
+        FROM vector_matches
         UNION ALL
-        SELECT id, 0.5 as semantic_score, keyword_hit FROM keyword_matches
+        SELECT
+            id,
+            1.0 / (60.0 + ROW_NUMBER() OVER (ORDER BY keyword_hit DESC, id ASC)) as rrf_component,
+            1.0 as semantic_score,
+            keyword_hit
+        FROM keyword_matches
+        WHERE id IS NOT NULL
     )
     GROUP BY id
 )
@@ -371,7 +423,7 @@ combined AS (
         r#"
                 SELECT
                     rowid as id,
-                    1.0 as keyword_hit
+                    1.0 / (1.0 + ABS(bm25(chunks_fts))) as keyword_hit
                 FROM chunks_fts
                 WHERE chunks_fts MATCH
                 "#
@@ -379,7 +431,7 @@ combined AS (
 
       qb.push_bind(keywords_str);
 
-      qb.push(" AND rowid IN (SELECT id FROM filtered_chunks)");
+      qb.push(" AND rowid IN (SELECT chunk_id FROM filtered_chunks)");
     } else {
       qb.push("SELECT NULL as id, 0.0 as keyword_hit WHERE 1=0");
     }
@@ -387,7 +439,12 @@ combined AS (
     qb.push(")");
   }
 
-  fn build_vector_cte<'a>(&self, qb: &mut QueryBuilder<'a, Sqlite>, embedding_json: &'a str) {
+  fn build_vector_cte<'a>(
+    &self,
+    qb: &mut QueryBuilder<'a, Sqlite>,
+    embedding_json: &'a str,
+    limit: i32
+  ) {
     qb.push(
       r#"
         vector_matches AS (
@@ -405,10 +462,184 @@ combined AS (
         FROM vec_chunks v
         JOIN filtered_chunks fc ON fc.chunk_id = v.chunk_id
         ORDER BY semantic_score ASC
-        LIMIT 150
-        )
+        LIMIT
         "#
     );
+    qb.push_bind(limit);
+    qb.push(")");
+  }
+
+  fn rewrite_keywords(key_words: Option<Vec<&str>>) -> Vec<String> {
+    let mut uniq: HashSet<String> = HashSet::new();
+
+    if let Some(words) = key_words {
+      for raw in words {
+        for token in raw.split_whitespace() {
+          let normalized = token
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+
+          if normalized.len() < 2 {
+            continue;
+          }
+
+          uniq.insert(normalized.clone());
+
+          if normalized.ends_with("ing") && normalized.len() > 5 {
+            uniq.insert(normalized.trim_end_matches("ing").to_string());
+          } else if normalized.ends_with("ed") && normalized.len() > 4 {
+            uniq.insert(normalized.trim_end_matches("ed").to_string());
+          } else if normalized.ends_with('s') && normalized.len() > 3 {
+            uniq.insert(normalized.trim_end_matches('s').to_string());
+          }
+        }
+      }
+    }
+
+    let mut terms = uniq.into_iter().collect::<Vec<_>>();
+    terms.sort();
+    terms
+  }
+
+  fn build_keywords_match_query(keywords: &[String]) -> String {
+    keywords
+      .iter()
+      .filter(|w| !w.trim().is_empty())
+      .map(|w| format!("\"{}\"*", w))
+      .collect::<Vec<_>>()
+      .join(" OR ")
+  }
+
+  fn metadata_filter_count(
+    app_names: &Option<Vec<&str>>,
+    window_names: &Option<Vec<&str>>,
+    browser_urls: &Option<Vec<&str>>,
+    start_time: &Option<DateTime<Utc>>,
+    end_time: &Option<DateTime<Utc>>
+  ) -> usize {
+    let app_count = app_names.as_ref().map_or(0, |v| v.len());
+    let window_count = window_names.as_ref().map_or(0, |v| v.len());
+    let url_count = browser_urls.as_ref().map_or(0, |v| v.len());
+    let time_count = if start_time.is_some() && end_time.is_some() { 1 } else { 0 };
+
+    app_count + window_count + url_count + time_count
+  }
+
+  fn build_cross_encoder_decision(
+    candidate_count: usize,
+    requested_limit: usize,
+    metadata_filter_count: usize,
+    keyword_count: usize
+  ) -> CrossEncoderDecision {
+    let effective_limit = requested_limit.max(1);
+    let ambiguity_ratio = (candidate_count as f32) / (effective_limit as f32);
+    let low_metadata_precision = metadata_filter_count == 0;
+
+    let should_run = candidate_count > effective_limit &&
+      (ambiguity_ratio >= 2.0 ||
+        (low_metadata_precision && candidate_count >= 24) ||
+        (keyword_count >= 3 && candidate_count >= 16));
+
+    let candidate_pool = if should_run {
+      (effective_limit * 3).min(120).max(effective_limit)
+    } else {
+      effective_limit
+    };
+
+    let reason = if should_run {
+      format!(
+        "high ambiguity (candidates={}, limit={}, metadata_filters={}, keywords={})",
+        candidate_count,
+        effective_limit,
+        metadata_filter_count,
+        keyword_count
+      )
+    } else {
+      format!(
+        "skip expensive rerank (candidates={}, limit={}, metadata_filters={}, keywords={})",
+        candidate_count,
+        effective_limit,
+        metadata_filter_count,
+        keyword_count
+      )
+    };
+
+    CrossEncoderDecision {
+      should_run,
+      candidate_pool,
+      requested_limit: effective_limit,
+      reason,
+      decided_at: Utc::now(),
+    }
+  }
+
+  fn token_jaccard_similarity(a: &str, b: &str) -> f32 {
+    let a_set: HashSet<&str> = a
+      .split_whitespace()
+      .filter(|t| !t.is_empty())
+      .collect();
+    let b_set: HashSet<&str> = b
+      .split_whitespace()
+      .filter(|t| !t.is_empty())
+      .collect();
+
+    if a_set.is_empty() || b_set.is_empty() {
+      return 0.0;
+    }
+
+    let intersection = a_set.intersection(&b_set).count() as f32;
+    let union = a_set.union(&b_set).count() as f32;
+
+    if union == 0.0 {
+      0.0
+    } else {
+      intersection / union
+    }
+  }
+
+  fn result_similarity(a: &SearchResult, b: &SearchResult) -> f32 {
+    if a.image_path == b.image_path {
+      return 1.0;
+    }
+
+    let text_sim = Self::token_jaccard_similarity(&a.text_content, &b.text_content);
+    let window_sim = if a.window_title.eq_ignore_ascii_case(&b.window_title) { 0.2 } else { 0.0 };
+
+    (text_sim + window_sim).min(1.0)
+  }
+
+  fn apply_mmr_dedup(&self, results: Vec<SearchResult>, final_k: usize, lambda: f32) -> Vec<SearchResult> {
+    if results.len() <= 1 || final_k == 0 {
+      return results.into_iter().take(final_k).collect();
+    }
+
+    let mut remaining: Vec<(usize, SearchResult)> = results.into_iter().enumerate().collect();
+    let mut selected: Vec<(usize, SearchResult)> = Vec::new();
+    let bounded_lambda = lambda.clamp(0.0, 1.0);
+
+    while !remaining.is_empty() && selected.len() < final_k {
+      let mut best_idx = 0usize;
+      let mut best_score = f32::MIN;
+
+      for (idx, (rank, candidate)) in remaining.iter().enumerate() {
+        let relevance = 1.0 / ((*rank + 1) as f32);
+        let max_similarity = selected
+          .iter()
+          .map(|(_, chosen)| Self::result_similarity(candidate, chosen))
+          .fold(0.0f32, f32::max);
+
+        let mmr_score = bounded_lambda * relevance - (1.0 - bounded_lambda) * max_similarity;
+
+        if mmr_score > best_score {
+          best_score = mmr_score;
+          best_idx = idx;
+        }
+      }
+
+      selected.push(remaining.swap_remove(best_idx));
+    }
+
+    selected.into_iter().map(|(_, r)| r).collect()
   }
   fn build_filtered_chunks_cte(
     &self,
@@ -417,7 +648,8 @@ combined AS (
     window_names: Option<Vec<&str>>,
     browser_urls: Option<Vec<&str>>,
     start_time: Option<DateTime<Utc>>,
-    end_time: Option<DateTime<Utc>>
+    end_time: Option<DateTime<Utc>>,
+    include_text_layout: bool
   ) {
     qb.push(
       r#"
@@ -425,7 +657,17 @@ filtered_chunks AS (
     SELECT
         c.id AS chunk_id,
         c.text_content,
-        c.text_json,
+"#
+    );
+
+    if include_text_layout {
+      qb.push("        c.text_json,\n");
+    } else {
+      qb.push("        '' AS text_json,\n");
+    }
+
+    qb.push(
+      r#"
         f.id AS frame_id,
         f.captured_at,
         f.app_name,
@@ -491,10 +733,15 @@ filtered_chunks AS (
     }
 
     if let (Some(start), Some(end)) = (start_time, end_time) {
+      // DB stores local time via datetime('now','localtime') — format as YYYY-MM-DD HH:MM:SS
+      let local_start = start.with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M:%S").to_string();
+      let local_end = end.with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M:%S").to_string();
       qb.push(" AND f.captured_at BETWEEN ");
-      qb.push_bind(start.to_rfc3339());
+      qb.push_bind(local_start);
       qb.push(" AND ");
-      qb.push_bind(end.to_rfc3339());
+      qb.push_bind(local_end);
     }
 
     qb.push(")");
@@ -515,18 +762,40 @@ filtered_chunks AS (
     _sort_field: Option<&str>,
     _sort_order: Option<&str>
   ) -> Result<Vec<SearchResult>, sqlx::Error> {
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("WITH ");
+    let requested_limit = limit.unwrap_or(40).clamp(1, 100);
+    let candidate_fetch_limit = (requested_limit * 3).clamp(30, 150);
+    let metadata_filter_count = Self::metadata_filter_count(
+      &app_names,
+      &window_names,
+      &browser_urls,
+      &start_time,
+      &end_time
+    );
 
-    let keywords_str = key_words
-      .as_ref()
-      .map(|k| {
-        k.iter()
-          .filter(|w| !w.trim().is_empty())
-          .map(|w| format!("\"{}\"*", w))
-          .collect::<Vec<_>>()
-          .join(" OR ")
-      })
-      .unwrap_or_default();
+    let rewritten_keywords = Self::rewrite_keywords(key_words);
+    let keywords_str = Self::build_keywords_match_query(&rewritten_keywords);
+    let has_keywords = !rewritten_keywords.is_empty();
+
+    let effective_search_type = match search_type {
+      SearchType::Vector if has_keywords => SearchType::Hybrid,
+      SearchType::Hybrid if !has_keywords => SearchType::Vector,
+      _ => *search_type,
+    };
+
+    if matches!(effective_search_type, SearchType::FTS) && !has_keywords {
+      if let Ok(mut state) = self.rerank_state.lock() {
+        *state = CrossEncoderDecision {
+          should_run: false,
+          candidate_pool: 0,
+          requested_limit: requested_limit as usize,
+          reason: "skip search: fts selected without keywords".to_string(),
+          decided_at: Utc::now(),
+        };
+      }
+      return Ok(Vec::new());
+    }
+
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("WITH ");
 
     self.build_filtered_chunks_cte(
       &mut qb,
@@ -534,28 +803,28 @@ filtered_chunks AS (
       window_names,
       browser_urls,
       start_time,
-      end_time
+      end_time,
+      include_text_layout
     );
 
-    match search_type {
+    match effective_search_type {
       SearchType::Vector => {
-        println!("Embeddinjson len {:?}", embedding_json.len());
         qb.push(",");
-        self.build_vector_cte(&mut qb, &embedding_json);
+        self.build_vector_cte(&mut qb, &embedding_json, candidate_fetch_limit);
 
-        self.build_vector_select(&mut qb, include_text_layout);
+        self.build_vector_select(&mut qb, include_text_layout, candidate_fetch_limit);
       }
 
       SearchType::FTS => {
         qb.push(",");
         self.build_fts_cte(&mut qb, &keywords_str);
 
-        self.build_fts_select(&mut qb);
+        self.build_fts_select(&mut qb, candidate_fetch_limit);
       }
 
       SearchType::Hybrid => {
         qb.push(",");
-        self.build_vector_cte(&mut qb, &embedding_json);
+        self.build_vector_cte(&mut qb, &embedding_json, candidate_fetch_limit);
 
         qb.push(",");
         self.build_fts_cte(&mut qb, &keywords_str);
@@ -563,16 +832,42 @@ filtered_chunks AS (
         qb.push(",");
         self.build_hybrid_merge(&mut qb);
 
-        self.build_final_select(&mut qb);
+        self.build_final_select(&mut qb, candidate_fetch_limit);
       }
     }
 
-    let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
+    let mut results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
 
-    Ok(results)
+    let decision = Self::build_cross_encoder_decision(
+      results.len(),
+      requested_limit as usize,
+      metadata_filter_count,
+      rewritten_keywords.len()
+    );
+
+    if let Ok(mut state) = self.rerank_state.lock() {
+      *state = decision.clone();
+    }
+
+    if decision.should_run && results.len() > decision.candidate_pool {
+      results.truncate(decision.candidate_pool);
+    }
+
+    let deduped = self.apply_mmr_dedup(results, requested_limit as usize, 0.75);
+
+    info!(
+      "Search strategy => effective_type={:?}, keywords={}, metadata_filters={}, rerank={}, reason={}",
+      effective_search_type,
+      rewritten_keywords.len(),
+      metadata_filter_count,
+      decision.should_run,
+      decision.reason
+    );
+
+    Ok(deduped)
   }
 
-  fn build_final_select(&self, qb: &mut QueryBuilder<Sqlite>) {
+  fn build_final_select(&self, qb: &mut QueryBuilder<Sqlite>, limit: i32) {
     qb.push(
       r#"
             SELECT
@@ -589,24 +884,25 @@ filtered_chunks AS (
             f.image_path,
 
             c.text_content,
-            c.text_json,
+            fc.text_json,
             c.id as chunk_id,
 
             (
-                (1 - semantic_score) * 0.7
-                + keyword_hit * 0.3
+              rrf_score * 0.85
                 + CASE WHEN f.is_focused = 1 THEN 0.3 ELSE 0 END
                 + (1.0 / (1 + (julianday('now') - julianday(f.captured_at)))) * 0.2
             ) as final_score
 
             FROM combined
             JOIN chunks c ON combined.id = c.id
+            JOIN filtered_chunks fc ON fc.chunk_id = c.id
             JOIN frames f ON c.frame_id = f.id
 
             ORDER BY final_score DESC
-            LIMIT 50
+      LIMIT
 "#
     );
+    qb.push_bind(limit);
   }
 
   pub async fn insert_into_frames(
@@ -751,196 +1047,9 @@ filtered_chunks AS (
     Ok(())
   }
 
-  pub async fn perform_search(&self, search: SearchQuery) -> Result<Vec<SearchResult>> {
-    let embedding_json = serde_json
-      ::to_string(&search.embedding)
-      .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?;
 
-    // Pro-tip: Let's also merge `entities` into the FTS keywords so you don't lose that valuable data!
-    let mut all_keywords = search.key_words.clone().unwrap_or_default();
-    if let Some(entities) = &search.entities {
-      all_keywords.extend(entities.clone());
-    }
-
-    let keywords_str = if all_keywords.is_empty() {
-      String::new()
-    } else {
-      all_keywords
-        .iter()
-        .filter(|w| !w.trim().is_empty())
-        .map(|w| format!("\"{}\"*", w))
-        .collect::<Vec<_>>()
-        .join(" OR ")
-    };
-
-    info!("Keyword str : {:#?}", keywords_str);
-
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
-      r#"
-WITH
-
-
--- 0️ Metadata Filtering FIRST
-filtered_chunks AS (
-    SELECT
-        c.id,
-        c.text_content,
-        f.*
-    FROM chunks c
-    JOIN frames f ON c.frame_id = f.id
-    WHERE 1=1
-"#
-    );
-
-    // 1️⃣ Metadata filter: App Name (Now an array of aliases)
-    if let Some(app_names) = &search.app_name {
-      if !app_names.is_empty() {
-        qb.push(" AND (");
-        let mut first = true;
-
-        for app in app_names {
-          if !first {
-            qb.push(" OR ");
-          }
-          first = false;
-
-          let term = format!("%{}%", app.to_lowercase());
-
-          // Check if this specific alias matches the app, window, or URL
-          qb.push("(");
-          qb.push("LOWER(f.app_name) LIKE ");
-          qb.push_bind(term.clone());
-
-          qb.push(" OR LOWER(f.window_title) LIKE ");
-          qb.push_bind(term.clone());
-
-          qb.push(" OR LOWER(f.browser_url) LIKE ");
-          qb.push_bind(term);
-          qb.push(")");
-        }
-        qb.push(") ");
-      }
-    }
-
-    // 2️⃣ Metadata filter: Window Title (Also an array)
-    if let Some(win_names) = &search.window_name {
-      if !win_names.is_empty() {
-        qb.push(" AND (");
-        let mut first = true;
-
-        for win in win_names {
-          if !first {
-            qb.push(" OR ");
-          }
-          first = false;
-
-          let term = format!("%{}%", win.to_lowercase());
-          qb.push("LOWER(f.window_title) LIKE ");
-          qb.push_bind(term);
-        }
-        qb.push(") ");
-      }
-    }
-    // Metadata filter: Time range
-    if let Some((start, end)) = search.time_range {
-      qb.push(" AND datetime(f.captured_at) BETWEEN datetime(");
-      qb.push_bind(start.to_rfc3339());
-      qb.push(") AND datetime(");
-      qb.push_bind(end.to_rfc3339());
-      qb.push(") ");
-    }
-
-    qb.push(
-      r#"
-),
-
-        -- 1️ Semantic Retrieval (ONLY on filtered chunks)
-        vector_matches AS (
-            SELECT
-                v.chunk_id as id,
-                vec_distance_cosine(v.embedding,
-        "#
-    );
-
-    qb.push_bind(embedding_json);
-
-    qb.push(
-      r#") as semantic_score
-    FROM vec_chunks v
-    JOIN filtered_chunks fc ON fc.id = v.chunk_id
-    ORDER BY semantic_score ASC
-    LIMIT 50
-),
-
-        -- 2️ Keyword Retrieval (ONLY filtered)
-        keyword_matches AS (
-        "#
-    );
-
-    if !keywords_str.is_empty() {
-      qb.push(
-        "SELECT rowid as id, 1.0 as keyword_hit FROM chunks_fts 
-                        WHERE chunks_fts MATCH "
-      );
-      qb.push_bind(keywords_str);
-      qb.push(" AND rowid IN (SELECT id FROM filtered_chunks)");
-    } else {
-      qb.push("SELECT NULL as id, 0.0 as keyword_hit WHERE 1=0");
-    }
-
-    qb.push(
-      r#"
-),
-
-combined AS (
-    SELECT id,
-           MIN(semantic_score) as semantic_score,
-           MAX(keyword_hit) as keyword_hit
-    FROM (
-        SELECT id, semantic_score, 0.0 as keyword_hit FROM vector_matches
-        UNION ALL
-        SELECT id, 0.5 as semantic_score, keyword_hit FROM keyword_matches
-    )
-    GROUP BY id
-)
-
-SELECT
-    f.id as frame_id,
-    f.captured_at,
-    f.app_name,
-    f.window_title,
-    f.is_focused,
-    f.browser_url,
-    f.window_x,
-    f.window_y,
-    f.window_width,
-    f.window_height,
-    f.image_path,
-    c.text_content,
-    c.id as chunk_id,
-
-    (
-        (1 - semantic_score) * 0.7
-        + keyword_hit * 0.3
-        + CASE WHEN f.is_focused = 1 THEN 0.3 ELSE 0 END
-        + (1.0 / (1 + (julianday('now') - julianday(f.captured_at)))) * 0.2
-    ) as final_score
-
-FROM combined
-JOIN chunks c ON combined.id = c.id
-JOIN frames f ON c.frame_id = f.id
-
-ORDER BY final_score DESC
-LIMIT 50
-"#
-    );
-
-    let results = qb.build_query_as::<SearchResult>().fetch_all(&self.pool).await?;
-
-    info!("Database results right into the db: {:#?}", results);
-
-    Ok(results)
-  }
+  
+  
   async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     debug!("Running database migrations");
 

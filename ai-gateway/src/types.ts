@@ -2,7 +2,7 @@ export type ProviderName = "openrouter" | "openai" | "anthropic" | "gemini";
 
 export type ChatRole = "system" | "user" | "assistant";
 
-export type GatewayRole = "planner" | "executor" | "final";
+export type GatewayRole = "router" | "planner" | "executor" | "query_builder" | "final";
 
 export type ChatMessage = {
   role: ChatRole;

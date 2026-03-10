@@ -32,8 +32,10 @@ const configSchema = z.object({
   }),
   providers: z.array(providerSchema),
   roles: z.object({
+    router: roleConfigSchema,
     planner: roleConfigSchema,
     executor: roleConfigSchema,
+    query_builder: roleConfigSchema,
     final: roleConfigSchema,
   }),
   limits: z.object({
@@ -119,6 +121,14 @@ export function loadConfig(): GatewayConfig {
     },
     providers,
     roles: {
+      router: {
+        defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL ?? "openai/gpt-4o-mini",
+        fallbackModels: (process.env.AI_GATEWAY_ROUTER_FALLBACKS ?? "anthropic/claude-3-haiku")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        maxOutputTokens: parseInt(process.env.AI_GATEWAY_ROUTER_MAX_OUTPUT_TOKENS ?? "4096", 10),
+      },
       planner: {
         defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL ?? "openai/gpt-4o-mini",
         fallbackModels: (process.env.AI_GATEWAY_PLANNER_FALLBACKS ?? "anthropic/claude-3-haiku")
@@ -134,6 +144,14 @@ export function loadConfig(): GatewayConfig {
           .map((value) => value.trim())
           .filter(Boolean),
         maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS ?? "65536", 10),
+      },
+      query_builder: {
+        defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL ?? "deepseek/deepseek-chat",
+        fallbackModels: (process.env.AI_GATEWAY_QUERY_BUILDER_FALLBACKS ?? "openai/gpt-4o-mini")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        maxOutputTokens: parseInt(process.env.AI_GATEWAY_QUERY_BUILDER_MAX_OUTPUT_TOKENS ?? "4096", 10),
       },
       final: {
         defaultModel: process.env.AI_GATEWAY_FINAL_MODEL ?? "openai/gpt-4o-mini",

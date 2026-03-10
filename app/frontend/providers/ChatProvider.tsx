@@ -489,12 +489,12 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     rewriteTargetId?: string,
     isRewrite: boolean = false
   ): Promise<void> => {
-    if (!isRunning) {
-      notify.error(
-        "Memento is offline. Please start the memento by clicking on floating widget or from settings."
-      );
-      return;
-    }
+    // if (!isRunning) {
+    //   notify.error(
+    //     "Memento is offline. Please start the memento by clicking on floating widget or from settings."
+    //   );
+    //   return;
+    // }
 
     if (activeRequestRef.current) {
       activeRequestRef.current.abort();

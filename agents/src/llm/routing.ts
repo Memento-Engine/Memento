@@ -2,7 +2,7 @@ import { getConfig } from "../config/config";
 import { AgentError, ErrorCode } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
 
-export type LlmRole = "planner" | "executor" | "final";
+export type LlmRole = "router" | "planner" | "executor" | "query_builder" | "final";
 
 type SpanAttributes = Record<string, string | number | boolean | undefined>;
 
@@ -146,12 +146,7 @@ export async function invokeRoleLlm({
 
         const result = (await gatewayResponse.json()) as GatewayResponse;
         const usage = extractTokenUsage(result);
-        callMetrics.prompt_tokens = usage.promptTokens;
-        callMetrics.completion_tokens = usage.completionTokens;
-        callMetrics.model_name = result.model ?? "ai-gateway";
-        callMetrics.retry_count = Math.max(0, (result.attempts ?? 1) - 1);
-
-
+        
         console.log("ai-gateway response", {
           model: result.model,
           content: result.content,
