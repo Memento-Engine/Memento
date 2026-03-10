@@ -12,10 +12,14 @@ use std::sync::{ Arc, Mutex };
 
 use image::codecs::jpeg::JpegEncoder;
 use image::ImageEncoder;
-use std::fs::File;
+use std::fs::{self, File};
 use std::path::Path;
 
 fn save_compressed_jpeg(img: &image::DynamicImage, path: &Path) -> Result<(), image::ImageError> {
+    if let Some(parent_dir) = path.parent() {
+        fs::create_dir_all(parent_dir).map_err(image::ImageError::IoError)?;
+    }
+
     let file = File::create(path).map_err(image::ImageError::IoError)?;
 
     let mut encoder = JpegEncoder::new_with_quality(file, 75);
@@ -140,10 +144,18 @@ pub async fn processing_ocr_results(
             let base_image_path = memories_dir();
             let current_timestamp = Utc::now().timestamp_millis();
 
+            if let Err(e) = fs::create_dir_all(&base_image_path) {
+                error!(
+                    "Failed to ensure memories directory exists ({}): {:?}",
+                    base_image_path.display(),
+                    e
+                );
+            }
+
             let image_name = format!(
                 "{}_{}_{}",
-                record.app_name,
-                sanitize(record.window_name.as_str()),
+                record.app_name.to_lowercase().trim().replace(" ", "_"),
+                sanitize(record.window_name.to_lowercase().trim().replace(" ", "_").as_str()),
                 current_timestamp
             );
 

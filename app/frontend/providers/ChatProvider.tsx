@@ -108,6 +108,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       browserUrl: data.browserUrl ?? data.browser_url ?? data.url ?? "",
       textContent: data.textContent ?? data.text_content ?? "",
       textJson: data.textJson ?? data.text_json ?? undefined,
+      normalizedTextLayout:
+        data.normalizedTextLayout ?? data.normalized_text_layout ?? undefined,
       imagePath: data.imagePath ?? data.image_path ?? "",
       frameId: data.frameId ?? data.frame_id,
       windowX: data.windowX ?? data.window_x,

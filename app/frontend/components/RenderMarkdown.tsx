@@ -127,13 +127,21 @@ function getCitationSummary(chunkIds: string[], sourceMap: Map<string, SourceRec
     .filter((value): value is string => !!value)
     .slice(0, 3);
 
+  const normalizedPreview = mappedSources
+    .map((entry) => entry.source?.normalizedTextLayout?.normalized_text?.trim())
+    .filter((value): value is string => !!value)
+    .slice(0, 2)
+    .join(" • ");
+
   return {
     primaryChunkId: primary.chunkId,
     label,
     title: primary.source?.windowTitle || appName,
     appName,
     capturedAt: primary.source?.capturedAt || "",
-    description: windowSamples.length > 0 ? windowSamples.join(" • ") : primary.source?.textContent || "",
+    description:
+      normalizedPreview ||
+      (windowSamples.length > 0 ? windowSamples.join(" • ") : primary.source?.textContent || ""),
   };
 }
 

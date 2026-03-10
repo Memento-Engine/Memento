@@ -1,6 +1,8 @@
 "use client";
 import { createContext } from "react";
 import { SourceRecord } from "@/components/types";
+import { z } from "zod";
+import { normalizedOcrLayoutSchema } from "@/components/types";
 
 export interface ReferenceMeta {
   captured_at: string;
@@ -20,6 +22,7 @@ export interface ReferenceMeta {
 
   image_path: string;
   text_json?: string;
+  normalized_text_layout?: z.infer<typeof normalizedOcrLayoutSchema>;
 }
 
 type ReferenceMetaContextType = {

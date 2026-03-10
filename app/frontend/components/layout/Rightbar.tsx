@@ -21,8 +21,9 @@ export default function RightSidebar() {
     captured_at: source.capturedAt,
     chunk_id: source.chunkId,
     image_path: source.imagePath,
-    text_content: source.textContent,
+    text_content: source.normalizedTextLayout?.normalized_text ?? source.textContent,
     text_json: source.textJson ?? undefined,
+    normalized_text_layout: source.normalizedTextLayout ?? undefined,
     window_height: source.windowHeight ?? 0,
     window_title: source.windowTitle,
     window_width: source.windowWidth ?? 0,
@@ -160,11 +161,11 @@ export default function RightSidebar() {
                   </div>
                 </Card>
 
-                {referenceMeta?.text_json && (
+                {referenceMeta?.normalized_text_layout && (
                   <Card className="p-3 border-none shadow-sm">
                     <p className="text-xs font-medium text-foreground mb-2">Layout JSON</p>
                     <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted p-2 text-[11px] text-muted-foreground">
-                      {referenceMeta.text_json}
+                      {JSON.stringify(referenceMeta.normalized_text_layout, null, 2)}
                     </pre>
                   </Card>
                 )}

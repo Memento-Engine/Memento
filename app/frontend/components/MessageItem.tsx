@@ -72,7 +72,7 @@ function MessageItem({
       for (const source of sources) {
         if (!sourceMap.has(source.chunkId)) {
           sourceMap.set(source.chunkId, source);
-        }
+        } 
       }
     }
   }
@@ -186,8 +186,9 @@ function MessageItem({
                 captured_at: source.capturedAt,
                 chunk_id: source.chunkId,
                 image_path: source.imagePath,
-                text_content: source.textContent,
+                text_content: source.normalizedTextLayout?.normalized_text ?? source.textContent,
                 text_json: source.textJson ?? undefined,
+                normalized_text_layout: source.normalizedTextLayout ?? undefined,
                 window_height: source.windowHeight ?? 0,
                 window_title: source.windowTitle,
                 window_width: source.windowWidth ?? 0,
@@ -265,8 +266,9 @@ function MessageItem({
               captured_at: source.capturedAt,
               chunk_id: source.chunkId,
               image_path: source.imagePath,
-              text_content: source.textContent,
+              text_content: source.normalizedTextLayout?.normalized_text ?? source.textContent,
               text_json: source.textJson ?? undefined,
+              normalized_text_layout: source.normalizedTextLayout ?? undefined,
               window_height: source.windowHeight ?? 0,
               window_title: source.windowTitle,
               window_width: source.windowWidth ?? 0,

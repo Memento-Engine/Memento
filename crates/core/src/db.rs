@@ -312,7 +312,7 @@ LIMIT 50
     );
   }
 
-  fn build_vector_select(&self, qb: &mut QueryBuilder<Sqlite>, include_text_layout: bool) {
+  fn build_vector_select(&self, qb: &mut QueryBuilder<Sqlite>, _include_text_layout: bool) {
     qb.push(
       r#"
         SELECT
@@ -323,11 +323,7 @@ LIMIT 50
         "#
     );
 
-    if include_text_layout {
-      qb.push("fc.text_json");
-    } else {
-      qb.push("'' AS text_json");
-    }
+    qb.push("fc.text_json");
 
     qb.push(
       r#",

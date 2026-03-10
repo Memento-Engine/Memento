@@ -8,15 +8,15 @@ mod llms;
 mod browser_utils;
 use std::sync::Arc;
 use crate::{
-    embedding::engine::{ CrossEncoder, EmbeddingModel },
-    ocr::engine::WindowsOcrEngine,
-    pipeline::{
-        capture::{ CaptureResult, continuous_capture },
-        monitor::get_primary_monitor_id,
-        processing_ocr_results::processing_ocr_results,
-    },
-    server::{ app_state::AppState, server::start_server },
-    ui_events::start_listener,
+  embedding::engine::{ CrossEncoder, EmbeddingModel },
+  ocr::engine::WindowsOcrEngine,
+  pipeline::{
+    capture::{ CaptureResult, continuous_capture },
+    monitor::get_primary_monitor_id,
+    processing_ocr_results::processing_ocr_results,
+  },
+  server::{ app_state::AppState, server::start_server },
+  ui_events::start_listener,
 };
 use app_core::{ config::database_dir, db::{ DatabaseManager, SearchQuery } };
 use chrono::{ DateTime, Utc };
@@ -30,17 +30,17 @@ use fs2::FileExt;
 use std::fs::OpenOptions;
 
 fn ensure_single_instance() {
-    let lock_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open("memento-daemon.lock")
-        .unwrap();
+  let lock_file = OpenOptions::new()
+    .read(true)
+    .write(true)
+    .create(true)
+    .open("memento-daemon.lock")
+    .unwrap();
 
-    if lock_file.try_lock_exclusive().is_err() {
-        println!("Another memento-daemon instance is already running");
-        std::process::exit(0);
-    }
+  if lock_file.try_lock_exclusive().is_err() {
+    println!("Another memento-daemon instance is already running");
+    std::process::exit(0);
+  }
 }
 
 // #[tokio::main]
@@ -203,134 +203,132 @@ fn ensure_single_instance() {
 
 #[tokio::main]
 async fn main() {
-    let _lock =  ensure_single_instance();
+  let _lock = ensure_single_instance();
 
-    use tracing_subscriber::EnvFilter;
-    // 1. Initialize tracing in debug mode
+  use tracing_subscriber::EnvFilter;
+  // 1. Initialize tracing in debug mode
 
-    // 1. Set up the file appender
-    let file_appender = tracing_appender::rolling::daily("logs", "daemon.log");
+  // 1. Set up the file appender
+  let file_appender = tracing_appender::rolling::daily("logs", "daemon.log");
 
-    // 2. Create an environment filter defaulting to "debug"
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+  // 2. Create an environment filter defaulting to "debug"
+  let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // 3. Initialize the subscriber with the filter
-    tracing_subscriber
-        ::fmt()
-        .with_env_filter(filter) // <-- This enables debug mode
-        .with_writer(file_appender)
-        .with_ansi(false) // Keep false for files so you don't get messy color codes
-        .init();
+  // 3. Initialize the subscriber with the filter
+  tracing_subscriber
+    ::fmt()
+    .with_env_filter(filter) // <-- This enables debug mode
+    .with_writer(file_appender)
+    .with_ansi(false) // Keep false for files so you don't get messy color codes
+    .init();
 
-    tracing::debug!("Debug mode is active!"); // This will now show up in your file
-    tracing::info!("Daemon Started.");
+  tracing::debug!("Debug mode is active!"); // This will now show up in your file
+  tracing::info!("Daemon Started.");
 
-    debug!("Tracing initialized in debug mode");
+  debug!("Tracing initialized in debug mode");
 
-    use tokio::sync::mpsc::channel;
+  use tokio::sync::mpsc::channel;
 
-    let interval = Duration::from_secs(1);
+  let interval = Duration::from_secs(1);
 
-    // 2. Initialize the engine before spawning the task.
-    // If this fails, the program returns an error and exits cleanly.
-    let ocr_engine = match WindowsOcrEngine::new() {
-        Ok(e) => {
-            debug!("Successfully initialized WindowsOcrEngine");
-            e
-        }
-        Err(e) => {
-            error!("Failed to initialize WindowsOcrEngine: {:#?}", e);
-            return;
-        }
-    };
-
-    let embedding_engine: Arc<std::sync::Mutex<EmbeddingModel>> = Arc::new(
-        std::sync::Mutex::new(match EmbeddingModel::new() {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to initialize the embedding Model : {:#?}", e);
-                return;
-            }
-        })
-    );
-
-    let db_path = database_dir();
-    let db_path_str = match db_path.to_str() {
-        Some(p) => p,
-        None => {
-            error!("Invalid database path (non-UTF8)");
-            return;
-        }
-    };
-    let db = Arc::new(
-        DatabaseManager::new(&db_path_str).await.unwrap_or_else(|e| {
-            error!("Failed to init database: {:#?}", e);
-            panic!("Database init failed");
-        })
-    );
-
-    let cross_encoder: Arc<std::sync::Mutex<CrossEncoder>> = Arc::new(
-        std::sync::Mutex::new(match CrossEncoder::new() {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to initialize the embedding Model : {:#?}", e);
-                return;
-            }
-        })
-    );
-
-    // App State
-    let app_db_clone = db.clone();
-    let app_state = Arc::new(AppState {
-        db: app_db_clone,
-        embeddingModel: embedding_engine.clone(),
-        crossEncoder: cross_encoder.clone(),
-    });
-
-    let app_clone = app_state.clone();
-
-    let windows_ocr_engine = Arc::new(ocr_engine);
-    // let (result_sender, mut result_receiver) = channel(512);
-
-    let monitor_id = match get_primary_monitor_id().await {
-        Ok(m) => {
-            debug!("Primary monitor ID found: {:?}", m);
-            m
-        }
-        Err(e) => {
-            error!("Failed to get primary monitor ID: {:#?}", e);
-            return;
-        }
-    };
-
-    info!("Starting continuous capture task...");
-
-    // 3. Spawn the task using an async block.
-    // The `move` keyword transfers ownership of `ocr_engine` into the task.
-    // tokio::spawn(async move {
-    //     let _ = continuous_capture(
-    //         result_sender,
-    //         interval,
-    //         windows_ocr_engine.clone(),
-    //         monitor_id
-    //     ).await;
-    // });
-
-    // // processing ocr results
-    // tokio::spawn(async move {
-    //     processing_ocr_results(result_receiver, embedding_engine, db).await;
-    // });
-    // // processing ocr results
-    // tokio::spawn(async move {
-    //     processing_ocr_results(result_receiver, embedding_engine, db).await;
-    // });
-
-    // Starting the server
-    start_server(app_clone).await;
-
-    info!("Watching Screen");
-    loop {
-        // Just makes daemon run continuesly
-        tokio::time::sleep(Duration::from_secs(2)).await;
+  // 2. Initialize the engine before spawning the task.
+  // If this fails, the program returns an error and exits cleanly.
+  let ocr_engine = match WindowsOcrEngine::new() {
+    Ok(e) => {
+      debug!("Successfully initialized WindowsOcrEngine");
+      e
     }
+    Err(e) => {
+      error!("Failed to initialize WindowsOcrEngine: {:#?}", e);
+      return;
+    }
+  };
+
+  let embedding_engine: Arc<std::sync::Mutex<EmbeddingModel>> = Arc::new(
+    std::sync::Mutex::new(match EmbeddingModel::new() {
+      Ok(m) => m,
+      Err(e) => {
+        error!("Failed to initialize the embedding Model : {:#?}", e);
+        return;
+      }
+    })
+  );
+
+  let db_path = database_dir();
+  let db_path_str = match db_path.to_str() {
+    Some(p) => p,
+    None => {
+      error!("Invalid database path (non-UTF8)");
+      return;
+    }
+  };
+  let db = Arc::new(
+    DatabaseManager::new(&db_path_str).await.unwrap_or_else(|e| {
+      error!("Failed to init database: {:#?}", e);
+      panic!("Database init failed");
+    })
+  );
+
+  let cross_encoder: Arc<std::sync::Mutex<CrossEncoder>> = Arc::new(
+    std::sync::Mutex::new(match CrossEncoder::new() {
+      Ok(m) => m,
+      Err(e) => {
+        error!("Failed to initialize the embedding Model : {:#?}", e);
+        return;
+      }
+    })
+  );
+
+  let (result_sender, mut result_receiver) = channel::<CaptureResult>(100);
+
+  // App State
+  let app_db_clone = db.clone();
+  let app_state = Arc::new(AppState {
+    db: app_db_clone,
+    embeddingModel: embedding_engine.clone(),
+    crossEncoder: cross_encoder.clone(),
+  });
+
+  let app_clone = app_state.clone();
+
+  let windows_ocr_engine = Arc::new(ocr_engine);
+  // let (result_sender, mut result_receiver) = channel(512);
+
+  let monitor_id = match get_primary_monitor_id().await {
+    Ok(m) => {
+      debug!("Primary monitor ID found: {:?}", m);
+      m
+    }
+    Err(e) => {
+      error!("Failed to get primary monitor ID: {:#?}", e);
+      return;
+    }
+  };
+
+  info!("Starting continuous capture task...");
+
+  // 3. Spawn the task using an async block.
+  // The `move` keyword transfers ownership of `ocr_engine` into the task.
+  tokio::spawn(async move {
+    let _ = continuous_capture(
+      result_sender,
+      interval,
+      windows_ocr_engine.clone(),
+      monitor_id
+    ).await;
+  });
+
+  // processing ocr results
+  tokio::spawn(async move {
+    processing_ocr_results(result_receiver, embedding_engine, db).await;
+  });
+
+  // Starting the server
+  start_server(app_clone).await;
+
+  info!("Watching Screen");
+  loop {
+    // Just makes daemon run continuesly
+    tokio::time::sleep(Duration::from_secs(2)).await;
+  }
 }

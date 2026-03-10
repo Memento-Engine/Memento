@@ -7,6 +7,7 @@ import { ExecutorError, ErrorCode } from "../types/errors";
 import { emitCompletion, emitStepEvent } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlm } from "../llm/routing";
+import { normalizeOcrLayout, NormalizedOcrLayout } from "../utils/ocrLayout";
 
 interface SearchRowLike {
   chunk_id?: number | string;
@@ -28,6 +29,7 @@ interface RetrievedSource {
   chunk_id: string;
   text_content: string;
   text_json?: string;
+  normalized_text_layout: NormalizedOcrLayout;
   app_name: string;
   window_title: string;
   browser_url: string;
@@ -72,6 +74,7 @@ function buildRetrievedSources(stepResults: Record<string, any> | undefined): Re
         chunk_id: chunkId,
         text_content: row.text_content ?? "",
         text_json: row.text_json,
+        normalized_text_layout: normalizeOcrLayout(row.text_content ?? "", row.text_json),
         app_name: row.app_name ?? "",
         window_title: row.window_title ?? "",
         browser_url: row.browser_url ?? "",
@@ -165,7 +168,10 @@ export async function finalAnswerNode(state: AgentStateType): Promise<AgentState
           browser_url: source.browser_url,
           ...(includeTextLayout
             ? {
-                text_json: trimText(source.text_json, 2000),
+                normalized_text_layout: trimText(
+                  JSON.stringify(source.normalized_text_layout),
+                  3000
+                ),
               }
             : {}),
         }));

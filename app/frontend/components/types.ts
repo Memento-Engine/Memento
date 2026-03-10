@@ -49,6 +49,21 @@ export const thinkingSchema = z.object({
 
 export type ThinkingStep = z.infer<typeof thinkingSchema>;
 
+export const normalizedOcrTokenSchema = z.object({
+  text: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  index: z.number(),
+});
+
+export const normalizedOcrLayoutSchema = z.object({
+  version: z.literal(1),
+  normalized_text: z.string(),
+  tokens: z.array(normalizedOcrTokenSchema),
+});
+
 export const sourceSchema = z.object({
   chunkId: z.string().min(1),
   appName: z.string().default(""),
@@ -57,6 +72,7 @@ export const sourceSchema = z.object({
   browserUrl: z.string().default(""),
   textContent: z.string().default(""),
   textJson: z.string().optional().nullable(),
+  normalizedTextLayout: normalizedOcrLayoutSchema.optional().nullable(),
   imagePath: z.string().default(""),
   frameId: z.number().optional(),
   windowX: z.number().optional(),
