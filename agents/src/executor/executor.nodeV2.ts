@@ -8,7 +8,12 @@ import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
 import { ErrorHandler, withTimeout } from "../utils/parser";
 import { getToolRegistry } from "../tools/registry";
-import { ExecutorError, ToolError, ErrorCode, AgentError } from "../types/errors";
+import {
+  ExecutorError,
+  ToolError,
+  ErrorCode,
+  AgentError,
+} from "../types/errors";
 import { ToolContext } from "../types/tools";
 import { emitStepEvent, emitError } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
@@ -43,15 +48,34 @@ Per reason step:
 function isEmptyResult(result: unknown): boolean {
   if (result === null || result === undefined) return true;
   if (Array.isArray(result)) return result.length === 0;
-  if (typeof result === "object") return Object.keys(result as object).length === 0;
+  if (typeof result === "object")
+    return Object.keys(result as object).length === 0;
   if (typeof result === "string") return result.trim().length === 0;
   return false;
+}
+
+type ThinkingSearchRow = {
+  app_name: string;
+  window_name: string;
+  image_path: string;
+  captured_at: string;
+};
+
+function toThinkingSearchResults(rows: unknown[]): ThinkingSearchRow[] {
+  return rows
+    .filter((row) => row && typeof row === "object")
+    .map((row: any) => ({
+      app_name: String(row.app_name ?? ""),
+      window_name: String(row.window_name ?? row.window_title ?? ""),
+      image_path: String(row.image_path ?? ""),
+      captured_at: String(row.captured_at ?? ""),
+    }));
 }
 
 function gatherDependencies(
   step: PlanStep,
   plan: Plan,
-  stepResults: Record<string, unknown>
+  stepResults: Record<string, unknown>,
 ): DependencyData[] {
   return step.dependsOn.map((depId) => {
     const depStep = plan.steps.find((s) => s.id === depId);
@@ -75,7 +99,7 @@ async function executeSearchStep(
   plan: Plan,
   stepResults: Record<string, unknown>,
   state: AgentStateType,
-  logger: any
+  logger: any,
 ): Promise<{ result: unknown; llmCallsUsed: number }> {
   const config = await getConfig();
   const toolRegistry = await getToolRegistry();
@@ -88,7 +112,7 @@ async function executeSearchStep(
     step,
     deps,
     state.goal,
-    state.requestId
+    state.requestId,
   );
 
   query.includeTextLayout = false; // default off, can be toggled
@@ -110,13 +134,17 @@ async function executeSearchStep(
   let toolResult = await withTimeout(
     searchTool.execute(query as any, toolContext),
     config.agent.stepTimeoutMs,
-    `Search tool timeout (${config.agent.stepTimeoutMs}ms)`
+    `Search tool timeout (${config.agent.stepTimeoutMs}ms)`,
   );
 
   let dbResults = toolResult.success ? (toolResult.data ?? []) : [];
 
   // 3. Retry with relaxed query if empty
-  if (toolResult.success && Array.isArray(dbResults) && dbResults.length === 0) {
+  if (
+    toolResult.success &&
+    Array.isArray(dbResults) &&
+    dbResults.length === 0
+  ) {
     logger.warn("Search returned empty — retrying with relaxed query", {
       stepId: step.id,
     });
@@ -134,10 +162,14 @@ async function executeSearchStep(
         attemptNumber: 2,
       }),
       config.agent.stepTimeoutMs,
-      `Search tool retry timeout`
+      `Search tool retry timeout`,
     );
 
-    if (retryResult.success && Array.isArray(retryResult.data) && retryResult.data.length > 0) {
+    if (
+      retryResult.success &&
+      Array.isArray(retryResult.data) &&
+      retryResult.data.length > 0
+    ) {
       dbResults = retryResult.data;
       logger.info("Relaxed retry succeeded", {
         stepId: step.id,
@@ -159,12 +191,8 @@ async function executeSearchStep(
   });
 
   // 4. Extract expected output
-  const { data: extracted, llmCallsUsed: extractorCalls } = await extractStepOutput(
-    step,
-    dbResults,
-    deps,
-    state.requestId
-  );
+  const { data: extracted, llmCallsUsed: extractorCalls } =
+    await extractStepOutput(step, dbResults, deps, state.requestId);
 
   return {
     result: extracted,
@@ -179,7 +207,7 @@ async function executeReasonStep(
   plan: Plan,
   stepResults: Record<string, unknown>,
   state: AgentStateType,
-  logger: any
+  logger: any,
 ): Promise<{ result: unknown; llmCallsUsed: number }> {
   return runWithSpan(
     "agent.executor.reason_step",
@@ -194,7 +222,8 @@ async function executeReasonStep(
         deps.length > 0
           ? deps
               .map(
-                (d) => `- ${d.variableName} (from ${d.stepId}): ${JSON.stringify(d.data, null, 2)}`
+                (d) =>
+                  `- ${d.variableName} (from ${d.stepId}): ${JSON.stringify(d.data, null, 2)}`,
               )
               .join("\n")
           : "(none)";
@@ -216,7 +245,9 @@ async function executeReasonStep(
         spanAttributes: { step_id: step.id },
       });
 
-      const parsed = await SafeJsonParser.parseContent(llmResult.response.content);
+      const parsed = await SafeJsonParser.parseContent(
+        llmResult.response.content,
+      );
 
       logger.info("Reasoning step complete", {
         stepId: step.id,
@@ -224,13 +255,15 @@ async function executeReasonStep(
       });
 
       return { result: parsed, llmCallsUsed: 1 };
-    }
+    },
   );
 }
 
 // ── Main Executor Node ───────────────────────────────────
 
-export async function executorNodeV2(state: AgentStateType): Promise<AgentStateType> {
+export async function executorNodeV2(
+  state: AgentStateType,
+): Promise<AgentStateType> {
   return runWithSpan(
     "agent.node.executor",
     {
@@ -254,8 +287,12 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
       }
 
       const config = await getConfig();
-      const stepResults: Record<string, unknown> = { ...(state.stepResults ?? {}) };
-      const stepErrors: Record<string, string> = { ...(state.stepErrors ?? {}) };
+      const stepResults: Record<string, unknown> = {
+        ...(state.stepResults ?? {}),
+      };
+      const stepErrors: Record<string, string> = {
+        ...(state.stepErrors ?? {}),
+      };
       let llmCalls = state.llmCalls ?? 0;
       const maxLlmCalls = config.agent.maxLlmCalls;
       const maxRuntimeMs = config.agent.maxRuntimeMs;
@@ -283,10 +320,13 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
           }
 
           if (llmCalls >= maxLlmCalls) {
-            logger.warn("LLM call budget exceeded — returning partial results", {
-              maxLlmCalls,
-              llmCalls,
-            });
+            logger.warn(
+              "LLM call budget exceeded — returning partial results",
+              {
+                maxLlmCalls,
+                llmCalls,
+              },
+            );
             break;
           }
 
@@ -312,20 +352,25 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
               // Verify dependencies are resolved
               for (const dep of step.dependsOn) {
                 if (!(dep in stepResults)) {
-                  throw new ExecutorError(`Step "${step.id}" dependency not resolved: "${dep}"`, {
-                    stepId: step.id,
-                    missingDependency: dep,
-                  });
+                  throw new ExecutorError(
+                    `Step "${step.id}" dependency not resolved: "${dep}"`,
+                    {
+                      stepId: step.id,
+                      missingDependency: dep,
+                    },
+                  );
                 }
               }
 
               emitStepEvent(
                 step.id,
                 step.kind === "search" ? "searching" : "reasoning",
-                step.kind === "search" ? "Searching your memories" : "Evaluating information",
+                step.kind === "search"
+                  ? "Searching your memories"
+                  : "Evaluating information",
                 "running",
                 state.requestId,
-                { description: step.intent }
+                { description: step.intent },
               );
 
               try {
@@ -337,7 +382,7 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                     plan,
                     stepResults,
                     state,
-                    logger
+                    logger,
                   );
                 } else {
                   // reason step
@@ -346,7 +391,7 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                     plan,
                     stepResults,
                     state,
-                    logger
+                    logger,
                   );
                 }
 
@@ -356,20 +401,25 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                 const resultEmpty = isEmptyResult(stepResult.result);
 
                 if (step.kind === "search") {
-                  const rows = Array.isArray(stepResult.result) ? stepResult.result : [];
+                  const rows = Array.isArray(stepResult.result)
+                    ? stepResult.result
+                    : [];
+                  const thinkingResults = toThinkingSearchResults(rows);
                   emitStepEvent(
                     step.id,
                     "searching",
-                    resultEmpty ? "No results found" : `Found ${rows.length} results`,
+                    resultEmpty
+                      ? "No results found"
+                      : `Found ${thinkingResults.length} results`,
                     "completed",
                     state.requestId,
                     {
                       description: resultEmpty
                         ? "No matching records"
-                        : `Found ${rows.length} relevant result(s)`,
-                      results: rows,
-                      resultCount: rows.length,
-                    }
+                        : `Found ${thinkingResults.length} relevant result(s)`,
+                      results: thinkingResults,
+                      resultCount: thinkingResults.length,
+                    },
                   );
                 } else {
                   emitStepEvent(
@@ -378,7 +428,7 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                     "Evaluation complete",
                     "completed",
                     state.requestId,
-                    { description: "Verified relevant details" }
+                    { description: "Verified relevant details" },
                   );
                 }
 
@@ -404,10 +454,14 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                   "Trying again",
                   "failed",
                   state.requestId,
-                  { description: "Checking additional sources" }
+                  { description: "Checking additional sources" },
                 );
 
-                return { stepId: step.id, success: false as const, error: errMsg };
+                return {
+                  stepId: step.id,
+                  success: false as const,
+                  error: errMsg,
+                };
               }
             });
 
@@ -417,21 +471,30 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
             for (const settled of results) {
               if (settled.status === "rejected") {
                 const failMsg =
-                  settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+                  settled.reason instanceof Error
+                    ? settled.reason.message
+                    : String(settled.reason);
                 logger.error("Step promise rejected", undefined, {
                   error: failMsg,
                 });
               } else if (!settled.value.success) {
                 const failedId = settled.value.stepId;
-                const hasDependents = plan.steps.some((s) => s.dependsOn.includes(failedId));
+                const hasDependents = plan.steps.some((s) =>
+                  s.dependsOn.includes(failedId),
+                );
 
                 if (hasDependents) {
-                  logger.warn("Critical step failed — triggering replan", { stepId: failedId });
+                  logger.warn("Critical step failed — triggering replan", {
+                    stepId: failedId,
+                  });
 
                   return {
                     ...state,
                     stepResults,
-                    stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
+                    stepErrors:
+                      Object.keys(stepErrors).length > 0
+                        ? stepErrors
+                        : undefined,
                     shouldReplan: true,
                     lastFailedStepId: failedId,
                     failureReason: `Step "${failedId}" failed: ${settled.value.error}`,
@@ -445,7 +508,7 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
 
         // Check if any search returned data
         const hasAnyResults = Object.values(stepResults).some(
-          (r) => r && (!Array.isArray(r) || r.length > 0)
+          (r) => r && (!Array.isArray(r) || r.length > 0),
         );
 
         const durationMs = Date.now() - startMs;
@@ -459,20 +522,30 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
         return {
           ...state,
           stepResults: stepResults as Record<string, any>,
-          stepErrors: Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
+          stepErrors:
+            Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
           currentStep: plan.steps.length,
           hasSearchResults: hasAnyResults,
           llmCalls,
         };
       } catch (error) {
-        const agentError = ErrorHandler.toAgentError(error, ErrorCode.EXECUTOR_FAILED, {
-          completedSteps: Object.keys(stepResults).length,
-          totalSteps: plan.steps.length,
-        });
+        if (error instanceof ToolError) {
+          logger.error("Tool error during execution", error);
+          throw error; // rethrow known tool errors for specific handling
+        }
 
-        logger.error("Executor node failed", error);
+        const agentError = ErrorHandler.toAgentError(
+          error,
+          ErrorCode.EXECUTOR_FAILED,
+          {
+            completedSteps: Object.keys(stepResults).length,
+            totalSteps: plan.steps.length,
+          },
+        );
+
+        logger.error("Executor node failed", agentError);
         throw agentError;
       }
-    }
+    },
   );
 }

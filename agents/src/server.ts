@@ -302,34 +302,11 @@ async function startServer() {
             );
           }
 
-          // Stream final text in chunks for progressive rendering
-          if (result?.finalResult) {
-            const finalText = result.finalResult;
-            // Split into chunks of ~50 characters for smooth streaming
-            const chunkSize = 50;
-
-            for (let i = 0; i < finalText.length; i += chunkSize) {
-              const chunk = finalText.slice(i, i + chunkSize);
-              res.write(
-                JSON.stringify({
-                  type: "text",
-                  data: {
-                    chunk: chunk,
-                    isComplete: false,
-                    timestamp: formatLocalTimestamp(),
-                  },
-                  timestamp: formatLocalTimestamp(),
-                }) + "\n",
-              );
-            }
-          }
-
           res.write(
             JSON.stringify({
               type: "complete",
               data: {
                 success: true,
-                result: result?.finalResult,
                 metadata: {
                   requestId,
                   duration,

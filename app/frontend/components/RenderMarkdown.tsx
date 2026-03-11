@@ -124,6 +124,7 @@ function getCitationSummary(chunkIds: string[], sourceMap: Map<string, SourceRec
       entry.source?.textContent ||
       "",
     capturedAt: entry.source?.capturedAt || "",
+    browserUrl: entry.source?.browserUrl || "",
   }));
 
   if (!primary) {

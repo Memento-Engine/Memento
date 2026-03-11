@@ -39,4 +39,4 @@ tracing = "0.1.44"
 image = "0.25.9"
 lazy_static = "1.5.0"
 winreg = "0.55.0"
-windows-icons = "0.4.0"
+windows-icons = { git = "https://github.com/tribhuwan-kumar/windows-icons.git" }

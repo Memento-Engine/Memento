@@ -1,51 +1,5 @@
 {
-  "name": "search-engine",
-  "version": "1.0.0",
-  "description": "Advanced search engine with agent-based query processing",
-  "private": true,
-  "workspaces": [
-    "agents",
-    "ai-gateway",
-    "app"
-  ],
-  "scripts": {
-    "dev": "concurrently \"npm --prefix ai-gateway run dev\" \"npm --prefix agents run dev:agent\"",
-    "dev:agents": "npm --prefix agents run dev:agent",
-    "dev:gateway": "npm --prefix ai-gateway run dev",
-    "typecheck:gateway": "npm --prefix ai-gateway run typecheck",
-    "build": "cargo build --all && npm --prefix app run build",
-    "test": "cargo test --all && npm --prefix agents test && npm --prefix app test",
-    "format": "cargo fmt --all && npx prettier --write . --ignore-path .gitignore",
-    "lint": "cargo clippy --all -- -D warnings && npx eslint agents/src --fix && npx eslint app --fix",
-    "hooks:install": "lefthook install",
-    "hooks:run": "lefthook run pre-commit && lefthook run pre-push",
-    "hooks:status": "lefthook status",
-    "hooks:uninstall": "lefthook uninstall"
-  },
-  "devDependencies": {
-    "@evilmartians/lefthook": "^1.13.6",
-    "@typescript-eslint/eslint-plugin": "^8.56.1",
-    "@typescript-eslint/parser": "^8.56.1",
-    "eslint": "^8.50.0",
-    "prettier": "^3.0.0",
-    "typescript": "^5.9.3"
-  },
-  "prettier": {
-    "semi": true,
-    "singleQuote": false,
-    "trailingComma": "es5",
-    "tabWidth": 2,
-    "useTabs": false,
-    "arrowParens": "always",
-    "printWidth": 100
-  },
-  "eslintConfig": {
-    "extends": [
-      "eslint:recommended"
-    ],
-    "parserOptions": {
-      "ecmaVersion": 2020,
-      "sourceType": "module"
-    }
+  "dependencies": {
+    "picomatch": "^4.0.3"
   }
 }

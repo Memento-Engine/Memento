@@ -2,7 +2,13 @@
 
 import { extractFilesFromPrompt, FileMetadata } from "@/lib/fileMetadata";
 import type { ChatStatus } from "ai";
-import { Paperclip, RefreshCwIcon, Share2, ThumbsDown, ThumbsUp } from "lucide-react";
+import {
+  Paperclip,
+  RefreshCwIcon,
+  Share2,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -41,6 +47,7 @@ import ThinkingBubble from "./ThinkingBubble";
 import ImageSearchGrid from "./ImageSearchGrid";
 import useReferenceContext from "@/hooks/useReferenceContext";
 import { notify } from "@/lib/notify";
+import SourcesButton from "./SourcesButton";
 
 function MessageItem({
   message,
@@ -76,15 +83,16 @@ function MessageItem({
       }
     }
   }
-
   const sourceList = Array.from(sourceMap.values());
+
 
   // Extract file metadata from message text (for user messages with attachments)
   const attachedFiles = useMemo(() => {
     if (message.role !== "user") return [];
 
     const textParts = message.parts.filter(
-      (part): part is { type: "text"; text: string } => part.type === CONTENT_TYPE.TEXT
+      (part): part is { type: "text"; text: string } =>
+        part.type === CONTENT_TYPE.TEXT,
     );
 
     if (textParts.length === 0) return [];
@@ -96,7 +104,10 @@ function MessageItem({
   // Get full text content for copy button
   const getFullTextContent = useCallback(() => {
     return message.parts
-      .filter((part): part is { type: "text"; text: string } => part.type === CONTENT_TYPE.TEXT)
+      .filter(
+        (part): part is { type: "text"; text: string } =>
+          part.type === CONTENT_TYPE.TEXT,
+      )
       .map((part) => part.text)
       .join("\n");
   }, [message.parts]);
@@ -105,7 +116,7 @@ function MessageItem({
     (newText: string) => {
       onEdit?.(message.id, newText);
     },
-    [onEdit, message.id]
+    [onEdit, message.id],
   );
 
   const handleShare = useCallback(async () => {
@@ -128,7 +139,10 @@ function MessageItem({
     }
   }, [getFullTextContent]);
 
-  const renderTextPart = (part: { type: "text"; text: string }, partIndex: number) => {
+  const renderTextPart = (
+    part: { type: "text"; text: string },
+    partIndex: number,
+  ) => {
     if (!part.text || part.text.trim() === "") {
       return null;
     }
@@ -136,9 +150,15 @@ function MessageItem({
 
     // For user messages, extract and clean the text from file metadata
     const displayText =
-      message.role === "user" ? extractFilesFromPrompt(part.text).cleanPrompt : part.text;
+      message.role === "user"
+        ? extractFilesFromPrompt(part.text).cleanPrompt
+        : part.text;
 
-    if (!displayText.trim() && message.role === "user" && attachedFiles.length === 0) {
+    if (
+      !displayText.trim() &&
+      message.role === "user" &&
+      attachedFiles.length === 0
+    ) {
       return null;
     }
 
@@ -158,14 +178,18 @@ function MessageItem({
                       <Paperclip size={14} className="text-muted-foreground" />
                       <span className="font-medium">{file.name}</span>
                       {file.injectionMode && (
-                        <span className="text-muted-foreground">({file.injectionMode})</span>
+                        <span className="text-muted-foreground">
+                          ({file.injectionMode})
+                        </span>
                       )}
                     </div>
                   ))}
                 </div>
               )}
               {displayText && (
-                <div className="select-text text-sm whitespace-pre-wrap">{displayText}</div>
+                <div className="select-text text-sm whitespace-pre-wrap">
+                  {displayText}
+                </div>
               )}
             </div>
           </div>
@@ -186,9 +210,12 @@ function MessageItem({
                 captured_at: source.capturedAt,
                 chunk_id: source.chunkId,
                 image_path: source.imagePath,
-                text_content: source.normalizedTextLayout?.normalized_text ?? source.textContent,
+                text_content:
+                  source.normalizedTextLayout?.normalized_text ??
+                  source.textContent,
                 text_json: source.textJson ?? undefined,
-                normalized_text_layout: source.normalizedTextLayout ?? undefined,
+                normalized_text_layout:
+                  source.normalizedTextLayout ?? undefined,
                 window_height: source.windowHeight ?? 0,
                 window_title: source.windowTitle,
                 window_width: source.windowWidth ?? 0,
@@ -204,7 +231,9 @@ function MessageItem({
 
   const renderStepThinking = (): React.ReactElement => {
     if (message.role === "assistant" && isLastMessage) {
-      const steps = message.parts.filter((p) => p.type === "data-thinking").map((p) => p.data);
+      const steps = message.parts
+        .filter((p) => p.type === "data-thinking")
+        .map((p) => p.data);
       return <StepThinking steps={steps} />;
     }
     if (isLastMessage) {
@@ -224,10 +253,12 @@ function MessageItem({
           return (
             <div className="flex items-center gap-2 mt-4 p-3 rounded-md bg-destructive/10 border border-destructive/20">
               <div className="flex-1">
-                <p className="text-sm text-destructive font-medium">Something went wrong</p>
+                <p className="text-sm text-destructive font-medium">
+                  Something went wrong
+                </p>
                 <p className="text-xs text-destructive/70 mt-1">
-                  An error occurred while processing your request. Please check your connection and
-                  try again.
+                  An error occurred while processing your request. Please check
+                  your connection and try again.
                 </p>
               </div>
               {onRegenerate && (
@@ -256,7 +287,11 @@ function MessageItem({
   };
 
   const renderImageGrid = (): React.ReactElement => {
-    if (message.role === "assistant" && includeImages && sourceList.length > 0) {
+    if (
+      message.role === "assistant" &&
+      includeImages &&
+      sourceList.length > 0
+    ) {
       return (
         <ImageSearchGrid
           sources={sourceList}
@@ -268,7 +303,9 @@ function MessageItem({
               captured_at: source.capturedAt,
               chunk_id: source.chunkId,
               image_path: source.imagePath,
-              text_content: source.normalizedTextLayout?.normalized_text ?? source.textContent,
+              text_content:
+                source.normalizedTextLayout?.normalized_text ??
+                source.textContent,
               text_json: source.textJson ?? undefined,
               normalized_text_layout: source.normalizedTextLayout ?? undefined,
               window_height: source.windowHeight ?? 0,
@@ -322,7 +359,9 @@ function MessageItem({
         {/* Message actions for assistant messages (non-tool) */}
         {message.role === "assistant" && (
           <div className="flex items-center gap-2 text-muted-foreground text-xs mt-2">
-            <div className={cn("flex items-center gap-1", isStreaming && "hidden")}>
+            <div
+              className={cn("flex items-center gap-1", isStreaming && "hidden")}
+            >
               <CopyButton text={getFullTextContent()} />
 
               {!isStreaming && onRegenerate && (
@@ -349,31 +388,32 @@ function MessageItem({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={() => setFeedback(feedback === "dislike" ? null : "dislike")}
+                onClick={() =>
+                  setFeedback(feedback === "dislike" ? null : "dislike")
+                }
                 title="Dislike"
                 className={cn(feedback === "dislike" && "text-primary")}
               >
                 <ThumbsDown size={16} />
               </Button>
 
-              <Button variant="ghost" size="icon-xs" onClick={handleShare} title="Share">
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={handleShare}
+                title="Share"
+              >
                 <Share2 size={16} />
               </Button>
             </div>
 
-            {sourceList.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => {
-                  setReferenceMeta(undefined);
-                  setSourceList(sourceList);
-                }}
-              >
-                Sources ({sourceList.length})
-              </Button>
-            )}
+            <SourcesButton
+              sourceList={sourceList}
+              setReferenceMeta={setReferenceMeta}
+              setSourceList={(sources) =>
+                setSourceList(sources as SourceRecord[])
+              }
+            />
           </div>
         )}
       </div>

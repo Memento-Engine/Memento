@@ -1,6 +1,7 @@
 "use client";
 
 import { getBaseUrl } from "@/api/base";
+import { MOCK_MESSAGES } from "@/mock";
 import {
   MementoUIMessage,
   sourceSchema,
@@ -636,9 +637,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     }
   };
 
-  useEffect((): void => {
-    console.log("Assistant status changed to:", assistantStatus);
-  }, [assistantStatus]);
+ 
 
   return (
     <ChatContext.Provider

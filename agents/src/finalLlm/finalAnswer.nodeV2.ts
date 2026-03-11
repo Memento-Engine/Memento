@@ -4,7 +4,11 @@ import { finalAnswerPrompt } from "../prompts/finalResultPrompt";
 import { ErrorHandler } from "../utils/parser";
 import { getConfig } from "../config/config";
 import { ExecutorError, ErrorCode } from "../types/errors";
-import { emitCompletion, emitStepEvent, emitTextChunk } from "../utils/eventQueue";
+import {
+  emitCompletion,
+  emitStepEvent,
+  emitTextChunk,
+} from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlmStreaming } from "../llm/routing";
 import { normalizeOcrLayout, NormalizedOcrLayout } from "../utils/ocrLayout";
@@ -52,7 +56,9 @@ interface RetrievedSource {
   window_height?: number;
 }
 
-function normalizeChunkId(rawId: number | string | undefined): string | undefined {
+function normalizeChunkId(
+  rawId: number | string | undefined,
+): string | undefined {
   if (rawId === null || rawId === undefined) return undefined;
   const s = String(rawId).trim();
   if (!s) return undefined;
@@ -64,14 +70,18 @@ function trimText(value: string | undefined, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars)}…`;
 }
 
-function flattenSearchRows(stepResults: Record<string, any> | undefined): SearchRowLike[] {
+function flattenSearchRows(
+  stepResults: Record<string, any> | undefined,
+): SearchRowLike[] {
   if (!stepResults) return [];
   return Object.values(stepResults)
     .flatMap((val) => (Array.isArray(val) ? val : []))
     .filter((row) => row && typeof row === "object" && "chunk_id" in row);
 }
 
-function buildRetrievedSources(stepResults: Record<string, any> | undefined): RetrievedSource[] {
+function buildRetrievedSources(
+  stepResults: Record<string, any> | undefined,
+): RetrievedSource[] {
   const byChunk = new Map<string, RetrievedSource>();
   for (const row of flattenSearchRows(stepResults)) {
     const chunkId = normalizeChunkId(row.chunk_id);
@@ -80,7 +90,10 @@ function buildRetrievedSources(stepResults: Record<string, any> | undefined): Re
       chunk_id: chunkId,
       text_content: row.text_content ?? "",
       text_json: row.text_json,
-      normalized_text_layout: normalizeOcrLayout(row.text_content ?? "", row.text_json),
+      normalized_text_layout: normalizeOcrLayout(
+        row.text_content ?? "",
+        row.text_json,
+      ),
       app_name: row.app_name ?? "",
       window_title: row.window_title ?? "",
       browser_url: row.browser_url ?? "",
@@ -96,7 +109,9 @@ function buildRetrievedSources(stepResults: Record<string, any> | undefined): Re
   return Array.from(byChunk.values());
 }
 
-export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentStateType> {
+export async function finalAnswerNodeV2(
+  state: AgentStateType,
+): Promise<AgentStateType> {
   return runWithSpan(
     "agent.node.final_answer",
     { request_id: state.requestId, node: "finalAnswer" },
@@ -128,7 +143,11 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
       }
 
       // ── No results ────────────────────────────────────────
-      if (!hasSearchResults || !stepResults || Object.keys(stepResults).length === 0) {
+      if (
+        !hasSearchResults ||
+        !stepResults ||
+        Object.keys(stepResults).length === 0
+      ) {
         const noMsg = state.noResultsFound
           ? `I was unable to find any relevant information for your request: "${goal}". The system performed multiple search attempts but did not return any matching results.`
           : `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
@@ -169,7 +188,7 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
           "Preparing your answer",
           "running",
           state.requestId,
-          { description: "Organizing the results" }
+          { description: "Organizing the results" },
         );
 
         // Use streaming LLM call for final answer - emit text chunks as they arrive
@@ -192,7 +211,9 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
           finalResult = content.trim();
         } else if (Array.isArray(content)) {
           finalResult = content
-            .map((item: any) => (typeof item === "string" ? item : (item?.text ?? "")))
+            .map((item: any) =>
+              typeof item === "string" ? item : (item?.text ?? ""),
+            )
             .join("")
             .trim();
         } else {
@@ -210,12 +231,20 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
           durationMs,
         });
 
-        emitStepEvent("finalize_0", "completion", "Answer ready", "completed", state.requestId, {
-          description: "Summarized the findings",
-          duration: Math.round(((Date.now() - (state.startTime ?? Date.now())) / 1000) * 10) / 10,
-        });
-
-        emitCompletion(finalResult, state.requestId);
+        emitStepEvent(
+          "finalize_0",
+          "completion",
+          "Answer ready",
+          "completed",
+          state.requestId,
+          {
+            description: "Summarized the findings",
+            duration:
+              Math.round(
+                ((Date.now() - (state.startTime ?? Date.now())) / 1000) * 10,
+              ) / 10,
+          },
+        );
 
         return {
           ...state,
@@ -225,10 +254,14 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
           llmCalls: (state.llmCalls ?? 0) + 1,
         };
       } catch (error) {
-        const agentError = ErrorHandler.toAgentError(error, ErrorCode.EXECUTOR_FAILED, {
-          node: "finalAnswer",
-          goal,
-        });
+        const agentError = ErrorHandler.toAgentError(
+          error,
+          ErrorCode.EXECUTOR_FAILED,
+          {
+            node: "finalAnswer",
+            goal,
+          },
+        );
 
         logger.error("Final answer node failed", error);
 
@@ -237,6 +270,6 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
 
         throw agentError;
       }
-    }
+    },
   );
 }

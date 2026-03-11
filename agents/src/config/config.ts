@@ -70,9 +70,8 @@ export async function readDaemonPort(): Promise<number> {
  * Throws if required configuration is missing or invalid.
  */
 export async function loadConfig(): Promise<Config> {
-  const daemonPort = await readDaemonPort().catch(() => {
-    return 50713;
-  });
+  const daemonPort = await readDaemonPort();
+  console.log("Daemon port", daemonPort);
   const config = {
     server: {
       port: parseInt(process.env.SERVER_PORT ?? "4173", 10),

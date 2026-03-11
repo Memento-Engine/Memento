@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   HoverCard,
@@ -8,8 +8,13 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 
-import { Link2Icon, ChevronUp, ChevronDown } from "lucide-react";
+import { Link2Icon, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn, renderDate } from "@/lib/utils";
+import {
+  useAppIcon,
+  PLACEHOLDER_ICON,
+  normalizeAppName,
+} from "@/hooks/useAppIcon";
 
 interface SourceItem {
   chunkId: string;
@@ -17,6 +22,7 @@ interface SourceItem {
   appName?: string;
   description?: string;
   capturedAt?: string;
+  browserUrl?: string;
 }
 
 interface SourceBadgeProps {
@@ -41,9 +47,14 @@ export function SourceBadge({
   onClick,
 }: SourceBadgeProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
-
   const totalSources = sources?.length ?? 1;
-  const hasMultipleSources = totalSources > 1;
+
+  useEffect(() => {
+    setCurrentIndex((prev) => {
+      if (totalSources <= 0) return 0;
+      return Math.min(prev, totalSources - 1);
+    });
+  }, [totalSources]);
 
   const currentSource = sources?.[currentIndex] ?? {
     chunkId: id,
@@ -51,7 +62,27 @@ export function SourceBadge({
     appName,
     description,
     capturedAt,
+    browserUrl: "",
   };
+
+  const normalizedAppName = normalizeAppName(currentSource.appName);
+  let domain: string | null = null;
+  try {
+    domain = currentSource.browserUrl
+      ? new URL(currentSource.browserUrl).hostname
+      : null;
+  } catch {
+    domain = null;
+  }
+
+  const priorityName = domain ? domain : normalizedAppName || "Unknown App";
+
+  const { src: iconSrc, loading: iconLoading } = useAppIcon(
+    currentSource.appName,
+    currentSource.browserUrl,
+  );
+
+  const hasMultipleSources = totalSources > 1;
 
   const handlePrev = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -71,73 +102,89 @@ export function SourceBadge({
           onClick={() => onClick?.(currentSource.chunkId)}
           className={cn(
             "ml-1 cursor-pointer select-none",
-            "inline-flex items-center gap-1",
-            "hover:bg-muted transition-colors"
+            "inline-flex items-center gap-1.5 px-2 py-0.5",
+            "hover:bg-muted/80 transition-colors",
           )}
         >
-          <Link2Icon className="h-3 w-3" />
-          {label ?? id}
+          {iconLoading ? (
+            <Link2Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <img
+              src={iconSrc}
+              alt=""
+              className="h-3.5 w-3.5 shrink-0 rounded-[3px] object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = PLACEHOLDER_ICON;
+              }}
+            />
+          )}
+          <span className="font-medium">{label ?? id}</span>
         </Badge>
       </HoverCardTrigger>
 
-      <HoverCardContent className="w-[340px] p-4">
-        <div className="flex gap-3">
-          
-          {/* Content */}
-          <div className="flex-1 space-y-2">
-            
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {currentSource.appName ?? "Unknown App"}
+      <HoverCardContent className="w-[340px] p-4 shadow-md" sideOffset={6}>
+        <div className="flex flex-col gap-3.5">
+          {/* Header Row: App Info & Pagination */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border bg-muted/50">
+                <img
+                  src={iconLoading ? PLACEHOLDER_ICON : iconSrc}
+                  alt={currentSource.appName ?? "App"}
+                  className="h-4 w-4 object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src =
+                      PLACEHOLDER_ICON;
+                  }}
+                />
+              </div>
+              <span className="truncate text-xs font-medium text-muted-foreground">
+                {priorityName}
               </span>
-
-              {hasMultipleSources && (
-                <span className="text-[10px] text-muted-foreground bg-muted px-2 py-[2px] rounded">
-                  {currentIndex + 1} / {totalSources}
-                </span>
-              )}
             </div>
 
-            {/* Title */}
-            <p className="text-sm font-semibold leading-tight">
-              {currentSource.title ?? "Unknown"}
-            </p>
+            {hasMultipleSources && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={handlePrev}
+                  className="rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                  aria-label="Previous source"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="min-w-[28px] text-center text-[10px] font-medium text-muted-foreground">
+                  {currentIndex + 1} / {totalSources}
+                </span>
+                <button
+                  onClick={handleNext}
+                  className="rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                  aria-label="Next source"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
 
-            {/* Description */}
-            <p className="text-xs text-muted-foreground line-clamp-3">
+          {/* Main Content */}
+          <div className="space-y-1.5">
+            <h4 className="text-sm font-semibold leading-snug text-foreground">
+              {currentSource.title ?? "Unknown Title"}
+            </h4>
+            <p className="text-xs leading-relaxed text-muted-foreground line-clamp-3">
               {currentSource.description?.trim() || "No preview available."}
-            </p>
-
-            {/* Footer */}
-            <p className="text-[10px] text-muted-foreground">
-              Captured:{" "}
-              {currentSource.capturedAt
-                ? renderDate(currentSource.capturedAt)
-                : "Unknown"}
             </p>
           </div>
 
-          {/* Navigation (Right Side) */}
-          {hasMultipleSources && (
-            <div className="flex flex-col items-center justify-center gap-1">
-              <button
-                onClick={handlePrev}
-                className="p-1 rounded hover:bg-muted transition-colors"
-                aria-label="Previous source"
-              >
-                <ChevronUp className="h-4 w-4 text-muted-foreground" />
-              </button>
-
-              <button
-                onClick={handleNext}
-                className="p-1 rounded hover:bg-muted transition-colors"
-                aria-label="Next source"
-              >
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              </button>
-            </div>
-          )}
+          {/* Footer */}
+          <div className="mt-1 flex items-center justify-between border-t pt-3">
+            <p className="text-[10px] font-medium text-muted-foreground/80">
+              Captured{" "}
+              {currentSource.capturedAt
+                ? renderDate(currentSource.capturedAt)
+                : "Unknown date"}
+            </p>
+          </div>
         </div>
       </HoverCardContent>
     </HoverCard>
