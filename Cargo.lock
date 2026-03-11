@@ -1324,6 +1324,7 @@ dependencies = [
  "textwrap",
  "tokio",
  "tokio-stream",
+ "toml 0.8.2",
  "tower-http 0.5.2",
  "tracing",
  "tracing-appender",
@@ -7708,6 +7709,7 @@ version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f30143827ddab0d256fd843b7a66d164e9f271cfa0dde49142c5ca0ca291f1e"
 dependencies = [
+ "chrono",
  "matchers",
  "nu-ansi-term",
  "once_cell",

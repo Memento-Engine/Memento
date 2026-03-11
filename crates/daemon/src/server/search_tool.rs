@@ -198,7 +198,7 @@ pub async fn search_tool(
 ) -> Response {
     let start = Instant::now();
     // call search logic here
-    let model = state.embeddingModel.clone();
+    let model = state.embedding_model.clone();
     tracing::info!("Database Query Information : {:#?}", payload);
 
     let DatabaseQuery {
@@ -231,41 +231,16 @@ pub async fn search_tool(
     let window_titles_refs: Vec<&str> = window_titles.iter().map(|s| s.as_str()).collect();
     let browser_urls_refs: Vec<&str> = browser_urls.iter().map(|s| s.as_str()).collect();
 
-    let embeddings: Vec<f32> = match tokio::task
-        ::spawn_blocking(
-            move || -> Result<Vec<f32>, String> {
-                let mut model = model
-                    .lock()
-                    .map_err(|e| format!("Embedding model lock failed: {e}"))?;
-
-                model
-                    .generate_embedding(&semantic_query)
-                    .map_err(|e| format!("Embedding generation failed: {e}"))
-            }
-        ).await
-    {
-        Ok(Ok(value)) => value,
-        Ok(Err(message)) => {
+    let embeddings: Vec<f32> = match model.generate_embedding(&semantic_query).await {
+        Ok(value) => value,
+        Err(e) => {
+            let message = format!("Embedding generation failed: {e}");
             tracing::error!("{message}");
             return error_response(
                 "EMBEDDING_GENERATION_FAILED",
                 "Embedding generation failed",
                 "embedding",
                 Some(message),
-                start.elapsed().as_millis(),
-                limit.unwrap_or(40).max(1).min(100),
-                normalized_keywords.len(),
-                "timestamp",
-                "desc"
-            );
-        }
-        Err(join_error) => {
-            tracing::error!("Embedding task join failed: {join_error}");
-            return error_response(
-                "EMBEDDING_TASK_FAILED",
-                "Embedding task failed",
-                "embedding",
-                Some(join_error.to_string()),
                 start.elapsed().as_millis(),
                 limit.unwrap_or(40).max(1).min(100),
                 normalized_keywords.len(),

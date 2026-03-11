@@ -9,7 +9,7 @@ import { getLogger } from "./logger";
 import { formatLocalTimestamp } from "./time";
 
 interface QueuedEvent {
-  type: "step" | "thinking" | "error" | "complete";
+  type: "step" | "thinking" | "error" | "complete" | "text";
   data: any;
   timestamp: string;
 }
@@ -245,6 +245,34 @@ export function emitCompletion(content: string, requestId: string, stepId: strin
       title: "Final Response",
       status: "final",
       message: content,
+      timestamp: formatLocalTimestamp(),
+    },
+    timestamp: formatLocalTimestamp(),
+  });
+}
+
+/**
+ * Emit a text chunk event for streaming final answer.
+ * @param chunk Text chunk to emit
+ * @param requestId Request identifier
+ */
+export function emitTextChunk(chunk: string, requestId: string): void {
+  let queue = getEventQueue(requestId);
+  if (!queue) {
+    queue = eventQueueStorage.getStore();
+  }
+
+  if (!queue) {
+    logQueue("warn", "Event queue not initialized - text chunk not emitted", {
+      requestId,
+    });
+    return;
+  }
+
+  queue.add({
+    type: "text" as any,
+    data: {
+      chunk,
       timestamp: formatLocalTimestamp(),
     },
     timestamp: formatLocalTimestamp(),

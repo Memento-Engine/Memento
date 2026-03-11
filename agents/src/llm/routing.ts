@@ -19,6 +19,10 @@ type InvokeRoleParams = {
   spanAttributes?: SpanAttributes;
 };
 
+type InvokeStreamingParams = InvokeRoleParams & {
+  onChunk: (chunk: string) => void;
+};
+
 type GatewayMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -168,8 +172,139 @@ export async function invokeRoleLlm({
     };
   } catch (error) {
     console.error("ai-gateway invocation failed", error);
+
+    // if  ()
+
+
     throw new AgentError(
       "ai-gateway invocation failed",
+      isTimeoutError(error) ? ErrorCode.TIMEOUT_ERROR : ErrorCode.INTERNAL_ERROR,
+      {
+        role,
+        cause: error,
+      },
+      isTimeoutError(error) ? 504 : 502,
+    );
+  }
+}
+
+/**
+ * Invoke AI gateway with streaming for final answer generation.
+ * Streams text chunks via the onChunk callback as they arrive.
+ */
+export async function invokeRoleLlmStreaming({
+  role,
+  prompt,
+  requestId,
+  spanName,
+  spanAttributes = {},
+  onChunk,
+}: InvokeStreamingParams): Promise<{ response: any; modelName: string; retryCount: number }> {
+  const config = await getConfig();
+  const messages = await toGatewayMessages(prompt);
+
+  const callMetrics: SpanAttributes = {
+    ...spanAttributes,
+    request_id: requestId,
+    model_name: "ai-gateway",
+    retry_count: 0,
+    error_type: "none",
+    streaming: true,
+  };
+
+  try {
+    return await runWithSpan(spanName, callMetrics, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), config.aiGateway.timeoutMs);
+
+      try {
+        const gatewayResponse = await fetch(`${config.aiGateway.baseUrl}/v1/chat/stream`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messages,
+            temperature: 0,
+            max_tokens: 65536,
+            user_id: config.aiGateway.userId,
+            role,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!gatewayResponse.ok) {
+          const body = await gatewayResponse.text();
+          throw new Error(`ai-gateway streaming request failed (${gatewayResponse.status}): ${body}`);
+        }
+
+        if (!gatewayResponse.body) {
+          throw new Error("ai-gateway streaming response has no body");
+        }
+
+        const reader = gatewayResponse.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let fullContent = "";
+        let modelName = "ai-gateway";
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+            try {
+              const json = JSON.parse(trimmed.slice(6));
+              
+              if (json.chunk) {
+                fullContent += json.chunk;
+                onChunk(json.chunk);
+              }
+              
+              if (json.done) {
+                modelName = json.model ?? modelName;
+              }
+              
+              if (json.error) {
+                throw new Error(json.error);
+              }
+            } catch (parseError) {
+              // Skip malformed JSON lines
+              if (parseError instanceof Error && parseError.message !== "Unexpected end of JSON input") {
+                console.warn("Failed to parse SSE line:", trimmed, parseError);
+              }
+            }
+          }
+        }
+
+        console.log("ai-gateway streaming response complete", {
+          model: modelName,
+          contentLength: fullContent.length,
+        });
+
+        return {
+          response: {
+            content: fullContent,
+          },
+          modelName,
+          retryCount: 0,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+  } catch (error) {
+    console.error("ai-gateway streaming invocation failed", error);
+
+    throw new AgentError(
+      "ai-gateway streaming invocation failed",
       isTimeoutError(error) ? ErrorCode.TIMEOUT_ERROR : ErrorCode.INTERNAL_ERROR,
       {
         role,

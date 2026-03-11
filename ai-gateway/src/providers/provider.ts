@@ -18,7 +18,13 @@ export type ProviderChatResult = {
   };
 };
 
+export type StreamChunkCallback = (chunk: string) => void;
+
 export interface LlmProviderAdapter {
   readonly name: ProviderName;
   chat(request: ProviderChatRequest): Promise<ProviderChatResult>;
+  chatStream?(
+    request: ProviderChatRequest,
+    onChunk: StreamChunkCallback
+  ): Promise<ProviderChatResult>;
 }

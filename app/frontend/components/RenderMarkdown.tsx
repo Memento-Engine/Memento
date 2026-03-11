@@ -84,9 +84,17 @@ const normalizeLatex = (input: string): string => {
 // =============================
 
 function preprocessCitations(text: string) {
-  return text.replace(/\[\[((?:\[[^\]]+\])+)]]/g, (match, groups) => {
-    const ids = [...String(groups).matchAll(/\[([a-zA-Z0-9_-]+)]/g)]
-      .map((m) => m[1].trim())
+  // Handle citation formats:
+  // Single: [[chunk_42]]
+  // Multiple: [[chunk_1][chunk_2]]
+  
+  // Match anything between [[ and ]] 
+  return text.replace(/\[\[([^\[\]]+(?:\]\[[^\[\]]+)*)\]\]/g, (match, content) => {
+    // content will be like "chunk_374][chunk_421" or just "chunk_42"
+    // Split by ][ to get individual IDs
+    const ids = content
+      .split("][")
+      .map((id: string) => id.trim())
       .filter(Boolean);
 
     if (ids.length === 0) {
@@ -106,32 +114,34 @@ function getCitationSummary(chunkIds: string[], sourceMap: Map<string, SourceRec
   const primary = mappedSources[0];
   const fallbackPrimaryId = uniqueChunkIds[0] ?? "";
 
+  // Build sources array for navigation
+  const sources = mappedSources.map((entry) => ({
+    chunkId: entry.chunkId,
+    title: entry.source?.windowTitle || "Unknown",
+    appName: entry.source?.appName || "Unknown App",
+    description:
+      entry.source?.normalizedTextLayout?.normalized_text?.trim() ||
+      entry.source?.textContent ||
+      "",
+    capturedAt: entry.source?.capturedAt || "",
+  }));
+
   if (!primary) {
     const remainder = Math.max(0, uniqueChunkIds.length - 1);
     return {
       primaryChunkId: fallbackPrimaryId,
-      label: remainder > 0 ? `${fallbackPrimaryId} +${remainder} tabs` : fallbackPrimaryId,
+      label: remainder > 0 ? `Source +${remainder}` : "Source",
       title: "Source",
       appName: "Unknown App",
       capturedAt: "",
       description: uniqueChunkIds.join(", "),
+      sources: [],
     };
   }
 
   const appName = primary.source?.appName?.trim() || "Source";
   const remainder = Math.max(0, uniqueChunkIds.length - 1);
-  const label = remainder > 0 ? `${appName} +${remainder} tabs` : appName;
-
-  const windowSamples = mappedSources
-    .map((entry) => entry.source?.windowTitle?.trim())
-    .filter((value): value is string => !!value)
-    .slice(0, 3);
-
-  const normalizedPreview = mappedSources
-    .map((entry) => entry.source?.normalizedTextLayout?.normalized_text?.trim())
-    .filter((value): value is string => !!value)
-    .slice(0, 2)
-    .join(" • ");
+  const label = remainder > 0 ? `${appName} +${remainder}` : appName;
 
   return {
     primaryChunkId: primary.chunkId,
@@ -140,8 +150,10 @@ function getCitationSummary(chunkIds: string[], sourceMap: Map<string, SourceRec
     appName,
     capturedAt: primary.source?.capturedAt || "",
     description:
-      normalizedPreview ||
-      (windowSamples.length > 0 ? windowSamples.join(" • ") : primary.source?.textContent || ""),
+      primary.source?.normalizedTextLayout?.normalized_text?.trim() ||
+      primary.source?.textContent ||
+      "",
+    sources,
   };
 }
 
@@ -184,6 +196,7 @@ function RenderMarkdownComponent({
                 capturedAt={citation.capturedAt}
                 description={citation.description}
                 label={citation.label}
+                sources={citation.sources}
                 onClick={onMemoryClick}
               />
             </span>

@@ -34,7 +34,7 @@ const CHAT_STATUS = {
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { MementoUIMessage, SourceRecord } from "./types";
-import { mockSteps, StepThinking } from "./StepThinking";
+import { StepThinking } from "./StepThinking";
 import useChatContext from "@/hooks/useChatContext";
 import MementoBreathing from "./MementoBreathing";
 import ThinkingBubble from "./ThinkingBubble";
@@ -72,7 +72,7 @@ function MessageItem({
       for (const source of sources) {
         if (!sourceMap.has(source.chunkId)) {
           sourceMap.set(source.chunkId, source);
-        } 
+        }
       }
     }
   }
@@ -205,8 +205,10 @@ function MessageItem({
   const renderStepThinking = (): React.ReactElement => {
     if (message.role === "assistant" && isLastMessage) {
       const steps = message.parts.filter((p) => p.type === "data-thinking").map((p) => p.data);
-
       return <StepThinking steps={steps} />;
+    }
+    if (isLastMessage) {
+      return <ThinkingBubble />;
     }
     return <></>;
   };
@@ -215,7 +217,7 @@ function MessageItem({
     if (isLastMessage) {
       switch (assistantStatus) {
         case "LocalPending":
-          return <ThinkingBubble />;
+          return <></>;
 
         case "Error":
           // Only show error UI for actual system errors, not for "no results found"

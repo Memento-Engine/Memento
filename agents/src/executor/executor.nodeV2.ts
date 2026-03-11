@@ -322,7 +322,7 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
               emitStepEvent(
                 step.id,
                 step.kind === "search" ? "searching" : "reasoning",
-                step.kind === "search" ? "Searching your memories..." : "Analysing results...",
+                step.kind === "search" ? "Searching your memories" : "Evaluating information",
                 "running",
                 state.requestId,
                 { description: step.intent }
@@ -360,13 +360,13 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                   emitStepEvent(
                     step.id,
                     "searching",
-                    resultEmpty ? "No results found" : "Found results",
+                    resultEmpty ? "No results found" : `Found ${rows.length} results`,
                     "completed",
                     state.requestId,
                     {
                       description: resultEmpty
-                        ? "Search returned no matching records"
-                        : `Found ${rows.length} result(s)`,
+                        ? "No matching records"
+                        : `Found ${rows.length} relevant result(s)`,
                       results: rows,
                       resultCount: rows.length,
                     }
@@ -375,10 +375,10 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                   emitStepEvent(
                     step.id,
                     "reasoning",
-                    "Analysis complete",
+                    "Evaluation complete",
                     "completed",
                     state.requestId,
-                    { description: step.intent }
+                    { description: "Verified relevant details" }
                   );
                 }
 
@@ -401,10 +401,10 @@ export async function executorNodeV2(state: AgentStateType): Promise<AgentStateT
                 emitStepEvent(
                   step.id,
                   step.kind === "search" ? "searching" : "reasoning",
-                  "Step failed",
+                  "Trying again",
                   "failed",
                   state.requestId,
-                  { description: errMsg }
+                  { description: "Checking additional sources" }
                 );
 
                 return { stepId: step.id, success: false as const, error: errMsg };

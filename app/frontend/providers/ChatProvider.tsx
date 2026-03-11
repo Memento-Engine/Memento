@@ -216,17 +216,25 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         const errorData = event.data;
         const isSystemError = errorData.isSystemError ?? true;
 
+        let errorMessage = errorData.message;
+        // Detect offline error
+        if (!navigator.onLine) {
+          errorMessage = "Connection failed";
+        } else if (!errorMessage) {
+          errorMessage = "Something went wrong, try again.";
+        }
+
         if (isSystemError) {
           // Real system error
-          console.error("System error received:", errorData.message);
+          console.error("System error received:", errorMessage);
           transitionStatus("Error");
         } else {
           // Not a system error - treat as normal "no results found" case
-          console.log("No results detected:", errorData.message);
+          console.log("No results detected:", errorMessage);
           transitionStatus("Finished");
         }
 
-        // Add error message to messages if desired
+        // Always add error message to messages, never leave AI message empty
         setMessages((prev) => {
           try {
             const lastMessage = prev[prev.length - 1];
@@ -245,7 +253,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
                   parts: [
                     {
                       type: "text",
-                      text: errorData.message,
+                      text: errorMessage,
                     },
                   ],
                 },
@@ -261,10 +269,10 @@ export default function ChatProvider({ children }: ChatProviderProps) {
             if (lastPart && lastPart.type === "text") {
               updatedParts[updatedParts.length - 1] = {
                 ...lastPart,
-                text: lastPart.text + "\n" + errorData.message,
+                text: lastPart.text + "\n" + errorMessage,
               };
             } else {
-              updatedParts.push({ type: "text", text: errorData.message });
+              updatedParts.push({ type: "text", text: errorMessage });
             }
 
             updatedMessage.parts = updatedParts;
@@ -282,6 +290,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
       case "text": {
         // Text streaming event - contains chunk of final response
+        transitionStatus("Streaming");
+        
         const textData = event.data;
         const chunk = textData.chunk;
 

@@ -1,0 +1,1012 @@
+﻿cargo : warning: value assigned to `max_average` is never read
+At line:1 char:1
++ cargo build -p daemon 2>&1 | Out-File -Encoding utf8 c:\Users\pavan\w ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: value ...` is never read 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   --> crates\daemon\src\pipeline\capture.rs:503:52
+    |
+503 |     let mut max_average: Option<MaxAverageFrame> = None;
+    |                                                    ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by 
+default
+
+warning: unused variable: `monitor_dimensions`
+   --> crates\daemon\src\pipeline\capture.rs:724:9
+    |
+724 |         monitor_dimensions,
+    |         ^^^^^^^^^^^^^^^^^^ help: try ignoring the field: 
+`monitor_dimensions: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by 
+default
+
+warning: unused variable: `monitor_bounds`
+    --> crates\daemon\src\pipeline\capture.rs:1200:13
+     |
+1200 |         let monitor_bounds = Rect {
+     |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with 
+an underscore: `_monitor_bounds`
+
+warning: function `get_default_monitor` is never used
+   --> crates\daemon\src\pipeline\capture.rs:253:4
+    |
+253 | fn get_default_monitor() -> Monitor {
+    |    ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `engine` is never read
+  --> crates\daemon\src\ocr\engine.rs:15:5
+   |
+14 | pub struct WindowsOcrEngine {
+   |            ---------------- field in this struct
+15 |     engine: WinRTOcrEngine,
+   |     ^^^^^^
+
+warning: structure field `embeddingModel` should have a snake case name
+ --> crates\daemon\src\server\app_state.rs:8:9
+  |
+8 |     pub embeddingModel : Arc<std::sync::Mutex<EmbeddingModel>>,
+  |         ^^^^^^^^^^^^^^ help: convert the identifier to snake case: 
+`embedding_model`
+  |
+  = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on 
+by default
+
+warning: structure field `crossEncoder` should have a snake case name
+ --> crates\daemon\src\server\app_state.rs:9:9
+  |
+9 |     pub crossEncoder : Arc<std::sync::Mutex<CrossEncoder>>,
+  |         ^^^^^^^^^^^^ help: convert the identifier to snake case: 
+`cross_encoder`
+
+warning: method `embeddingModel` should have a snake case name
+  --> crates\daemon\src\server\app_state_v2.rs:29:12
+   |
+29 |     pub fn embeddingModel(&self) -> &Arc<AsyncEmbeddingModel> {
+   |            ^^^^^^^^^^^^^^ help: convert the identifier to snake case: 
+`embedding_model`
+
+warning: method `crossEncoder` should have a snake case name
+  --> crates\daemon\src\server\app_state_v2.rs:34:12
+   |
+34 |     pub fn crossEncoder(&self) -> &Arc<AsyncCrossEncoder> {
+   |            ^^^^^^^^^^^^ help: convert the identifier to snake case: 
+`cross_encoder`
+
+warning: `daemon` (lib) generated 9 warnings (run `cargo fix --lib -p daemon` 
+to apply 2 suggestions)
+warning: unused import: `cache::FrameComparer`
+ --> crates\daemon\src\cache\mod.rs:6:9
+  |
+6 | pub use cache::FrameComparer;
+  |         ^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `CacheStats` and `WindowOcrCache`
+ --> crates\daemon\src\cache\mod.rs:7:21
+  |
+7 | pub use ocr_cache::{WindowOcrCache, CacheStats};
+  |                     ^^^^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `CacheEntry`
+ --> crates\daemon\src\cache\mod.rs:8:64
+  |
+8 | pub use persistent_cache::{PersistentOcrCache, WindowCacheKey, CacheEntry};
+  |                                                                ^^^^^^^^^^
+
+warning: unused import: `lifecycle::DaemonLifecycle`
+ --> crates\daemon\src\core\mod.rs:7:9
+  |
+7 | pub use lifecycle::DaemonLifecycle;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ScheduleParams`
+ --> crates\daemon\src\throttle\mod.rs:6:65
+  |
+6 | pub use adaptive_scheduler::{AdaptiveScheduler, ScheduleReason, 
+ScheduleParams};
+  |                                                                 
+^^^^^^^^^^^^^^
+
+warning: unused imports: `ShutdownController` and `ui_events::start_listener`
+  --> crates\daemon\src\main.rs:21:3
+   |
+21 |   ui_events::start_listener,
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^
+22 |   core::{ShutdownController, set_process_priority},
+   |          ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `SearchQuery`
+  --> crates\daemon\src\main.rs:24:62
+   |
+24 | use app_core::{ config::database_dir, db::{ DatabaseManager, SearchQuery 
+} };
+   |                                                              ^^^^^^^^^^^
+
+warning: unused imports: `DateTime` and `Utc`
+  --> crates\daemon\src\main.rs:25:15
+   |
+25 | use chrono::{ DateTime, Utc };
+   |               ^^^^^^^^  ^^^
+
+warning: unused import: `Mutex`
+  --> crates\daemon\src\main.rs:27:20
+   |
+27 | use tokio::sync::{ Mutex, mpsc };
+   |                    ^^^^^
+
+warning: unused import: `warn`
+  --> crates\daemon\src\main.rs:28:29
+   |
+28 | use tracing::{ error, info, warn, debug };
+   |                             ^^^^
+
+warning: unused imports: `Instant`, `self`, and `sleep`
+  --> crates\daemon\src\main.rs:29:20
+   |
+29 | use tokio::time::{ sleep, self, Instant, Duration };
+   |                    ^^^^^  ^^^^  ^^^^^^^
+
+warning: unused imports: `AtomicBool` and `Ordering`
+  --> crates\daemon\src\main.rs:30:26
+   |
+30 | use std::sync::atomic::{ AtomicBool, Ordering };
+   |                          ^^^^^^^^^^  ^^^^^^^^
+
+warning: unused import: `tokio::sync::mpsc::channel`
+  --> crates\daemon\src\main.rs:88:7
+   |
+88 |   use tokio::sync::mpsc::channel;
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `process_id` is never read
+  --> crates\daemon\src\pipeline\capture.rs:34:9
+   |
+30 | pub struct CapturedWindow {
+   |            -------------- field in this struct
+...
+34 |     pub process_id: i32,
+   |         ^^^^^^^^^^
+   |
+   = note: `CapturedWindow` has derived impls for the traits `Clone` and 
+`Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `image`, `timestamp`, and `captured_at` are never read
+  --> crates\daemon\src\pipeline\capture.rs:63:9
+   |
+62 | pub struct CaptureResult {
+   |            ------------- fields in this struct
+63 |     pub image: DynamicImage,
+   |         ^^^^^
+64 |     pub timestamp: Instant,
+   |         ^^^^^^^^^
+65 |     /// Wall-clock timestamp captured atomically with the screenshot
+66 |     pub captured_at: DateTime<Utc>,
+   |         ^^^^^^^^^^^
+   |
+   = note: `CaptureResult` has derived impls for the traits `Clone` and 
+`Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `image_hash` is never read
+  --> crates\daemon\src\pipeline\capture.rs:73:9
+   |
+70 | pub struct MaxAverageFrame {
+   |            --------------- field in this struct
+...
+73 |     pub image_hash: u64,
+   |         ^^^^^^^^^^
+
+warning: function `serialize_image` is never used
+   --> crates\daemon\src\pipeline\capture.rs:148:4
+    |
+148 | fn serialize_image<S>(image: &Option<DynamicImage>, serializer: S) -> 
+Result<S::Ok, S::Error>
+    |    ^^^^^^^^^^^^^^^
+
+warning: function `deserialize_image` is never used
+   --> crates\daemon\src\pipeline\capture.rs:170:4
+    |
+170 | fn deserialize_image<'de, D>(deserializer: D) -> 
+Result<Option<DynamicImage>, D::Error>
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `serialize_instant` is never used
+   --> crates\daemon\src\pipeline\capture.rs:194:4
+    |
+194 | fn serialize_instant<S>(instant: &Instant, serializer: S) -> 
+Result<S::Ok, S::Error>
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `deserialize_instant` is never used
+   --> crates\daemon\src\pipeline\capture.rs:203:4
+    |
+203 | fn deserialize_instant<'de, D>(deserializer: D) -> Result<Instant, 
+D::Error>
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+   --> crates\daemon\src\pipeline\capture.rs:242:30
+    |
+242 |     ErrorCapturingScreenshot(String),
+    |     ------------------------ ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ContinuousCaptureError` has a derived impl for the trait `Debug`, 
+but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning 
+while preserving the field numbering, or remove the field
+    |
+242 -     ErrorCapturingScreenshot(String),
+242 +     ErrorCapturingScreenshot(()),
+    |
+
+warning: field `0` is never read
+   --> crates\daemon\src\pipeline\capture.rs:243:24
+    |
+243 |     ErrorProcessingOcr(String),
+    |     ------------------ ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ContinuousCaptureError` has a derived impl for the trait `Debug`, 
+but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning 
+while preserving the field numbering, or remove the field
+    |
+243 -     ErrorProcessingOcr(String),
+243 +     ErrorProcessingOcr(()),
+    |
+
+warning: field `0` is never read
+   --> crates\daemon\src\pipeline\capture.rs:244:27
+    |
+244 |     ErrorSendingOcrResult(String),
+    |     --------------------- ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ContinuousCaptureError` has a derived impl for the trait `Debug`, 
+but this is intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning 
+while preserving the field numbering, or remove the field
+    |
+244 -     ErrorSendingOcrResult(String),
+244 +     ErrorSendingOcrResult(()),
+    |
+
+warning: function `get_default_monitor` is never used
+   --> crates\daemon\src\pipeline\capture.rs:253:4
+    |
+253 | fn get_default_monitor() -> Monitor {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: enum `RealtimeVisionEvent` is never used
+    --> crates\daemon\src\pipeline\capture.rs:1049:10
+     |
+1049 | pub enum RealtimeVisionEvent {
+     |          ^^^^^^^^^^^^^^^^^^^
+
+warning: struct `WindowOcr` is never constructed
+    --> crates\daemon\src\pipeline\capture.rs:1054:12
+     |
+1054 | pub struct WindowOcr {
+     |            ^^^^^^^^^
+
+warning: function `continuous_capture_v2` is never used
+    --> crates\daemon\src\pipeline\capture.rs:1069:14
+     |
+1069 | pub async fn continuous_capture_v2(
+     |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `MonitorListError` is never used
+ --> crates\daemon\src\pipeline\monitor.rs:9:10
+  |
+9 | pub enum MonitorListError {
+  |          ^^^^^^^^^^^^^^^^
+
+warning: fields `name` and `is_primary` are never read
+  --> crates\daemon\src\pipeline\monitor.rs:67:9
+   |
+60 | pub struct MonitorData {
+   |            ----------- fields in this struct
+...
+67 |     pub name: String,
+   |         ^^^^
+68 |     pub is_primary: bool,
+   |         ^^^^^^^^^^
+   |
+   = note: `MonitorData` has derived impls for the traits `Debug` and `Clone`, 
+but these are intentionally ignored during dead code analysis
+
+warning: methods `id`, `dimensions`, `name`, `is_primary`, and `get_info` are 
+never used
+   --> crates\daemon\src\pipeline\monitor.rs:367:12
+    |
+109 | impl SafeMonitor {
+    | ---------------- methods in this implementation
+...
+367 |     pub fn id(&self) -> u32 {
+    |            ^^
+...
+371 |     pub fn dimensions(&self) -> (u32, u32) {
+    |            ^^^^^^^^^^
+...
+375 |     pub fn name(&self) -> &str {
+    |            ^^^^
+...
+387 |     pub fn is_primary(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+401 |     pub fn get_info(&self) -> MonitorData {
+    |            ^^^^^^^^
+
+warning: function `list_monitors_detailed` is never used
+   --> crates\daemon\src\pipeline\monitor.rs:448:14
+    |
+448 | pub async fn list_monitors_detailed() -> 
+std::result::Result<Vec<SafeMonitor>, MonitorListError> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `list_monitors` is never used
+   --> crates\daemon\src\pipeline\monitor.rs:468:14
+    |
+468 | pub async fn list_monitors() -> Vec<SafeMonitor> {
+    |              ^^^^^^^^^^^^^
+
+warning: function `get_default_monitor` is never used
+   --> crates\daemon\src\pipeline\monitor.rs:486:14
+    |
+486 | pub async fn get_default_monitor() -> Option<SafeMonitor> {
+    |              ^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_screen_capture_supported` is never used
+   --> crates\daemon\src\pipeline\monitor.rs:595:8
+    |
+595 | pub fn is_screen_capture_supported() -> bool {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_capture_backend` is never used
+   --> crates\daemon\src\pipeline\monitor.rs:606:8
+    |
+606 | pub fn get_capture_backend() -> &'static str {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CHUNK_SIZE` is never used
+  --> crates\daemon\src\pipeline\processor.rs:22:7
+   |
+22 | const CHUNK_SIZE: usize = 300;
+   |       ^^^^^^^^^^
+
+warning: constant `IMAGE_QUALITY` is never used
+  --> crates\daemon\src\pipeline\processor.rs:25:7
+   |
+25 | const IMAGE_QUALITY: u8 = 75;
+   |       ^^^^^^^^^^^^^
+
+warning: struct `OcrProcessor` is never constructed
+  --> crates\daemon\src\pipeline\processor.rs:28:12
+   |
+28 | pub struct OcrProcessor {
+   |            ^^^^^^^^^^^^
+
+warning: associated items `new`, `process_stream`, `process_capture`, 
+`build_chunks`, `build_chunk_blocks`, and `store_results` are never used
+   --> crates\daemon\src\pipeline\processor.rs:34:12
+    |
+ 33 | impl OcrProcessor {
+    | ----------------- associated items in this implementation
+ 34 |     pub fn new(embedding_model: Arc<AsyncEmbeddingModel>, db: 
+Arc<DatabaseManager>) -> Self {
+    |            ^^^
+...
+ 42 |     pub async fn process_stream(
+    |                  ^^^^^^^^^^^^^^
+...
+ 74 |     async fn process_capture(&self, capture: CaptureResult) -> 
+anyhow::Result<()> {
+    |              ^^^^^^^^^^^^^^^
+...
+150 |     fn build_chunks<'a>(&self, words: &'a [&str]) -> (Vec<String>, 
+Vec<(usize, usize)>) {
+    |        ^^^^^^^^^^^^
+...
+166 |     fn build_chunk_blocks(
+    |        ^^^^^^^^^^^^^^^^^^
+...
+197 |     async fn store_results(&self, results: Vec<ProcessedOcrResult>) -> 
+anyhow::Result<()> {
+    |              ^^^^^^^^^^^^^
+
+warning: function `sanitize_filename` is never used
+   --> crates\daemon\src\pipeline\processor.rs:243:4
+    |
+243 | fn sanitize_filename(s: &str) -> String {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `save_jpeg` is never used
+   --> crates\daemon\src\pipeline\processor.rs:254:4
+    |
+254 | fn save_jpeg(
+    |    ^^^^^^^^^
+
+warning: methods `clear`, `stats`, and `cleanup_stale` are never used
+   --> crates\daemon\src\cache\ocr_cache.rs:110:12
+    |
+ 35 | impl WindowOcrCache {
+    | ------------------- methods in this implementation
+...
+110 |     pub fn clear(&mut self) {
+    |            ^^^^^
+...
+117 |     pub fn stats(&self) -> CacheStats {
+    |            ^^^^^
+...
+131 |     pub fn cleanup_stale(&mut self) {
+    |            ^^^^^^^^^^^^^
+
+warning: struct `CacheStats` is never constructed
+   --> crates\daemon\src\cache\ocr_cache.rs:146:12
+    |
+146 | pub struct CacheStats {
+    |            ^^^^^^^^^^
+
+warning: struct `CacheEntry` is never constructed
+  --> crates\daemon\src\cache\persistent_cache.rs:12:12
+   |
+12 | pub struct CacheEntry {
+   |            ^^^^^^^^^^
+
+warning: associated items `new` and `is_expired` are never used
+  --> crates\daemon\src\cache\persistent_cache.rs:21:12
+   |
+20 | impl CacheEntry {
+   | --------------- associated items in this implementation
+21 |     pub fn new(text: String, text_json: String, confidence: f64) -> Self {
+   |            ^^^
+...
+36 |     pub fn is_expired(&self, max_age_secs: u64) -> bool {
+   |            ^^^^^^^^^^
+
+warning: struct `WindowCacheKey` is never constructed
+  --> crates\daemon\src\cache\persistent_cache.rs:48:12
+   |
+48 | pub struct WindowCacheKey {
+   |            ^^^^^^^^^^^^^^
+
+warning: struct `PersistentOcrCache` is never constructed
+  --> crates\daemon\src\cache\persistent_cache.rs:54:12
+   |
+54 | pub struct PersistentOcrCache {
+   |            ^^^^^^^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+   --> crates\daemon\src\cache\persistent_cache.rs:65:12
+    |
+ 64 | impl PersistentOcrCache {
+    | ----------------------- associated items in this implementation
+ 65 |     pub fn new(max_age_secs: u64, max_entries: usize) -> Self {
+    |            ^^^
+...
+115 |     pub fn calculate_image_hash(image_bytes: &[u8]) -> u64 {
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+122 |     pub fn make_window_id(app_name: &str, window_name: &str) -> String {
+    |            ^^^^^^^^^^^^^^
+...
+127 |     pub async fn get(&self, key: &WindowCacheKey) -> Option<CacheEntry> {
+    |                  ^^^
+...
+144 |     pub async fn insert(&self, key: WindowCacheKey, text: String, 
+text_json: String, confidence: f64) {
+    |                  ^^^^^^
+...
+158 |     fn evict_oldest_internal(&self, cache: &mut HashMap<WindowCacheKey, 
+CacheEntry>) {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+...
+171 |     pub async fn cleanup_stale(&self) {
+    |                  ^^^^^^^^^^^^^
+...
+184 |     pub async fn persist(&self) -> std::io::Result<()> {
+    |                  ^^^^^^^
+...
+209 |     pub async fn clear(&self) {
+    |                  ^^^^^
+...
+220 |     pub async fn stats(&self) -> CacheStats {
+    |                  ^^^^^
+...
+238 |     pub async fn reduce_size(&self, target_size: usize) {
+    |                  ^^^^^^^^^^^
+
+warning: struct `CacheStats` is never constructed
+   --> crates\daemon\src\cache\persistent_cache.rs:263:12
+    |
+263 | pub struct CacheStats {
+    |            ^^^^^^^^^^
+
+warning: field `model` is never read
+  --> crates\daemon\src\embedding\engine.rs:32:5
+   |
+31 | pub struct CrossEncoder {
+   |            ------------ field in this struct
+32 |     model: TextRerank,
+   |     ^^^^^
+
+warning: method `score_batch` is never used
+  --> crates\daemon\src\embedding\engine.rs:45:12
+   |
+35 | impl CrossEncoder {
+   | ----------------- method in this implementation
+...
+45 |     pub fn score_batch(&mut self, query: &str, documents: &[&str]) -> 
+Result<Vec<f32>> {
+   |            ^^^^^^^^^^^
+
+warning: struct `AsyncEmbeddingModel` is never constructed
+ --> crates\daemon\src\embedding\async_engine.rs:9:12
+  |
+9 | pub struct AsyncEmbeddingModel {
+  |            ^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `generate_embedding`, and 
+`generate_batch_embeddings` are never used
+  --> crates\daemon\src\embedding\async_engine.rs:15:12
+   |
+13 | impl AsyncEmbeddingModel {
+   | ------------------------ associated items in this implementation
+14 |     /// Initialize the embedding model (does blocking I/O, call from 
+spawn_blocking if needed)
+15 |     pub fn new() -> Result<Self> {
+   |            ^^^
+...
+27 |     pub async fn generate_embedding(&self, text: &str) -> 
+Result<Vec<f32>> {
+   |                  ^^^^^^^^^^^^^^^^^^
+...
+41 |     pub async fn generate_batch_embeddings(&self, texts: Vec<String>) -> 
+Result<Vec<Vec<f32>>> {
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `AsyncCrossEncoder` is never constructed
+  --> crates\daemon\src\embedding\async_engine.rs:65:12
+   |
+65 | pub struct AsyncCrossEncoder {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: associated items `new` and `score_batch` are never used
+  --> crates\daemon\src\embedding\async_engine.rs:70:12
+   |
+69 | impl AsyncCrossEncoder {
+   | ---------------------- associated items in this implementation
+70 |     pub fn new() -> Result<Self> {
+   |            ^^^
+...
+83 |     pub async fn score_batch(&self, query: &str, documents: &[&str]) -> 
+Result<Vec<f32>> {
+   |                  ^^^^^^^^^^^
+
+warning: function `start_listener` is never used
+ --> crates\daemon\src\ui_events.rs:4:8
+  |
+4 | pub fn start_listener(tx: std::sync::mpsc::Sender<()>) {
+  |        ^^^^^^^^^^^^^^
+
+warning: struct `HealthStatus` is never constructed
+  --> crates\daemon\src\server\server_v2.rs:13:12
+   |
+13 | pub struct HealthStatus {
+   |            ^^^^^^^^^^^^
+
+warning: function `health_check` is never used
+  --> crates\daemon\src\server\server_v2.rs:20:10
+   |
+20 | async fn health_check() -> Json<HealthStatus> {
+   |          ^^^^^^^^^^^^
+
+warning: function `api_router` is never used
+  --> crates\daemon\src\server\server_v2.rs:28:4
+   |
+28 | fn api_router() -> Router<Arc<AppState>> {
+   |    ^^^^^^^^^^
+
+warning: function `start_server` is never used
+  --> crates\daemon\src\server\server_v2.rs:35:14
+   |
+35 | pub async fn start_server(app_state: Arc<AppState>, shutdown: 
+Arc<ShutdownController>) {
+   |              ^^^^^^^^^^^^
+
+warning: function `write_port_file` is never used
+  --> crates\daemon\src\server\server_v2.rs:91:4
+   |
+91 | fn write_port_file(port: u16) {
+   |    ^^^^^^^^^^^^^^^
+
+warning: field `crossEncoder` is never read
+ --> crates\daemon\src\server\app_state.rs:9:9
+  |
+6 | pub struct AppState {
+  |            -------- field in this struct
+...
+9 |     pub crossEncoder : Arc<std::sync::Mutex<CrossEncoder>>,
+  |         ^^^^^^^^^^^^
+
+warning: struct `AppState` is never constructed
+ --> crates\daemon\src\server\app_state_v2.rs:6:12
+  |
+6 | pub struct AppState {
+  |            ^^^^^^^^
+
+warning: associated function `new` is never used
+  --> crates\daemon\src\server\app_state_v2.rs:13:12
+   |
+12 | impl AppState {
+   | ------------- associated function in this implementation
+13 |     pub fn new(
+   |            ^^^
+
+warning: methods `embeddingModel` and `crossEncoder` are never used
+  --> crates\daemon\src\server\app_state_v2.rs:29:12
+   |
+27 | impl AppState {
+   | ------------- methods in this implementation
+28 |     #[deprecated(note = "Use embedding_model instead")]
+29 |     pub fn embeddingModel(&self) -> &Arc<AsyncEmbeddingModel> {
+   |            ^^^^^^^^^^^^^^
+...
+34 |     pub fn crossEncoder(&self) -> &Arc<AsyncCrossEncoder> {
+   |            ^^^^^^^^^^^^
+
+warning: struct `BBox` is never constructed
+ --> crates\daemon\src\server\types.rs:5:12
+  |
+5 | pub struct BBox {
+  |            ^^^^
+
+warning: enum `ThinkingStatus` is never used
+  --> crates\daemon\src\server\types.rs:16:10
+   |
+16 | pub enum ThinkingStatus {
+   |          ^^^^^^^^^^^^^^
+
+warning: struct `Citation` is never constructed
+  --> crates\daemon\src\server\types.rs:23:12
+   |
+23 | pub struct Citation {
+   |            ^^^^^^^^
+
+warning: struct `Thinking` is never constructed
+  --> crates\daemon\src\server\types.rs:34:12
+   |
+34 | pub struct Thinking {
+   |            ^^^^^^^^
+
+warning: struct `StepSearchResults` is never constructed
+  --> crates\daemon\src\server\types.rs:43:12
+   |
+43 | pub struct StepSearchResults {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `ChatRequest` is never constructed
+  --> crates\daemon\src\server\types.rs:51:12
+   |
+51 | pub struct ChatRequest {
+   |            ^^^^^^^^^^^
+
+warning: struct `ChatMessage` is never constructed
+  --> crates\daemon\src\server\types.rs:58:12
+   |
+58 | pub struct ChatMessage {
+   |            ^^^^^^^^^^^
+
+warning: enum `Role` is never used
+  --> crates\daemon\src\server\types.rs:66:10
+   |
+66 | pub enum Role {
+   |          ^^^^
+
+warning: struct `MessagePart` is never constructed
+  --> crates\daemon\src\server\types.rs:72:12
+   |
+72 | pub struct MessagePart {
+   |            ^^^^^^^^^^^
+
+warning: enum `EventTypes` is never used
+  --> crates\daemon\src\server\types.rs:81:10
+   |
+81 | pub enum EventTypes {
+   |          ^^^^^^^^^^
+
+warning: struct `CustomEvent` is never constructed
+  --> crates\daemon\src\server\types.rs:89:12
+   |
+89 | pub struct CustomEvent<T> {
+   |            ^^^^^^^^^^^
+
+warning: struct `TavilyRequest` is never constructed
+  --> crates\daemon\src\server\search_web.rs:14:12
+   |
+14 | pub struct TavilyRequest {
+   |            ^^^^^^^^^^^^^
+
+warning: struct `TavilyResponse` is never constructed
+  --> crates\daemon\src\server\search_web.rs:21:12
+   |
+21 | pub struct TavilyResponse {
+   |            ^^^^^^^^^^^^^^
+
+warning: struct `WebSearchResult` is never constructed
+  --> crates\daemon\src\server\search_web.rs:27:12
+   |
+27 | pub struct WebSearchResult {
+   |            ^^^^^^^^^^^^^^^
+
+warning: static `HTTP_CLIENT` is never used
+  --> crates\daemon\src\server\search_web.rs:38:8
+   |
+38 | static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| Client::new());
+   |        ^^^^^^^^^^^
+
+warning: function `search_web` is never used
+  --> crates\daemon\src\server\search_web.rs:40:14
+   |
+40 | pub async fn search_web(queries: &[String]) -> 
+Result<Vec<TavilyResponse>> {
+   |              ^^^^^^^^^^
+
+warning: struct `DaemonStats` is never constructed
+  --> crates\daemon\src\core\lifecycle.rs:11:12
+   |
+11 | pub struct DaemonStats {
+   |            ^^^^^^^^^^^
+
+warning: enum `DaemonState` is never used
+  --> crates\daemon\src\core\lifecycle.rs:28:10
+   |
+28 | pub enum DaemonState {
+   |          ^^^^^^^^^^^
+
+warning: struct `DaemonLifecycle` is never constructed
+  --> crates\daemon\src\core\lifecycle.rs:37:12
+   |
+37 | pub struct DaemonLifecycle {
+   |            ^^^^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+   --> crates\daemon\src\core\lifecycle.rs:46:12
+    |
+ 45 | impl DaemonLifecycle {
+    | -------------------- associated items in this implementation
+ 46 |     pub fn new(config: DaemonConfig, shutdown: Arc<ShutdownController>) 
+-> Self {
+    |            ^^^
+...
+ 56 |     pub fn config(&self) -> &DaemonConfig {
+    |            ^^^^^^
+...
+ 60 |     pub fn shutdown(&self) -> &Arc<ShutdownController> {
+    |            ^^^^^^^^
+...
+ 65 |     pub async fn state(&self) -> DaemonState {
+    |                  ^^^^^
+...
+ 70 |     pub async fn set_state(&self, new_state: DaemonState) {
+    |                  ^^^^^^^^^
+...
+ 79 |     pub async fn stats(&self) -> DaemonStats {
+    |                  ^^^^^
+...
+ 86 |     pub async fn update_stats<F>(&self, updater: F)
+    |                  ^^^^^^^^^^^^
+...
+ 95 |     pub async fn record_capture(&self) {
+    |                  ^^^^^^^^^^^^^^
+...
+102 |     pub async fn record_skip(&self) {
+    |                  ^^^^^^^^^^^
+...
+108 |     pub async fn record_ocr_cache_hit(&self) {
+    |                  ^^^^^^^^^^^^^^^^^^^^
+...
+114 |     pub async fn record_ocr_cache_miss(&self) {
+    |                  ^^^^^^^^^^^^^^^^^^^^^
+...
+120 |     pub async fn record_error(&self) {
+    |                  ^^^^^^^^^^^^
+...
+126 |     pub fn should_run(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+131 |     pub async fn get_adaptive_interval(&self, cpu_usage: f64) -> 
+Duration {
+    |                  ^^^^^^^^^^^^^^^^^^^^^
+...
+154 |     pub async fn start(&self) {
+    |                  ^^^^^
+...
+160 |     pub async fn stop(&self) {
+    |                  ^^^^
+...
+166 |     pub async fn update_capture_rate(&self) {
+    |                  ^^^^^^^^^^^^^^^^^^^
+
+warning: struct `ShutdownController` is never constructed
+ --> crates\daemon\src\core\shutdown.rs:8:12
+  |
+8 | pub struct ShutdownController {
+  |            ^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `is_shutdown_requested`, `request_shutdown`, 
+`subscribe`, `wait_for_shutdown`, and `setup_signal_handlers` are never used
+  --> crates\daemon\src\core\shutdown.rs:16:12
+   |
+15 | impl ShutdownController {
+   | ----------------------- associated items in this implementation
+16 |     pub fn new() -> Self {
+   |            ^^^
+...
+25 |     pub fn is_shutdown_requested(&self) -> bool {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+...
+30 |     pub fn request_shutdown(&self) {
+   |            ^^^^^^^^^^^^^^^^
+...
+38 |     pub fn subscribe(&self) -> broadcast::Receiver<()> {
+   |            ^^^^^^^^^
+...
+43 |     pub async fn wait_for_shutdown(&self) {
+   |                  ^^^^^^^^^^^^^^^^^
+...
+50 |     pub fn setup_signal_handlers(self: Arc<Self>) {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `DaemonConfig` is never constructed
+ --> crates\daemon\src\core\config.rs:6:12
+  |
+6 | pub struct DaemonConfig {
+  |            ^^^^^^^^^^^^
+
+warning: associated items `load`, `save`, and `adaptive_interval` are never 
+used
+   --> crates\daemon\src\core\config.rs:81:12
+    |
+ 79 | impl DaemonConfig {
+    | ----------------- associated items in this implementation
+ 80 |     /// Load config from file or return defaults
+ 81 |     pub fn load() -> Self {
+    |            ^^^^
+...
+104 |     pub fn save(&self) -> std::io::Result<()> {
+    |            ^^^^
+...
+118 |     pub fn adaptive_interval(&self, cpu_usage: f64) -> Duration {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: function `set_thread_priority_low` is never used
+  --> crates\daemon\src\core\priority.rs:83:8
+   |
+83 | pub fn set_thread_priority_low() -> bool {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_on_battery` is never used
+   --> crates\daemon\src\core\priority.rs:108:8
+    |
+108 | pub fn is_on_battery() -> bool {
+    |        ^^^^^^^^^^^^^
+
+warning: function `check_battery_windows` is never used
+   --> crates\daemon\src\core\priority.rs:121:4
+    |
+121 | fn check_battery_windows() -> bool {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CPU_SAMPLE_WINDOW` is never used
+ --> crates\daemon\src\throttle\cpu_monitor.rs:9:7
+  |
+9 | const CPU_SAMPLE_WINDOW: usize = 10;
+  |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `MIN_REFRESH_INTERVAL` is never used
+  --> crates\daemon\src\throttle\cpu_monitor.rs:12:7
+   |
+12 | const MIN_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `CpuMonitor` is never constructed
+  --> crates\daemon\src\throttle\cpu_monitor.rs:15:12
+   |
+15 | pub struct CpuMonitor {
+   |            ^^^^^^^^^^
+
+warning: struct `CpuMonitorInner` is never constructed
+  --> crates\daemon\src\throttle\cpu_monitor.rs:19:8
+   |
+19 | struct CpuMonitorInner {
+   |        ^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `get_cpu_usage`, `get_memory_usage`, 
+`is_high_load`, `is_memory_pressure`, and `get_self_cpu_usage` are never used
+   --> crates\daemon\src\throttle\cpu_monitor.rs:27:12
+    |
+ 26 | impl CpuMonitor {
+    | --------------- associated items in this implementation
+ 27 |     pub fn new() -> Self {
+    |            ^^^
+...
+ 44 |     pub async fn get_cpu_usage(&self) -> f64 {
+    |                  ^^^^^^^^^^^^^
+...
+ 83 |     pub async fn get_memory_usage(&self) -> f64 {
+    |                  ^^^^^^^^^^^^^^^^
+...
+ 96 |     pub async fn is_high_load(&self, threshold: f64) -> bool {
+    |                  ^^^^^^^^^^^^
+...
+101 |     pub async fn is_memory_pressure(&self, threshold: f64) -> bool {
+    |                  ^^^^^^^^^^^^^^^^^^
+...
+106 |     pub async fn get_self_cpu_usage(&self) -> f64 {
+    |                  ^^^^^^^^^^^^^^^^^^
+
+warning: enum `ScheduleReason` is never used
+  --> crates\daemon\src\throttle\adaptive_scheduler.rs:11:10
+   |
+11 | pub enum ScheduleReason {
+   |          ^^^^^^^^^^^^^^
+
+warning: struct `ScheduleParams` is never constructed
+  --> crates\daemon\src\throttle\adaptive_scheduler.rs:23:12
+   |
+23 | pub struct ScheduleParams {
+   |            ^^^^^^^^^^^^^^
+
+warning: struct `AdaptiveScheduler` is never constructed
+  --> crates\daemon\src\throttle\adaptive_scheduler.rs:32:12
+   |
+32 | pub struct AdaptiveScheduler {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `SchedulerState` is never constructed
+  --> crates\daemon\src\throttle\adaptive_scheduler.rs:38:8
+   |
+38 | struct SchedulerState {
+   |        ^^^^^^^^^^^^^^
+
+warning: associated items `new`, `record_user_activity`, 
+`get_schedule_params`, `calculate_schedule`, `current_interval`, and 
+`cpu_monitor` are never used
+   --> crates\daemon\src\throttle\adaptive_scheduler.rs:46:12
+    |
+ 45 | impl AdaptiveScheduler {
+    | ---------------------- associated items in this implementation
+ 46 |     pub fn new(config: DaemonConfig) -> Self {
+    |            ^^^
+...
+ 62 |     pub async fn record_user_activity(&self) {
+    |                  ^^^^^^^^^^^^^^^^^^^^
+...
+ 68 |     pub async fn get_schedule_params(&self) -> ScheduleParams {
+    |                  ^^^^^^^^^^^^^^^^^^^
+...
+ 94 |     fn calculate_schedule(
+    |        ^^^^^^^^^^^^^^^^^^
+...
+192 |     pub async fn current_interval(&self) -> Duration {
+    |                  ^^^^^^^^^^^^^^^^
+...
+198 |     pub fn cpu_monitor(&self) -> &CpuMonitor {
+    |            ^^^^^^^^^^^
+
+warning: `daemon` (bin "daemon") generated 110 warnings (8 duplicates) (run 
+`cargo fix --bin "daemon" -p daemon` to apply 13 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.56s

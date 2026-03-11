@@ -1,5 +1,8 @@
 use std::{ fs, path::PathBuf, process::Command, time::{ Duration, Instant }, thread };
 pub mod disk_usage;
+pub mod get_app_icon;
+
+
 
 #[tauri::command]
 fn start_daemon(is_dev: bool) -> Result<String, String> {
@@ -99,7 +102,11 @@ pub fn run() {
         ::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init()) // add this
-        .invoke_handler(tauri::generate_handler![start_daemon, stop_daemon])
+        .invoke_handler(tauri::generate_handler![
+            start_daemon,
+            stop_daemon,
+            get_app_icon::get_app_icon_ipc,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -53,10 +53,10 @@ export async function routerNode(state: AgentStateType): Promise<AgentStateType>
       emitStepEvent(
         "router_0",
         "planning",
-        "Understanding your query...",
+        "Understanding your request",
         "running",
         state.requestId,
-        { description: "Classifying intent and checking for ambiguity" },
+        { description: "Interpreting what you're asking" },
       );
 
       try {
@@ -83,18 +83,6 @@ export async function routerNode(state: AgentStateType): Promise<AgentStateType>
           durationMs,
         });
 
-        emitStepEvent(
-          "router_0",
-          "planning",
-          "Query understood",
-          "completed",
-          state.requestId,
-          {
-            description: `Route: ${parsed.route} (confidence: ${parsed.confidence})`,
-            duration: durationMs,
-          },
-        );
-
         return {
           ...state,
           route: parsed.route,
@@ -115,10 +103,10 @@ export async function routerNode(state: AgentStateType): Promise<AgentStateType>
         emitStepEvent(
           "router_0",
           "planning",
-          "Router fallback",
+          "Processing your request",
           "completed",
           state.requestId,
-          { description: "Could not classify. Defaulting to plan." },
+          { description: "Identified the information needed" },
         );
 
         // Safe fallback: treat as a planning query

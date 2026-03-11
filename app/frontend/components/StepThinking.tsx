@@ -8,42 +8,14 @@ import { cn, renderDate } from "@/lib/utils";
 type Props = {
   steps: ThinkingStep[];
 };
-
-export const mockSteps = [
-  {
-    title: "Searching indexed memories",
-    status: "running",
-    message: "Scanning your captured activities...",
-    queries: ["meeting notes", "design doc", "chat with John"],
-  },
-  {
-    title: "Processing results",
-    status: "completed",
-    results: [
-      {
-        app_name: "Google Chrome",
-        window_name: "Figma - Design System",
-        image_path: "/captures/figma-design.png",
-        captured_at: "2026-03-06T16:45:10Z",
-      },
-      {
-        app_name: "Visual Studio Code",
-        window_name: "search-engine.ts",
-        image_path: "/captures/vscode-code.png",
-        captured_at: "2026-03-06T16:47:32Z",
-      },
-    ],
-    message: "Relevant activities found in your history.",
-  },
-  {
-    title: "Generating answer",
-    status: "final",
-    message: "Here are the most relevant moments from your memory.",
-  },
-];
-
+ 
 export function StepThinking({ steps }: Props) {
   const mergedSteps = steps.reduce<ThinkingStep[]>((acc, step) => {
+    // Skip router steps - only show actual planning/searching/reasoning steps
+    if (step.stepId === "router_0") {
+      return acc;
+    }
+    
     const existingIndex = acc.findIndex((item) => item.stepId === step.stepId);
     if (existingIndex >= 0) {
       acc[existingIndex] = {

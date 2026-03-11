@@ -5,7 +5,7 @@
   "identifier": "com.pavan.memento-ai",
   "build": {
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "cd frontend && npm run dev",
+    "beforeDevCommand": "cd frontend &&  npm run dev",
     "frontendDist": "../frontend/out"
   },
   "app": {

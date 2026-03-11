@@ -1,9 +1,9 @@
 use reqwest::Client;
 use serde::{ Deserialize, Serialize };
-use tracing::{ info };
+
 
 use once_cell::sync::Lazy;
-use dotenv::dotenv;
+
 
 // static SEARCH_API_KEY: Lazy<String> = Lazy::new(|| {
 //     dotenv().ok();

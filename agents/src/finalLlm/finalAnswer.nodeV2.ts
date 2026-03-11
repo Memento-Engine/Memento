@@ -4,9 +4,9 @@ import { finalAnswerPrompt } from "../prompts/finalResultPrompt";
 import { ErrorHandler } from "../utils/parser";
 import { getConfig } from "../config/config";
 import { ExecutorError, ErrorCode } from "../types/errors";
-import { emitCompletion, emitStepEvent } from "../utils/eventQueue";
+import { emitCompletion, emitStepEvent, emitTextChunk } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
-import { invokeRoleLlm } from "../llm/routing";
+import { invokeRoleLlmStreaming } from "../llm/routing";
 import { normalizeOcrLayout, NormalizedOcrLayout } from "../utils/ocrLayout";
 
 /*
@@ -128,11 +128,7 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
       }
 
       // ── No results ────────────────────────────────────────
-      if (
-        !hasSearchResults ||
-        !stepResults ||
-        Object.keys(stepResults).length === 0
-      ) {
+      if (!hasSearchResults || !stepResults || Object.keys(stepResults).length === 0) {
         const noMsg = state.noResultsFound
           ? `I was unable to find any relevant information for your request: "${goal}". The system performed multiple search attempts but did not return any matching results.`
           : `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
@@ -170,35 +166,40 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
         emitStepEvent(
           "finalize_0",
           "completion",
-          "Finalizing the answer...",
+          "Preparing your answer",
           "running",
           state.requestId,
-          { description: "Synthesising the final response" },
+          { description: "Organizing the results" }
         );
 
-        const llmResult = await invokeRoleLlm({
+        // Use streaming LLM call for final answer - emit text chunks as they arrive
+        const llmResult = await invokeRoleLlmStreaming({
           role: "final",
           prompt,
           requestId: state.requestId,
           spanName: "agent.node.final_answer.llm",
           spanAttributes: { node: "finalAnswer" },
+          onChunk: (chunk: string) => {
+            // Emit each chunk as it arrives for real-time streaming
+            emitTextChunk(chunk, state.requestId);
+          },
         });
 
-        // Extract plain text
+        // Extract plain text (already accumulated from streaming)
         let finalResult: string;
         const content = llmResult.response.content;
         if (typeof content === "string") {
           finalResult = content.trim();
         } else if (Array.isArray(content)) {
           finalResult = content
-            .map((item: any) =>
-              typeof item === "string" ? item : item?.text ?? "",
-            )
+            .map((item: any) => (typeof item === "string" ? item : (item?.text ?? "")))
             .join("")
             .trim();
         } else {
           finalResult = String(content).trim();
         }
+
+        logger.info("Final Answer", { finalResultLength: finalResult });
 
         if (!finalResult) throw new Error("Final answer is empty");
 
@@ -209,19 +210,10 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
           durationMs,
         });
 
-        emitStepEvent(
-          "finalize_0",
-          "completion",
-          "Finished",
-          "completed",
-          state.requestId,
-          {
-            description: "Final answer generated",
-            duration: Math.round(
-              ((Date.now() - (state.startTime ?? Date.now())) / 1000) * 10,
-            ) / 10,
-          },
-        );
+        emitStepEvent("finalize_0", "completion", "Answer ready", "completed", state.requestId, {
+          description: "Summarized the findings",
+          duration: Math.round(((Date.now() - (state.startTime ?? Date.now())) / 1000) * 10) / 10,
+        });
 
         emitCompletion(finalResult, state.requestId);
 
@@ -233,11 +225,10 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
           llmCalls: (state.llmCalls ?? 0) + 1,
         };
       } catch (error) {
-        const agentError = ErrorHandler.toAgentError(
-          error,
-          ErrorCode.EXECUTOR_FAILED,
-          { node: "finalAnswer", goal },
-        );
+        const agentError = ErrorHandler.toAgentError(error, ErrorCode.EXECUTOR_FAILED, {
+          node: "finalAnswer",
+          goal,
+        });
 
         logger.error("Final answer node failed", error);
 
@@ -246,6 +237,6 @@ export async function finalAnswerNodeV2(state: AgentStateType): Promise<AgentSta
 
         throw agentError;
       }
-    },
+    }
   );
 }

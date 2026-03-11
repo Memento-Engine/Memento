@@ -1,9 +1,9 @@
 use chrono::Utc;
-use image::DynamicImage;
 use tokio::sync::mpsc::Receiver;
-use tracing::{ info, error, warn };
+use tracing::{debug, error, info, warn};
 use crate::{
     embedding::engine::EmbeddingModel,
+    logging::LatencyGuard,
     ocr::windows::OcrBbox,
     pipeline::capture::CaptureResult,
 };
@@ -11,7 +11,6 @@ use app_core::{ config::memories_dir, db::{ ChunkBlock, DatabaseManager, Process
 use std::sync::{ Arc, Mutex };
 
 use image::codecs::jpeg::JpegEncoder;
-use image::ImageEncoder;
 use std::fs::{self, File};
 use std::path::Path;
 
@@ -30,7 +29,7 @@ fn save_compressed_jpeg(img: &image::DynamicImage, path: &Path) -> Result<(), im
 
 fn sanitize(s: &str) -> String {
     s.chars()
-        .filter(|c| (c.is_alphanumeric() || *c == '_'))
+        .filter(|c| c.is_alphanumeric() || *c == '_')
         .collect()
 }
 
@@ -42,7 +41,10 @@ pub async fn processing_ocr_results(
     const CHUNK_SIZE: usize = 300;
 
     while let Some(capture) = rx.recv().await {
+        let _capture_guard = LatencyGuard::with_threshold("process_capture_batch", 1000);
         let mut final_results: Vec<ProcessedOcrResult> = Vec::new();
+        let window_count = capture.window_ocr_results.len();
+        debug!(windows = window_count, "Processing capture batch");
 
         for ocr_item in capture.window_ocr_results {
             // ----------------------------------------
@@ -83,7 +85,12 @@ pub async fn processing_ocr_results(
             // ----------------------------------------
             // Generate embeddings safely (non-blocking async)
             // ----------------------------------------
+            let chunk_count = text_for_embeddings.len();
             let embeddings: Vec<Vec<f32>> = {
+                let _emb_guard = LatencyGuard::with_threshold(
+                    format!("generate_embeddings(chunks={})", chunk_count),
+                    500,
+                );
                 let embedding_model: Arc<Mutex<EmbeddingModel>> = bi_encoder.clone();
 
                 tokio::task
@@ -98,6 +105,7 @@ pub async fn processing_ocr_results(
                     }).await
                     .unwrap()
             };
+            debug!(chunks = chunk_count, "Generated embeddings");
 
             // ----------------------------------------
             //  Build ChunkBlocks with correct alignment
@@ -168,10 +176,13 @@ pub async fn processing_ocr_results(
             }
 
             //  Insert DB record with path
+            let _db_guard = LatencyGuard::with_threshold("db_insert_frames", 200);
             match db.insert_frames_with_chunks(&record, &file_path.to_string_lossy()).await {
-                Ok(()) => {}
+                Ok(()) => {
+                    debug!(app = %record.app_name, "Inserted frame to DB");
+                }
                 Err(e) => {
-                    error!("DB insert failed: {:?}", e);
+                    error!(app = %record.app_name, error = ?e, "DB insert failed");
 
                     // rollback file
                     let _ = match std::fs::remove_file(&file_path) {
@@ -185,5 +196,5 @@ pub async fn processing_ocr_results(
         }
     }
 
-    info!("Channel closed, stopping processor.");
+    tracing::info!("Channel closed, stopping processor.");
 }

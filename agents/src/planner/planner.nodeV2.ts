@@ -43,10 +43,10 @@ export async function plannerNodeV2(
       emitStepEvent(
         "plan_0",
         "planning",
-        "Building execution plan...",
+        "Planning your answer",
         "running",
         state.requestId,
-        { description: "Breaking your query into steps", query: state.goal },
+        { description: "Breaking the problem into steps", query: state.goal },
       );
 
       try {
@@ -97,10 +97,10 @@ export async function plannerNodeV2(
                 emitStepEvent(
                   "plan_0",
                   "planning",
-                  "Refining plan...",
+                  "Refining strategy",
                   "running",
                   state.requestId,
-                  { description: `Attempt ${attempt + 1} failed: ${validation.error}` },
+                  { description: "Adjusting the approach" },
                 );
               }
               continue;
@@ -119,11 +119,11 @@ export async function plannerNodeV2(
             emitStepEvent(
               "plan_0",
               "planning",
-              "Plan ready",
+              "Strategy ready",
               "completed",
               state.requestId,
               {
-                description: `Created plan with ${plan.steps.length} step(s)`,
+                description: `Decided what information to gather`,
                 query: state.goal,
                 duration: durationMs,
               },
@@ -166,10 +166,10 @@ export async function plannerNodeV2(
         emitStepEvent(
           "plan_0",
           "planning",
-          "Planning failed",
+          "Trying another approach",
           "failed",
           state.requestId,
-          { description: agentError.message },
+          { description: "Adjusting strategy" },
         );
 
         return {

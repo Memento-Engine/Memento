@@ -20,8 +20,21 @@ Retrieved Context (chunk-grounded):
 Citation policy:
 {citationInstruction}
 
+CITATION REQUIREMENTS (MANDATORY):
+- You MUST cite EVERY factual statement with the corresponding chunk_id from Retrieved Context.
+- Use the exact citation format: [[chunk_id]] immediately after the claim.
+- For multiple sources supporting one claim, use: [[chunk_1][chunk_2]]
+- Do NOT make any factual claim without a citation.
+- Only cite chunk_ids that appear in the Retrieved Context above.
+- If you cannot find supporting evidence for a claim, do not make that claim.
+
+Example of correct citation:
+"You visited the Figma design file at 3:45 PM [[chunk_42]]."
+"The meeting notes mentioned project deadlines [[chunk_15][chunk_22]]."
+
 Instructions:
 Analyze the retrieved context and synthesize a direct answer to the user's goal.
+Cite every factual statement with the appropriate chunk_id.
 
 Return the final answer in clear natural language.
 

@@ -38,6 +38,8 @@ export class SearchTool implements Tool<ResolvedQuery, any[]> {
 
           const payload = response.data as ToolResult<any[]> | any[];
 
+          console.log("Search tool response", { payload });
+
           if (Array.isArray(payload)) {
             logger.info("Search tool succeeded (legacy response format)");
             return toolSuccess(payload, {
@@ -50,9 +52,7 @@ export class SearchTool implements Tool<ResolvedQuery, any[]> {
             const envelope = payload as ToolResult<any[]>;
 
             const parsedError =
-              typeof envelope.error === "string"
-                ? { message: envelope.error }
-                : envelope.error;
+              typeof envelope.error === "string" ? { message: envelope.error } : envelope.error;
 
             if (!envelope.success) {
               const errMsg = parsedError?.message ?? "Search backend returned an error";

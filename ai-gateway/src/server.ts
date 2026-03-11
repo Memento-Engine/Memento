@@ -63,9 +63,13 @@ async function startServer(): Promise<void> {
       const parsed = chatSchema.parse(req.body);
 
       console.log("Received chat request", {
-        req: parsed.messages.map((m) => ({ role: m.role, contentLength: m.content.length })),
-        sysRole : parsed.role
-        });
+        req: parsed.messages.map((m) => ({
+          role: m.role,
+          contentLength: m.content.length,
+          content: m.content,
+        })),
+        sysRole: parsed.role,
+      });
 
       const roleDefaults = parsed.role ? config.roles[parsed.role] : undefined;
       const resolvedMaxTokens = roleDefaults
@@ -104,6 +108,62 @@ async function startServer(): Promise<void> {
           message,
         },
       });
+    }
+  });
+
+  // Streaming chat endpoint for final answer
+  app.post("/v1/chat/stream", async (req: Request, res: Response) => {
+    try {
+      const parsed = chatSchema.parse(req.body);
+
+      console.log("Received streaming chat request", {
+        req: parsed.messages.map((m) => ({ role: m.role, contentLength: m.content.length })),
+        sysRole: parsed.role,
+      });
+
+      const roleDefaults = parsed.role ? config.roles[parsed.role] : undefined;
+      const resolvedMaxTokens = roleDefaults
+        ? Math.min(parsed.max_tokens ?? roleDefaults.maxOutputTokens, roleDefaults.maxOutputTokens)
+        : (parsed.max_tokens ?? config.defaults.maxTokens);
+
+      const chatRequest: ChatRequest = {
+        messages: parsed.messages,
+        model: parsed.model,
+        temperature: parsed.temperature ?? config.defaults.temperature,
+        max_tokens: resolvedMaxTokens,
+        user_id: parsed.user_id,
+        role: parsed.role,
+      };
+
+      // Set up SSE headers
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const response = await modelRouter.chatStream(chatRequest, (chunk: string) => {
+        // Send each chunk as SSE data
+        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      });
+
+      // Send final completion event
+      res.write(
+        `data: ${JSON.stringify({ done: true, usage: response.usage, model: response.model })}\n\n`
+      );
+      res.end();
+
+      usageTracker.track({
+        user_id: chatRequest.user_id,
+        model: response.model,
+        prompt_tokens: response.usage.prompt_tokens,
+        completion_tokens: response.usage.completion_tokens,
+        total_tokens: response.usage.total_tokens,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown gateway error";
+      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+      res.end();
     }
   });
 
