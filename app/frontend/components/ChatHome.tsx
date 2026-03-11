@@ -99,7 +99,7 @@ export default function ChatHome({ handleSend }: ChatHomeProps): React.ReactElem
 
         {/* ===== BRAND ===== */}
         <div className="mb-6 flex items-center justify-center gap-1 select-none">
-          <h1 className="font-display text-4xl font-medium tracking-tight text-primary md:text-5xl">
+          <h1 className="font-display text-4xl font-medium tracking-tight text-primary md:text-5xl .thinking-shimmer">
             memento
           </h1>
         </div>

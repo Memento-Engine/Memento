@@ -51,7 +51,7 @@ export async function plannerNodeV2(
 
       try {
         const config = await getConfig();
-        const maxAttempts = Math.max(1, config.agent.maxPlanRetries ?? 3);
+        const maxAttempts = Math.max(1, config.agent.maxPlanRetries ?? 2);
 
         let lastError = "";
         let lastRawError: unknown;
@@ -97,7 +97,7 @@ export async function plannerNodeV2(
                 emitStepEvent(
                   "plan_0",
                   "planning",
-                  "Refining strategy",
+                  "Refining searching strategy",
                   "running",
                   state.requestId,
                   { description: "Adjusting the approach" },
@@ -115,19 +115,6 @@ export async function plannerNodeV2(
               stepIds: plan.steps.map((s) => s.id),
               durationMs,
             });
-
-            emitStepEvent(
-              "plan_0",
-              "planning",
-              "Strategy ready",
-              "completed",
-              state.requestId,
-              {
-                description: `Decided what information to gather`,
-                query: state.goal,
-                duration: durationMs,
-              },
-            );
 
             return {
               ...state,
@@ -166,7 +153,7 @@ export async function plannerNodeV2(
         emitStepEvent(
           "plan_0",
           "planning",
-          "Trying another approach",
+          "Trying another Search approach",
           "failed",
           state.requestId,
           { description: "Adjusting strategy" },

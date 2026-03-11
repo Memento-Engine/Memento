@@ -121,7 +121,7 @@ function LeftSidebar(): React.ReactElement {
           <SidebarMenuItem className="group/menuitem list-none">
             <SidebarMenuButton
               variant="default"
-              className="w-full text-muted-foreground/90 flex items-center cursor-pointer justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+              className="w-full text-muted-foreground flex items-center cursor-pointer justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
             >
               <Search className="h-5 w-5 shrink-0" />
               <span className="ml-2 flex w-full min-w-0 items-center justify-between overflow-hidden group-data-[collapsible=icon]:hidden">
@@ -152,7 +152,7 @@ function LeftSidebar(): React.ReactElement {
                   w-full
                   flex
                   items-center
-                  text-muted-foreground/90
+                  text-muted-foreground
                   justify-between
                   cursor-pointer
                   px-3

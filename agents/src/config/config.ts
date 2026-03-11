@@ -44,6 +44,7 @@ const ConfigSchema = z.object({
     maxLlmCalls: z.number().int().min(1).default(6),
     maxSteps: z.number().int().min(1).default(4),
     maxRuntimeMs: z.number().int().min(1000).default(15000),
+    useReActExecutor: z.boolean().default(true), // Use ReAct loop instead of upfront planning
   }),
 });
 
@@ -101,6 +102,7 @@ export async function loadConfig(): Promise<Config> {
       maxLlmCalls: parseInt(process.env.MAX_LLM_CALLS ?? "6", 10),
       maxSteps: parseInt(process.env.MAX_STEPS ?? "4", 10),
       maxRuntimeMs: parseInt(process.env.MAX_RUNTIME_MS ?? "15000", 10),
+      useReActExecutor: process.env.USE_REACT_EXECUTOR !== "false", // default true
     },
   };
 

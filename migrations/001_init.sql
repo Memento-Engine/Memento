@@ -27,16 +27,7 @@ CREATE TABLE IF NOT EXISTS frames (
 CREATE INDEX IF NOT EXISTS idx_frames_created_at ON frames(captured_at);
 CREATE INDEX IF NOT EXISTS idx_frames_app_name ON frames(app_name);
 
--- Timeline table to prevent being stored same frames multiple times
-CREATE TABLE IF NOT EXISTS timelines (
-    id INTEGER PRIMARY KEY,
-    frame_id INTEGER NOT NULL,
-    timestamp INTEGER,
-    
-    FOREIGN KEY (frame_id)
-        REFERENCES frames(id)
-        ON DELETE CASCADE
-);
+
 
 -- ==========================================
 -- 2. CHUNKS (The Structured Memory)

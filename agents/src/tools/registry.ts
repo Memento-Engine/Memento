@@ -1,5 +1,6 @@
 import { Tool, ToolRegistry } from "../types/tools";
 import { SearchTool } from "./search";
+import { createSkillTools } from "../skills/tools";
 import { getLogger } from "../utils/logger";
 
 let registryInstance: ToolRegistry | null = null;
@@ -15,11 +16,17 @@ export async function initializeToolRegistry(): Promise<ToolRegistry> {
   const logger = await getLogger();
   registryInstance = new ToolRegistry();
 
-  // Register built-in tools
+  // Register legacy search tool (for backward compatibility)
   const searchTool = new SearchTool();
   registryInstance.register(searchTool);
 
-  logger.info("Tool registry initialized");
+  // Register skill-based tools
+  const skillTools = createSkillTools();
+  for (const tool of skillTools) {
+    registryInstance.register(tool);
+  }
+
+  logger.info(`Tool registry initialized with ${registryInstance.list().length} tools`);
 
   return registryInstance;
 }

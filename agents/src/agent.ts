@@ -3,6 +3,7 @@ import { AgentState, AgentStateType } from "./agentState";
 import { routerNode } from "./router/router.node";
 import { plannerNodeV2 } from "./planner/planner.nodeV2";
 import { executorNodeV2 } from "./executor/executor.nodeV2";
+import { reactExecutorNode } from "./executor/react.node";
 import { finalAnswerNodeV2 } from "./finalLlm/finalAnswer.nodeV2";
 import { getLogger } from "./utils/logger";
 import { getConfig } from "./config/config";
@@ -20,10 +21,8 @@ AGENT GRAPH (v2)
     ▼
   router ─────┬── conversation ──► END
               │── needs_clarification ──► END
-              │── simple_search ──► simpleSearchPlan ──► executor ──► finalAnswer ──► END
-              └── plan ──► planner ─┬── shouldReplan ──► planner (loop)
-                                    └── valid ──► executor ─┬── shouldReplan ──► planner
-                                                            └── done ──► finalAnswer ──► END
+              │── simple_search/plan ─┬── (useReAct) ──► reactExecutor ──► finalAnswer ──► END
+                                      └── (legacy) ──► planner ──► executor ──► finalAnswer ──► END
 ============================================================
 */
 
@@ -32,17 +31,22 @@ AGENT GRAPH (v2)
 /**
  * After the router node: decide which branch to take.
  */
-function afterRouter(state: AgentStateType): string {
+async function afterRouter(state: AgentStateType): Promise<string> {
+  const config = await getConfig();
+  
   switch (state.route) {
     case "conversation":
       return "conversationExit";
     case "needs_clarification":
       return "clarificationExit";
     case "simple_search":
-      return "simpleSearchPlan";
     case "plan":
     default:
-      return "planner";
+      // Use ReAct executor or legacy planner based on config
+      if (config.agent.useReActExecutor) {
+        return "reactExecutor";
+      }
+      return state.route === "simple_search" ? "simpleSearchPlan" : "planner";
   }
 }
 
@@ -170,6 +174,7 @@ async function buildAgentGraph() {
           .addNode("router", routerNode)
           .addNode("planner", plannerNodeV2)
           .addNode("executor", executorNodeV2)
+          .addNode("reactExecutor", reactExecutorNode)
           .addNode("finalAnswer", finalAnswerNodeV2)
           .addNode("conversationExit", conversationExit)
           .addNode("clarificationExit", clarificationExit)
@@ -183,9 +188,13 @@ async function buildAgentGraph() {
           clarificationExit: "clarificationExit",
           simpleSearchPlan: "simpleSearchPlan",
           planner: "planner",
+          reactExecutor: "reactExecutor",
         });
 
         graphBuilder.addEdge("simpleSearchPlan", "executor");
+        
+        // ReAct executor goes directly to final answer
+        graphBuilder.addEdge("reactExecutor", "finalAnswer");
 
         graphBuilder.addConditionalEdges("planner", afterPlanner, {
           planner: "planner",

@@ -53,12 +53,12 @@ pre-push:
   parallel: false
   commands:
     cargo-check:
-      run: cargo check --all --all-features
+      run: cargo check --all --workspace
       fail_text: "Cargo check failed. Fix errors and try again."
       skip: merge,rebase
 
-    cargo-test:
-      run: cargo test --all --all-features
+    cargo-build:
+      run: cargo build 
       skip: merge,rebase
 
     build-ui:

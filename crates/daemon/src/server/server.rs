@@ -8,6 +8,7 @@ use tracing::{error, info, warn};
 use crate::core::ShutdownController;
 use crate::server::app_state::AppState;
 use crate::server::search_tool::search_tool;
+use crate::server::skill_endpoints::{sql_execute, semantic_search, hybrid_search};
 
 #[derive(Serialize)]
 pub struct HealthStatus {
@@ -28,6 +29,9 @@ async fn health_check() -> Json<HealthStatus> {
 fn api_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/search_tool", post(search_tool))
+        .route("/sql_execute", post(sql_execute))
+        .route("/semantic_search", post(semantic_search))
+        .route("/hybrid_search", post(hybrid_search))
         .route("/healthz", get(|| async { "ok" }))
         .route("/health", get(health_check))
 }
