@@ -329,6 +329,48 @@
   color: transparent;
 }
 
+/* Smooth shimmer for active step text */
+@keyframes stepShimmer {
+  0% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.6;
+  }
+}
+
+.step-shimmer {
+  animation: stepShimmer 1.5s ease-in-out infinite;
+  color: hsl(var(--foreground));
+}
+
+/* Alternative gradient shimmer for step text */
+@keyframes stepGradientShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.step-shimmer-gradient {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--foreground)) 0%,
+    hsl(var(--primary)) 50%,
+    hsl(var(--foreground)) 100%
+  );
+  background-size: 200% 100%;
+  animation: stepGradientShimmer 2s ease-in-out infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 
 @layer utilities {
 

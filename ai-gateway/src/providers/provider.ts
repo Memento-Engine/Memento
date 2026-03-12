@@ -1,4 +1,4 @@
-import type { ChatMessage, ProviderName } from "../types.js";
+import type { ChatMessage, ProviderName, TokenUsage } from "../types.js";
 
 export type ProviderChatRequest = {
   model: string;
@@ -11,11 +11,7 @@ export type ProviderChatRequest = {
 export type ProviderChatResult = {
   model: string;
   content: string;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  usage: TokenUsage;
 };
 
 export type StreamChunkCallback = (chunk: string) => void;

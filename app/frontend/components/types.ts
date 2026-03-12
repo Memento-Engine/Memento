@@ -1,93 +1,26 @@
 import { UIMessage } from "ai";
 import { z } from "zod";
+import {
+  normalizedOcrLayoutSchema,
+  normalizedOcrTokenSchema,
+  sourceSchema,
+  SourceRecord,
+  sourcesPayloadSchema,
+  SourcesPayload,
+  StepSearchResultsSchema,
+  thinkingSchema,
+  ThinkingStep,
+} from "@shared/types/frontend";
 
-// Step search results schema
-export const StepSearchResultsSchema = z.object({
-  app_name: z.string(),
-  window_name: z.string(),
-  image_path: z.string(),
-  captured_at: z.string(),
-});
-
-// Thinking schema - represents execution steps streamed from backend
-export const thinkingSchema = z.object({
-  // Step identification
-  stepId: z.string(),
-  stepType: z.enum([
-    "planning", // planner generating plan
-    "searching", // executor running search step
-    "reasoning", // executor running reasoning step
-    "completion", // final answer generation
-  ]),
-
-  // Step status and progress
-  status: z.enum([
-    "running", // currently executing
-    "completed", // finished step
-    "failed", // step failed but recovered
-    "final", // entire pipeline finished
-  ]),
-
-  // Step description and details
-  title: z.string(), // Human-readable step name
-  description: z.string().optional(), // Detailed description
-  query: z.string().optional(), // Search query or reasoning prompt
-  
-  // Search/execution results
-  results: z.array(StepSearchResultsSchema).optional().nullable(),
-  resultCount: z.number().optional(), // Count of results found
-  
-  // Reasoning and feedback
-  message: z.string().optional().nullable(), // Info/warning/error message
-  reasoning: z.string().optional(), // LLM reasoning for this step
-  queries: z.array(z.string()).nullable().optional(), // Alternative queries tried
-  
-  // Timing
-  duration: z.number().optional(), // Time taken in ms
-  timestamp: z.string().optional(), // ISO timestamp
-});
-
-export type ThinkingStep = z.infer<typeof thinkingSchema>;
-
-export const normalizedOcrTokenSchema = z.object({
-  text: z.string(),
-  x: z.number(),
-  y: z.number(),
-  width: z.number(),
-  height: z.number(),
-  index: z.number(),
-});
-
-export const normalizedOcrLayoutSchema = z.object({
-  version: z.literal(1),
-  normalized_text: z.string(),
-  tokens: z.array(normalizedOcrTokenSchema),
-});
-
-export const sourceSchema = z.object({
-  chunkId: z.string().min(1),
-  appName: z.string().default(""),
-  windowTitle: z.string().default(""),
-  capturedAt: z.string().default(""),
-  browserUrl: z.string().default(""),
-  textContent: z.string().default(""),
-  textJson: z.string().optional().nullable(),
-  normalizedTextLayout: normalizedOcrLayoutSchema.optional().nullable(),
-  imagePath: z.string().default(""),
-  frameId: z.number().optional(),
-  windowX: z.number().optional(),
-  windowY: z.number().optional(),
-  windowWidth: z.number().optional(),
-  windowHeight: z.number().optional(),
-});
-
-export const sourcesPayloadSchema = z.object({
-  includeImages: z.boolean().default(false),
-  sources: z.array(sourceSchema),
-});
-
-export type SourceRecord = z.infer<typeof sourceSchema>;
-export type SourcesPayload = z.infer<typeof sourcesPayloadSchema>;
+export {
+  normalizedOcrLayoutSchema,
+  normalizedOcrTokenSchema,
+  sourceSchema,
+  sourcesPayloadSchema,
+  StepSearchResultsSchema,
+  thinkingSchema,
+};
+export type { SourceRecord, SourcesPayload, ThinkingStep };
 
 // Citation schema
 export const citationSchema = z.object({

@@ -4,7 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
-    "rootDir": "./src",
+    "rootDir": "..",
     "outDir": "./dist",
     "strict": true,
     "skipLibCheck": true,
@@ -14,6 +14,6 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../shared/types/gateway.ts"],
   "exclude": ["node_modules", "dist"]
 }

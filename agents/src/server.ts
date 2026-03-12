@@ -291,15 +291,16 @@ async function startServer() {
           });
 
           if (Array.isArray(result?.retrievedSources) && result.retrievedSources.length > 0) {
-            res.write(
-              JSON.stringify({
-                type: "sources",
-                data: {
-                  sources: result.retrievedSources,
-                },
-                timestamp: formatLocalTimestamp(),
-              }) + "\n",
-            );
+            // Emit sources event using shared types
+            const sourcesEvent = {
+              type: "sources",
+              data: {
+                includeImages: true, // Set as needed
+                sources: result.retrievedSources,
+              },
+              timestamp: formatLocalTimestamp(),
+            };
+            res.write(JSON.stringify(sourcesEvent) + "\n");
           }
 
           res.write(

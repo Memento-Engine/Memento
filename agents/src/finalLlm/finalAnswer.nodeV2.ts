@@ -6,6 +6,7 @@ import { getConfig } from "../config/config";
 import { ExecutorError, ErrorCode } from "../types/errors";
 import {
   emitCompletion,
+  emitError,
   emitStepEvent,
   emitTextChunk,
 } from "../utils/eventQueue";
@@ -265,8 +266,13 @@ export async function finalAnswerNodeV2(
 
         logger.error("Final answer node failed", error);
 
-        const fallback = `I encountered an error while processing your request: "${goal}". The system was unable to complete the response generation.`;
-        emitCompletion(fallback, state.requestId);
+        // Emit error event for the frontend
+        emitError(
+          "Failed to generate response",
+          ErrorCode.EXECUTOR_FAILED,
+          state.requestId,
+          true
+        );
 
         throw agentError;
       }

@@ -173,6 +173,8 @@ function RenderMarkdownComponent({
     return preprocessCitations(normalized);
   }, [content]);
 
+  console.log("Part text", content);
+
   const mergedComponents = useMemo(
     () => ({
       ...components,
