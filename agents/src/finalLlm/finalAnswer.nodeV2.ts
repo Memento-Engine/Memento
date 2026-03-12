@@ -129,23 +129,24 @@ export async function finalAnswerNodeV2(
 
       const { stepResults, goal, hasSearchResults } = state;
       const config = await getConfig();
-      const retrievedSources = buildRetrievedSources(stepResults);
+      const retrievedSources = buildRetrievedSources(stepResults); // We don't need this because llm dynamically calls sql what fields it wants. we simply passdown the stepresults to promp.
 
       // ── Budget guard ───────────────────────────────────────
       if ((state.llmCalls ?? 0) >= config.agent.maxLlmCalls) {
         const partial = `Partial answer due to runtime safeguards. I found ${Object.keys(stepResults ?? {}).length} completed result sets for your request: "${goal}".`;
-        emitCompletion(partial, state.requestId);
-        return {
-          ...state,
-          finalResult: partial,
-          retrievedSources,
-          endTime: Date.now(),
-        };
+        logger.warn("LLM call limit reached, partial answer");
+        // emitCompletion(partial, state.requestId);
+        // return {
+        //   ...state,
+        //   finalResult: partial,
+        //   retrievedSources,
+        //   endTime: Date.now(),
+        // };
       }
 
       // ── No results ────────────────────────────────────────
       if (
-        !hasSearchResults ||
+        // !hasSearchResults ||
         !stepResults ||
         Object.keys(stepResults).length === 0
       ) {
@@ -162,10 +163,11 @@ export async function finalAnswerNodeV2(
       }
 
       // ── Build LLM context ─────────────────────────────────
+
       try {
-        const llmContext = retrievedSources.slice(0, 12).map((src) => ({
+        const llmContext = retrievedSources.map((src) => ({
           chunk_id: src.chunk_id,
-          text: trimText(src.text_content, 1200),
+          text: src.text_content,
           app_name: src.app_name,
           window_title: src.window_title,
           captured_at: src.captured_at,
@@ -208,6 +210,7 @@ export async function finalAnswerNodeV2(
         // Extract plain text (already accumulated from streaming)
         let finalResult: string;
         const content = llmResult.response.content;
+
         if (typeof content === "string") {
           finalResult = content.trim();
         } else if (Array.isArray(content)) {
@@ -220,8 +223,6 @@ export async function finalAnswerNodeV2(
         } else {
           finalResult = String(content).trim();
         }
-
-        logger.info("Final Answer", { finalResultLength: finalResult });
 
         if (!finalResult) throw new Error("Final answer is empty");
 
@@ -271,7 +272,7 @@ export async function finalAnswerNodeV2(
           "Failed to generate response",
           ErrorCode.EXECUTOR_FAILED,
           state.requestId,
-          true
+          true,
         );
 
         throw agentError;

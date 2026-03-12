@@ -77,14 +77,18 @@ Semantic search is done via a separate API call, not raw SQL.
 
 ## Common Join Patterns
 
+**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements. chunk_id is required for citations.
+
 ```sql
--- Get text content with frame metadata
+-- Get text content with frame metadata (ALWAYS include chunk_id)
 SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations [[chunk_id]]
   f.captured_at,
   f.app_name,
   f.window_title,
   f.browser_url,
-  c.text_content
+  c.text_content,
+  f.image_path
 FROM chunks c
 JOIN frames f ON c.frame_id = f.id
 WHERE ...

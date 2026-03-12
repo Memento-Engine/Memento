@@ -103,10 +103,12 @@ After semantic search returns chunks, you may need SQL to:
 ```sql
 -- Get surrounding frames for context (semantic search returns chunk_ids)
 SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
   f.captured_at,
   f.app_name,
   f.window_title,
   f.browser_url,
+  f.image_path,
   c.text_content
 FROM chunks c
 JOIN frames f ON c.frame_id = f.id

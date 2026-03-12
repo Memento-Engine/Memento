@@ -19,7 +19,10 @@ import {
   initializeEventQueue,
   cleanupEventQueue,
 } from "./utils/eventQueue";
-import { initializeTelemetry, registerTelemetryShutdownHooks } from "./telemetry/setup";
+import {
+  initializeTelemetry,
+  registerTelemetryShutdownHooks,
+} from "./telemetry/setup";
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
 
@@ -82,29 +85,31 @@ async function startServer() {
     });
 
     // Error handling middleware
-    app.use(async (err: any, req: Request, res: Response, next: NextFunction) => {
-      const logger = await createContextLogger((req as any).requestId);
+    app.use(
+      async (err: any, req: Request, res: Response, next: NextFunction) => {
+        const logger = await createContextLogger((req as any).requestId);
 
-      if (err instanceof SyntaxError && "body" in err) {
-        logger.warn("Invalid JSON in request body");
-        return res.status(400).json({
+        if (err instanceof SyntaxError && "body" in err) {
+          logger.warn("Invalid JSON in request body");
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: ErrorCode.INPUT_INVALID,
+              message: "Invalid JSON in request body",
+            },
+          } as AgentResponse);
+        }
+
+        logger.error("Unhandled middleware error", err);
+        res.status(500).json({
           success: false,
           error: {
-            code: ErrorCode.INPUT_INVALID,
-            message: "Invalid JSON in request body",
+            code: ErrorCode.INTERNAL_ERROR,
+            message: "Internal server error",
           },
         } as AgentResponse);
-      }
-
-      logger.error("Unhandled middleware error", err);
-      res.status(500).json({
-        success: false,
-        error: {
-          code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
-        },
-      } as AgentResponse);
-    });
+      },
+    );
 
     // API Routes
     const router = express.Router();
@@ -131,129 +136,216 @@ async function startServer() {
             method: "POST",
           },
           async () => {
-        try {
-          logger.info("Received agent request");
-
-          // Validate input
-          const validationResult = AgentRequestSchema.safeParse(req.body);
-
-          if (!validationResult.success) {
-            const errorMsg = validationResult.error.issues
-              .map((e: any) => `${e.path.join(".")}: ${e.message}`)
-              .join("; ");
-
-            logger.warn("Request validation failed", {
-              errors: validationResult.error.issues,
-            });
-
-            return res.status(400).json({
-              success: false,
-              error: {
-                code: ErrorCode.INPUT_INVALID,
-                message: `Invalid request: ${errorMsg}`,
-                details: { validationErrors: validationResult.error.issues },
-              },
-            } as AgentResponse);
-          }
-
-          const { goal } = validationResult.data;
-          logger.info("Request validated", { goal: goal.slice(0, 100) });
-
-          // Set response headers for streaming
-          res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-          res.setHeader("Transfer-Encoding", "chunked");
-          res.setHeader("Cache-Control", "no-cache");
-
-          // Create a stream writer callback that sends events to client immediately
-          const streamWriter = (event: any) => {
             try {
-              const json = JSON.stringify(event) + "\n";
-              res.write(json);
-              logger.debug("Streamed event to client", {
-                requestId,
-                eventType: event.type,
-                stepId: event.data?.stepId,
-              });
-            } catch (error) {
-              logger.error("Error writing event to response", error, { requestId });
-            }
-          };
+              logger.info("Received agent request");
 
-          // Initialize event queue with stream writer for real-time streaming
-          initializeEventQueue(requestId, streamWriter);
+              // Validate input
+              const validationResult = AgentRequestSchema.safeParse(req.body);
 
-          // Execute agent graph with event queue for streaming
-          let result: any;
-          let executionError: any = null;
+              if (!validationResult.success) {
+                const errorMsg = validationResult.error.issues
+                  .map((e: any) => `${e.path.join(".")}: ${e.message}`)
+                  .join("; ");
 
-          try {
-            result = await runWithSpan(
-              "agent.graph.invoke",
-              {
-                request_id: requestId,
-                endpoint: "/api/v1/agent",
-                goal_length: goal.length,
-              },
-              async () =>
-                (await graph).invoke({
-                  goal: goal as any,
-                  requestId: requestId as any,
-                  planAttempts: 0 as any,
-                  replanAttempts: 0 as any,
-                  llmCalls: 0 as any,
-                  stepErrors: {} as any,
-                  startTime: startTime as any,
-                  currentStep: 0 as any,
-                  shouldReplan: false as any,
-                  noResultsFound: false as any,
-                  hasSearchResults: false as any,
-                }),
-            );
-          } catch (error) {
-            executionError = error;
-            result = null;
-          }
+                logger.warn("Request validation failed", {
+                  errors: validationResult.error.issues,
+                });
 
-          const duration = Date.now() - startTime;
+                return res.status(400).json({
+                  success: false,
+                  error: {
+                    code: ErrorCode.INPUT_INVALID,
+                    message: `Invalid request: ${errorMsg}`,
+                    details: {
+                      validationErrors: validationResult.error.issues,
+                    },
+                  },
+                } as AgentResponse);
+              }
 
-          // If there was an execution error
-          if (executionError) {
-            if (isAgentError(executionError)) {
-              logger.warn("Agent execution failed with AgentError", {
-                code: executionError.code,
-                message: executionError.message,
-                duration,
-              });
+              const { goal } = validationResult.data;
 
-              // Send error event
+              // Set response headers for streaming
+              res.setHeader(
+                "Content-Type",
+                "application/x-ndjson; charset=utf-8",
+              );
+              res.setHeader("Transfer-Encoding", "chunked");
+              res.setHeader("Cache-Control", "no-cache");
+
+              // Create a stream writer callback that sends events to client immediately
+              const streamWriter = (event: any) => {
+                try {
+                  const json = JSON.stringify(event) + "\n";
+                  res.write(json);
+                  logger.debug("Streamed event to client", {
+                    requestId,
+                    eventType: event.type,
+                    stepId: event.data?.stepId,
+                  });
+                } catch (error) {
+                  logger.error("Error writing event to response", error, {
+                    requestId,
+                  });
+                }
+              };
+
+              // Initialize event queue with stream writer for real-time streaming
+              initializeEventQueue(requestId, streamWriter);
+
+              // Execute agent graph with event queue for streaming
+              let result: any;
+              let executionError: any = null;
+
+              try {
+                result = await runWithSpan(
+                  "agent.graph.invoke",
+                  {
+                    request_id: requestId,
+                    endpoint: "/api/v1/agent",
+                    goal_length: goal.length,
+                  },
+                  async () =>
+                    (await graph).invoke({
+                      goal: goal as any,
+                      requestId: requestId as any,
+                      planAttempts: 0 as any,
+                      replanAttempts: 0 as any,
+                      llmCalls: 0 as any,
+                      stepErrors: {} as any,
+                      startTime: startTime as any,
+                      currentStep: 0 as any,
+                      shouldReplan: false as any,
+                      noResultsFound: false as any,
+                      hasSearchResults: false as any,
+                    }),
+                );
+              } catch (error) {
+                executionError = error;
+                result = null;
+              }
+
+              const duration = Date.now() - startTime;
+
+              // If there was an execution error
+              if (executionError) {
+                if (isAgentError(executionError)) {
+                  logger.warn("Agent execution failed with AgentError", {
+                    code: executionError.code,
+                    message: executionError.message,
+                    duration,
+                  });
+
+                  // Send error event
+                  res.write(
+                    JSON.stringify({
+                      type: "error",
+                      data: {
+                        message: executionError.message,
+                        code: executionError.code,
+                        isSystemError: true, // This is a real system error
+                        timestamp: formatLocalTimestamp(),
+                      },
+                      timestamp: formatLocalTimestamp(),
+                    }) + "\n",
+                  );
+                } else {
+                  logger.error(
+                    "Agent execution failed with unexpected error",
+                    String(executionError),
+                    {
+                      duration,
+                      error: executionError,
+                    },
+                  );
+
+                  // Send generic error event
+                  res.write(
+                    JSON.stringify({
+                      type: "error",
+                      data: {
+                        message: "Agent execution failed",
+                        code: ErrorCode.INTERNAL_ERROR,
+                        isSystemError: true,
+                        timestamp: formatLocalTimestamp(),
+                      },
+                      timestamp: formatLocalTimestamp(),
+                    }) + "\n",
+                  );
+                }
+
+                // Send completion event with error status
+                res.write(
+                  JSON.stringify({
+                    type: "complete",
+                    data: {
+                      success: false,
+                      error: true,
+                      metadata: {
+                        requestId,
+                        duration,
+                        timestamp: formatLocalTimestamp(),
+                      },
+                    },
+                    timestamp: formatLocalTimestamp(),
+                  }) + "\n",
+                );
+
+                return res.end();
+              }
+
+       
+              if (
+                Array.isArray(result?.retrievedSources) &&
+                result.retrievedSources.length > 0
+              ) {
+                // Emit sources event using shared types
+                const sourcesEvent = {
+                  type: "sources",
+                  data: {
+                    includeImages: true, // Set as needed
+                    sources: result.retrievedSources,
+                  },
+                  timestamp: formatLocalTimestamp(),
+                };
+                res.write(JSON.stringify(sourcesEvent) + "\n");
+              }
+
               res.write(
                 JSON.stringify({
-                  type: "error",
+                  type: "complete",
                   data: {
-                    message: executionError.message,
-                    code: executionError.code,
-                    isSystemError: true, // This is a real system error
-                    timestamp: formatLocalTimestamp(),
+                    success: true,
+                    metadata: {
+                      requestId,
+                      duration,
+                      noResultsFound: result?.noResultsFound,
+                      timestamp: formatLocalTimestamp(),
+                    },
                   },
                   timestamp: formatLocalTimestamp(),
                 }) + "\n",
               );
-            } else {
-              logger.error(
-                "Agent execution failed with unexpected error",
-                String(executionError),
-                {
-                  duration,
-                  error: executionError,
-                },
-              );
 
-              // Send generic error event
+              // Clean up event queue after successful completion
+              cleanupEventQueue(requestId);
+              return res.end();
+            } catch (error) {
+              const duration = Date.now() - startTime;
+
+              logger.error("Unexpected error in agent endpoint", error, {
+                duration,
+                error,
+              });
+
+              // Clean up event queue on error
+              cleanupEventQueue(requestId);
+
               res.write(
                 JSON.stringify({
                   type: "error",
                   data: {
-                    message: "Agent execution failed",
+                    message: "Internal server error",
                     code: ErrorCode.INTERNAL_ERROR,
                     isSystemError: true,
                     timestamp: formatLocalTimestamp(),
@@ -261,109 +353,25 @@ async function startServer() {
                   timestamp: formatLocalTimestamp(),
                 }) + "\n",
               );
-            }
 
-            // Send completion event with error status
-            res.write(
-              JSON.stringify({
-                type: "complete",
-                data: {
-                  success: false,
-                  error: true,
-                  metadata: {
-                    requestId,
-                    duration,
-                    timestamp: formatLocalTimestamp(),
+              res.write(
+                JSON.stringify({
+                  type: "complete",
+                  data: {
+                    success: false,
+                    error: true,
+                    metadata: {
+                      requestId,
+                      duration,
+                      timestamp: formatLocalTimestamp(),
+                    },
                   },
-                },
-                timestamp: formatLocalTimestamp(),
-              }) + "\n",
-            );
-
-            return res.end();
-          }
-
-          // Success case - stream final text in chunks and send metadata
-          logger.info("Agent execution completed successfully", {
-            duration,
-            hasResult: !!result?.finalResult,
-            noResultsFound: result?.noResultsFound,
-          });
-
-          if (Array.isArray(result?.retrievedSources) && result.retrievedSources.length > 0) {
-            // Emit sources event using shared types
-            const sourcesEvent = {
-              type: "sources",
-              data: {
-                includeImages: true, // Set as needed
-                sources: result.retrievedSources,
-              },
-              timestamp: formatLocalTimestamp(),
-            };
-            res.write(JSON.stringify(sourcesEvent) + "\n");
-          }
-
-          res.write(
-            JSON.stringify({
-              type: "complete",
-              data: {
-                success: true,
-                metadata: {
-                  requestId,
-                  duration,
-                  noResultsFound: result?.noResultsFound,
                   timestamp: formatLocalTimestamp(),
-                },
-              },
-              timestamp: formatLocalTimestamp(),
-            }) + "\n",
-          );
+                }) + "\n",
+              );
 
-          // Clean up event queue after successful completion
-          cleanupEventQueue(requestId);
-          return res.end();
-        } catch (error) {
-          const duration = Date.now() - startTime;
-
-          logger.error("Unexpected error in agent endpoint", error, {
-            duration,
-            error,
-          });
-
-          // Clean up event queue on error
-          cleanupEventQueue(requestId);
-
-          res.write(
-            JSON.stringify({
-              type: "error",
-              data: {
-                message: "Internal server error",
-                code: ErrorCode.INTERNAL_ERROR,
-                isSystemError: true,
-                timestamp: formatLocalTimestamp(),
-              },
-              timestamp: formatLocalTimestamp(),
-            }) + "\n",
-          );
-
-          res.write(
-            JSON.stringify({
-              type: "complete",
-              data: {
-                success: false,
-                error: true,
-                metadata: {
-                  requestId,
-                  duration,
-                  timestamp: formatLocalTimestamp(),
-                },
-              },
-              timestamp: formatLocalTimestamp(),
-            }) + "\n",
-          );
-
-          return res.end();
-        }
+              return res.end();
+            }
           },
         );
       },

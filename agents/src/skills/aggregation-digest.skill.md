@@ -94,8 +94,12 @@ LIMIT 10;
 ### Content Samples by App
 ```sql
 SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
   f.app_name,
   f.window_title,
+  f.browser_url,
+  f.image_path,
+  f.captured_at,
   substr(c.text_content, 1, 200) as sample
 FROM chunks c
 JOIN frames f ON c.frame_id = f.id

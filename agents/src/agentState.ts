@@ -1,6 +1,7 @@
 import { Annotation } from "@langchain/langgraph";
 import { Plan } from "./planner/plan.schema";
 import { Route } from "./router/router.node";
+import { RetrievedSource } from "./types/agent";
 
 /**
  * Agent execution state representing the complete workflow state.
@@ -45,7 +46,7 @@ export const AgentState = Annotation.Root({
 
   // ── Final result ─────────────────────────────────────
   finalResult: Annotation<string | undefined>(),
-  retrievedSources: Annotation<any[] | undefined>(),
+  retrievedSources: Annotation<RetrievedSource[] | undefined>(),
 });
 
 export type AgentStateType = typeof AgentState.State;

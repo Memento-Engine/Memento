@@ -309,8 +309,8 @@ async fn main() {
     
     tokio::select! {
         _ = async {
-            let _ = capture_handle.await;
-            let _ = processor_handle.await;
+            // let _ = capture_handle.await;
+            // let _ = processor_handle.await;
             let _ = server_handle.await;
         } => {
             info!("All tasks completed gracefully");

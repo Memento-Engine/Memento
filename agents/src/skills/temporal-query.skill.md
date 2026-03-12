@@ -16,14 +16,18 @@ Query screen activity by time, sequences, and temporal relationships.
 
 ## Query Patterns
 
+**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
+
 ### Activity at a Specific Time
 ```sql
 SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
   f.captured_at,
   f.app_name,
   f.window_title,
   f.browser_url,
-  substr(c.text_content, 1, 200) as text_preview
+  f.image_path,
+  c.text_content
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE f.captured_at BETWEEN '2026-03-11 15:00:00' AND '2026-03-11 15:30:00'
@@ -34,10 +38,13 @@ LIMIT 30;
 ### Activity During Time Range (Yesterday Afternoon)
 ```sql
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.app_name,
   f.window_title,
-  substr(c.text_content, 1, 200) as text_preview
+  f.browser_url,
+  f.image_path,
+  c.text_content
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE date(f.captured_at) = date('now', '-1 day')
@@ -60,10 +67,13 @@ WITH anchor AS (
   LIMIT 1
 )
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.app_name,
   f.window_title,
-  substr(c.text_content, 1, 200) as text_preview
+  f.browser_url,
+  f.image_path,
+  c.text_content
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 CROSS JOIN anchor
@@ -85,10 +95,13 @@ WITH anchor AS (
   LIMIT 1
 )
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.app_name,
   f.window_title,
-  substr(c.text_content, 1, 200) as text_preview
+  f.browser_url,
+  f.image_path,
+  c.text_content
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 CROSS JOIN anchor

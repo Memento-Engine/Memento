@@ -15,12 +15,18 @@ Fast keyword-based search using SQLite FTS5 index.
 
 ## Query Patterns
 
+**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
+
 ### Basic FTS Search
 ```sql
 SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
   f.captured_at,
   f.app_name,
   f.window_title,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -33,9 +39,13 @@ LIMIT 20;
 ### Multi-term Search (AND)
 ```sql
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.app_name,
   f.window_title,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -48,8 +58,12 @@ LIMIT 20;
 ### Phrase Search (exact phrase)
 ```sql
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.app_name,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -62,8 +76,12 @@ LIMIT 20;
 ### Search with App Filter
 ```sql
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.window_title,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -77,9 +95,13 @@ LIMIT 20;
 ### Search with Time Range
 ```sql
 SELECT 
+  c.id as chunk_id,
   f.captured_at,
   f.app_name,
   f.window_title,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id

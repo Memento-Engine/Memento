@@ -33,11 +33,13 @@ Combines keyword-based FTS and meaning-based semantic search for optimal results
 ### Step 1: FTS Search
 ```sql
 SELECT 
-  c.id as chunk_id,
+  c.id as chunk_id,  -- REQUIRED for citations
   f.captured_at,
   f.app_name,
   f.window_title,
   f.browser_url,
+  f.image_path,
+  c.text_content,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text,
   1.0 as fts_score
 FROM chunks_fts
@@ -70,8 +72,15 @@ The LLM receives both result sets and:
 
 **FTS Query:**
 ```sql
-SELECT c.id, f.captured_at, f.app_name, f.window_title,
-       snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as text
+SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
+  f.captured_at,
+  f.app_name,
+  f.window_title,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
+  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
 JOIN frames f ON c.frame_id = f.id
@@ -95,8 +104,15 @@ LIMIT 30;
 
 **FTS Query:**
 ```sql
-SELECT c.id, f.captured_at, f.app_name, f.window_title,
-       snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as text
+SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
+  f.captured_at,
+  f.app_name,
+  f.window_title,
+  f.browser_url,
+  f.image_path,
+  c.text_content,
+  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
 JOIN frames f ON c.frame_id = f.id

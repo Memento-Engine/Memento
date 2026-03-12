@@ -57,6 +57,18 @@ export async function reactExecutorNode(
           confidence: result.confidence,
         }, "ReAct execution complete");
 
+        // Extract all search results from turns for citations
+        const allSearchResults: unknown[] = [];
+        for (const turn of result.turns) {
+          if (
+            turn.observation.success &&
+            turn.observation.data &&
+            Array.isArray(turn.observation.data)
+          ) {
+            allSearchResults.push(...turn.observation.data);
+          }
+        }
+
         if (result.success && result.answer) {
           // ReAct produced a final answer
           return {
@@ -64,9 +76,12 @@ export async function reactExecutorNode(
               react_answer: result.answer,
               react_turns: result.turns,
               react_confidence: result.confidence,
+              // Include search results for citation extraction
+              react_search_results: allSearchResults,
             },
             llmCalls: (state.llmCalls ?? 0) + result.turns.length,
             shouldReplan: false,
+            hasSearchResults: allSearchResults.length > 0,
           };
         } else {
           // ReAct didn't produce an answer - try to use the data gathered
@@ -78,9 +93,12 @@ export async function reactExecutorNode(
               react_data: lastData,
               react_turns: result.turns,
               react_error: result.error,
+              // Include search results for citation extraction
+              react_search_results: allSearchResults,
             },
             llmCalls: (state.llmCalls ?? 0) + result.turns.length,
             shouldReplan: false, // Don't replan, let finalAnswer handle it
+            hasSearchResults: allSearchResults.length > 0,
           };
         }
       } catch (error) {

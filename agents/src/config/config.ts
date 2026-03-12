@@ -30,7 +30,7 @@ const ConfigSchema = z.object({
 
   // Logging configuration
   logging: z.object({
-    level: z.enum(["debug", "info", "warn", "error"]).default("debug"),
+    level: z.enum(["debug", "info", "warn", "error"]).default("info"),
     format: z.enum(["pretty", "json"]).default("pretty"),
   }),
 
