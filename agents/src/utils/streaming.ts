@@ -3,11 +3,16 @@
  * Events are sent as SSE (Server-Sent Events) or JSON streaming responses.
  */
 
-export interface StreamingEvent {
-  type: "step" | "thinking" | "error" | "complete";
-  data: any;
-  timestamp: string;
-}
+import type {
+  AgentStreamEvent,
+  CompletionEvent,
+  ErrorEvent,
+  StreamStepStatus,
+  StreamStepType,
+  ThinkingEvent,
+} from "../../../shared/types/streaming";
+
+export type StreamingEvent = AgentStreamEvent;
 
 /**
  * Convert an event to SSE format for streaming responses.
@@ -29,9 +34,9 @@ export function formatStreamingEvent(event: StreamingEvent): string {
  */
 export function createStepEvent(
   stepId: string,
-  stepType: "planning" | "searching" | "reasoning" | "completion",
+  stepType: StreamStepType,
   title: string,
-  status: "running" | "completed" | "failed" | "final",
+  status: StreamStepStatus,
   details?: {
     description?: string;
     query?: string;
@@ -42,8 +47,8 @@ export function createStepEvent(
     queries?: string[];
     duration?: number;
   },
-): StreamingEvent {
-  return {
+): ThinkingEvent {
+  const event: ThinkingEvent = {
     type: "thinking",
     data: {
       stepId,
@@ -62,6 +67,8 @@ export function createStepEvent(
     },
     timestamp: new Date().toISOString(),
   };
+
+  return event;
 }
 
 /**
@@ -73,8 +80,8 @@ export function createStepEvent(
 export function createCompletionEvent(
   content: string,
   stepId: string = "final",
-): StreamingEvent {
-  return {
+): CompletionEvent {
+  const event: CompletionEvent = {
     type: "complete",
     data: {
       stepId,
@@ -86,6 +93,8 @@ export function createCompletionEvent(
     },
     timestamp: new Date().toISOString(),
   };
+
+  return event;
 }
 
 /**
@@ -99,8 +108,8 @@ export function createErrorEvent(
   message: string,
   code: string,
   isSystemError: boolean = true,
-): StreamingEvent {
-  return {
+): ErrorEvent {
+  const event: ErrorEvent = {
     type: "error",
     data: {
       message,
@@ -110,4 +119,6 @@ export function createErrorEvent(
     },
     timestamp: new Date().toISOString(),
   };
+
+  return event;
 }

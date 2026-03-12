@@ -1,35 +1,18 @@
 import { z } from "zod";
 import { ResolvedQuery } from "../executor/query.schema";
 import { ToolError } from "./errors";
+import type {
+  ToolContext,
+  ToolResult,
+  ToolResultError,
+  ToolResultErrorLike,
+} from "../../../shared/types/tools";
+
+export type { ToolContext, ToolResult, ToolResultError, ToolResultErrorLike };
 
 /**
  * Tool execution context containing request metadata and state.
  */
-export interface ToolContext {
-  requestId: string;
-  stepId: string;
-  attemptNumber: number;
-  timeout: number;
-}
-
-export interface ToolResultError {
-  code?: string;
-  message: string;
-  stage?: string;
-  details?: string;
-}
-
-export type ToolResultErrorLike = string | ToolResultError;
-
-/**
- * Tool result with status and data.
- */
-export interface ToolResult<T = any> {
-  success: boolean;
-  data?: T;
-  error?: ToolResultErrorLike;
-  metadata?: Record<string, any>;
-}
 
 /**
  * Base interface for all tools.

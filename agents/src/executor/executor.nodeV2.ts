@@ -153,7 +153,7 @@ async function executeSearchStep(
       ...query,
       filter: undefined, // Remove all filters
       keywords: [],
-      limit: Math.min(query.limit * 2, 100),
+      limit: Math.min(query.limit * 2, 40),
     };
 
     const retryResult = await withTimeout(
@@ -179,6 +179,7 @@ async function executeSearchStep(
   }
 
   if (!toolResult.success && dbResults.length === 0) {
+    console.log("Search tool failed custom", toolResult.error);
     throw new ToolError(`Search tool failed: ${toolResult.error}`, {
       stepId: step.id,
       tool: "search",
@@ -441,6 +442,8 @@ export async function executorNodeV2(
 
                 return { stepId: step.id, success: true as const };
               } catch (error) {
+
+               
                 const errMsg = ErrorHandler.getSafeMessage(error);
                 stepErrors[step.id] = errMsg;
 
@@ -448,13 +451,17 @@ export async function executorNodeV2(
                   stepId: step.id,
                 });
 
+                // Emit step failure event with clear message
                 emitStepEvent(
                   step.id,
                   step.kind === "search" ? "searching" : "reasoning",
-                  "Trying again",
+                  "Step failed",
                   "failed",
                   state.requestId,
-                  { description: "Checking additional sources" },
+                  { 
+                    description: errMsg,
+                    message: errMsg,
+                  },
                 );
 
                 return {
@@ -477,6 +484,13 @@ export async function executorNodeV2(
                 logger.error("Step promise rejected", undefined, {
                   error: failMsg,
                 });
+                // Emit error for rejected promises
+                emitError(
+                  failMsg,
+                  ErrorCode.EXECUTOR_FAILED,
+                  state.requestId,
+                  true
+                );
               } else if (!settled.value.success) {
                 const failedId = settled.value.stepId;
                 const hasDependents = plan.steps.some((s) =>
@@ -487,6 +501,14 @@ export async function executorNodeV2(
                   logger.warn("Critical step failed — triggering replan", {
                     stepId: failedId,
                   });
+
+                  // Emit error event for critical failures
+                  emitError(
+                    `Step "${failedId}" failed: ${settled.value.error}`,
+                    ErrorCode.EXECUTOR_FAILED,
+                    state.requestId,
+                    false // Not a system error - could be retried
+                  );
 
                   return {
                     ...state,

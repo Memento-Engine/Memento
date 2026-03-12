@@ -50,15 +50,6 @@ export async function routerNode(state: AgentStateType): Promise<AgentStateType>
 
       logger.info("Router node started");
 
-      emitStepEvent(
-        "router_0",
-        "planning",
-        "Understanding your request",
-        "running",
-        state.requestId,
-        { description: "Interpreting what you're asking" },
-      );
-
       try {
         const prompt = await routerPrompt.invoke({ goal: state.goal });
 

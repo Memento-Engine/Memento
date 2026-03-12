@@ -4,6 +4,7 @@ import { ResolvedQuery, ResolvedQuerySchema } from "../executor/query.schema";
 import { getConfig } from "../config/config";
 import { getLogger } from "../utils/logger";
 import { runWithSpan } from "../telemetry/tracing";
+import { ToolError } from "../types/errors";
 
 /**
  * Search tool for querying the activity database.
@@ -102,8 +103,12 @@ export class SearchTool implements Tool<ResolvedQuery, any[]> {
           });
         } catch (error) {
           console.log("Search tool error Failed", error);
-
-          return this.handleError(error, context);
+          new ToolError("Search tool execution failed", {
+            tool: "search",
+            stepId: context.stepId,
+          });
+          throw error; // Let the error propagate to be handled by the caller
+          // return this.handleError(error, context);
         }
       }
     );
@@ -126,12 +131,12 @@ export class SearchTool implements Tool<ResolvedQuery, any[]> {
 
       if (axiosError.code === "ECONNABORTED") {
         logger.error("Search backend timeout");
-        return toolFailure("Search backend request timed out");
+        return toolFailure("Search backend request timed out", { code: "timeout" });
       }
 
       if (axiosError.response?.status === 404) {
         logger.warn("Search backend not found");
-        return toolFailure("Search backend service not available (404)");
+        return toolFailure("Search backend service not available (404)", { code: "not_found" });
       }
 
       if (axiosError.response?.status === 500) {

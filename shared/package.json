@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "picomatch": "^4.0.3"
+    "zod": "^4.3.6"
   }
 }

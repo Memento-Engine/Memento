@@ -7,12 +7,13 @@
 import { AsyncLocalStorage } from "async_hooks";
 import { getLogger } from "./logger";
 import { formatLocalTimestamp } from "./time";
+import type {
+  AgentStreamEvent,
+  StreamStepStatus,
+  StreamStepType,
+} from "../../../shared/types/streaming";
 
-interface QueuedEvent {
-  type: "step" | "thinking" | "error" | "complete" | "text";
-  data: any;
-  timestamp: string;
-}
+type QueuedEvent = AgentStreamEvent;
 
 type StreamCallback = (event: QueuedEvent) => void;
 
@@ -154,9 +155,9 @@ export function withEventQueue<T>(callback: () => T | Promise<T>): T | Promise<T
  */
 export function emitStepEvent(
   stepId: string,
-  stepType: "planning" | "searching" | "reasoning" | "completion",
+  stepType: StreamStepType,
   title: string,
-  status: "running" | "completed" | "failed" | "final",
+  status: StreamStepStatus,
   requestId: string,
   details?: {
     description?: string;
