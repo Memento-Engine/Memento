@@ -217,7 +217,6 @@ async function startServer() {
                       currentStep: 0 as any,
                       shouldReplan: false as any,
                       noResultsFound: false as any,
-                      hasSearchResults: false as any,
                     }),
                 );
               } catch (error) {
@@ -294,7 +293,6 @@ async function startServer() {
                 return res.end();
               }
 
-       
               if (
                 Array.isArray(result?.retrievedSources) &&
                 result.retrievedSources.length > 0

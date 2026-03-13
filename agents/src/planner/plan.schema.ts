@@ -5,17 +5,26 @@ import { z } from "zod";
 PLAN-TIME SCHEMA
 ============================================================
 
-The planner only decides:
+The planner decides:
   - What steps to run
   - In what order (dependencies)
   - What each step should accomplish (natural language intent)
-  - What output to expect
-  - Soft search hints (literal values only, NO placeholders)
+  - Which skills/tools to use for search steps
 
 It does NOT write database queries. That happens at execution time
 when all dependencies are resolved and we have concrete data.
 ============================================================
 */
+
+// ── Search Approach ──────────────────────────────────────
+
+export const SearchApproachSchema = z.enum([
+  "semantic",     // Vector similarity search for conceptual queries
+  "fts",          // Full-text search for exact keyword matches
+  "hybrid",       // Combination of both approaches
+  "temporal",     // Time-based queries
+  "aggregation",  // Statistics and summaries
+]);
 
 // ── Step Output ──────────────────────────────────────────
 
@@ -72,34 +81,51 @@ export const SearchHintSchema = z.object({
 const SearchStepSchema = z.object({
   id: z.string().describe("Unique identifier (e.g. 'step1')"),
   kind: z.literal("search"),
+  stepGoal: z.string().describe("What this search step should accomplish"),
   intent: z
     .string()
     .describe(
       "Natural language description of what to search for. " +
+      "Should specify which skill/approach to use (semantic, fts, hybrid, temporal, aggregation). " +
       "Reference prior step outputs by name when needed: " +
-      "'Find browser activity during the time range from {{session_times}}'",
+      "'Use semantic search to find browser activity during {{session_times}}'",
     ),
+  suggestedSkill: z
+    .string()
+    .optional()
+    .describe(
+      "Suggested skill to use (e.g. 'semantic-search', 'fts-search', 'hybrid-search', 'temporal-query', 'aggregation-digest')",
+    ),
+  suggestedTool: z
+    .enum(["sql_execute", "semantic_search", "search"])
+    .optional()
+    .describe("Suggested tool to execute this step"),
   dependsOn: z.array(z.string()).default([]),
-  expectedOutput: StepOutputSchema,
-  searchHints: SearchHintSchema.optional(),
+  // Legacy fields for executor compatibility
+  expectedOutput: StepOutputSchema.optional().describe("Expected output structure for extraction"),
+  searchHints: SearchHintSchema.optional().describe("Soft hints for query builder"),
 });
 
 const ReasonStepSchema = z.object({
   id: z.string(),
   kind: z.literal("reason"),
+  stepGoal: z.string().describe("What this reasoning step should accomplish"),
   intent: z
     .string()
     .describe("What reasoning / computation to perform on dependency data"),
   dependsOn: z.array(z.string()).default([]),
-  expectedOutput: StepOutputSchema,
+  // Legacy field for executor compatibility
+  expectedOutput: StepOutputSchema.optional().describe("Expected output structure for extraction"),
 });
 
 const FinalStepSchema = z.object({
   id: z.string(),
   kind: z.literal("final"),
+  stepGoal: z.string().describe("What this final step should accomplish"),
   intent: z.string().describe("How to synthesize the final answer"),
   dependsOn: z.array(z.string()).default([]),
-  expectedOutput: StepOutputSchema,
+  // Legacy field for executor compatibility
+  expectedOutput: StepOutputSchema.optional().describe("Expected output structure for extraction"),
 });
 
 // ── Discriminated Union ──────────────────────────────────
@@ -126,3 +152,4 @@ export type ReasonStep = z.infer<typeof ReasonStepSchema>;
 export type FinalStep = z.infer<typeof FinalStepSchema>;
 export type StepOutput = z.infer<typeof StepOutputSchema>;
 export type SearchHint = z.infer<typeof SearchHintSchema>;
+export type SearchApproach = z.infer<typeof SearchApproachSchema>;

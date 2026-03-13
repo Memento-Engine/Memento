@@ -1,5 +1,9 @@
 import { MementoUIMessage, ThinkingStep } from "@/components/types";
+import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 import { createContext } from "react";
+
+// Re-export for convenience
+export type { SearchQueryData, SourceReviewData };
 
 export type AssistantStatus =
   | "Idle" // No Conversation
@@ -36,6 +40,8 @@ type ChatContext = {
   assistantStatus: AssistantStatus; // Use the raw string type here
   makeTransition: (nextState: AssistantStatus) => boolean;
   stepUpdates: ThinkingStep[]; // Array of step thinking events
+  searchQueries: SearchQueryData[]; // Active search queries
+  sourceReview: SourceReviewData | null; // Current source review state
 };
 
 export function chatContextEmptyState(): ChatContext {
@@ -50,6 +56,8 @@ export function chatContextEmptyState(): ChatContext {
     assistantStatus: "Idle",
     makeTransition: () => false,
     stepUpdates: [],
+    searchQueries: [],
+    sourceReview: null,
   };
 }
 

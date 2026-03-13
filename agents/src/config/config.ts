@@ -25,6 +25,7 @@ const ConfigSchema = z.object({
   // Backend service configuration
   backend: z.object({
     searchToolUrl: z.string().url(),
+    searchResultsByChunkIdsUrl: z.string().url(),
     timeout: z.number().int().min(1000).default(30000),
   }),
 
@@ -87,10 +88,13 @@ export async function loadConfig(): Promise<Config> {
     backend: {
       searchToolUrl:
         process.env.SEARCH_TOOL_URL ?? `http://localhost:${daemonPort}/api/v1/search_tool`,
+      searchResultsByChunkIdsUrl:
+        process.env.SEARCH_RESULTS_BY_CHUNK_IDS_URL ??
+        `http://localhost:${daemonPort}/api/v1/search_results_by_chunk_ids`,
       timeout: parseInt(process.env.BACKEND_TIMEOUT ?? "30000", 10),
     },
     logging: {
-      level: process.env.LOG_LEVEL ?? "debug",
+      level: process.env.LOG_LEVEL ?? "info",
       format: process.env.LOG_FORMAT ?? "pretty",
     },
     agent: {

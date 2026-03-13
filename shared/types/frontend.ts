@@ -1,10 +1,14 @@
 import { z } from "zod";
 
 export const StepSearchResultsSchema = z.object({
+  chunk_id: z.number(),
   app_name: z.string(),
   window_name: z.string(),
-  image_path: z.string(),
   captured_at: z.string(),
+  browser_url: z.string().optional(),
+  image_path : z.string().optional(),
+  text_content: z.string().optional(),
+  text_json: z.string().optional(),
 });
 
 export const thinkingSchema = z.object({
@@ -24,6 +28,7 @@ export const thinkingSchema = z.object({
 });
 
 export type ThinkingStep = z.infer<typeof thinkingSchema>;
+export type StepSearchResult = z.infer<typeof StepSearchResultsSchema>;
 
 export const normalizedOcrTokenSchema = z.object({
   text: z.string(),

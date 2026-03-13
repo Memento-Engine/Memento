@@ -20,7 +20,7 @@ const chatSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   max_tokens: z.number().int().min(1).max(65_536).optional(),
   user_id: z.string().min(1),
-  role: z.enum(["router", "planner", "executor", "query_builder", "final"]).optional(),
+  role: z.enum([ "clarifyAndRewriter", "router", "planner", "executor", "query_builder", "final"]).optional(),
 });
 
 function buildProviderRegistry(

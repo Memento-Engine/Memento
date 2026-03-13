@@ -1,4 +1,4 @@
-import { PlanStep } from "../planner/plan.schema";
+import { PlanStep, StepOutput } from "../planner/plan.schema";
 import { extractorPromptV2 } from "../prompts/extractorPromptV2";
 import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser } from "../utils/parser";
@@ -18,6 +18,45 @@ If the step is a search step with simple "table" output, we can
 skip the LLM call and return raw results directly.
 ============================================================
 */
+
+/**
+ * Get or generate a default expectedOutput for a step.
+ */
+function getExpectedOutput(step: PlanStep): StepOutput {
+  if (step.expectedOutput) {
+    return step.expectedOutput;
+  }
+
+  switch (step.kind) {
+    case "search":
+      return {
+        type: "table",
+        variableName: `${step.id}_results`,
+        description: step.stepGoal || step.intent,
+      };
+    case "reason":
+      return {
+        type: "object",
+        variableName: `${step.id}_analysis`,
+        description: step.stepGoal || step.intent,
+      };
+    case "final":
+      return {
+        type: "value",
+        variableName: "final_answer",
+        description: step.stepGoal || step.intent,
+      };
+    default: {
+      // Fallback for any future step types
+      const s = step as PlanStep;
+      return {
+        type: "table",
+        variableName: `${s.id}_output`,
+        description: s.intent,
+      };
+    }
+  }
+}
 
 /**
  * Validate that the extracted data matches the expected output type.
@@ -78,15 +117,17 @@ export async function extractStepOutput(
     stepId: step.id,
   });
 
+  const expectedOutput = getExpectedOutput(step);
+
   return runWithSpan(
     "agent.executor.extractor",
     {
       request_id: requestId,
       step_id: step.id,
-      output_type: step.expectedOutput.type,
+      output_type: expectedOutput.type,
     },
     async () => {
-      const expectedType = step.expectedOutput.type;
+      const expectedType = expectedOutput.type;
 
       // ── Fast path: search step expecting table → return raw rows ──
       if (
@@ -132,8 +173,8 @@ export async function extractStepOutput(
         searchResults: JSON.stringify(rawResults, null, 2),
         dependencyData: depContext,
         outputType: expectedType,
-        variableName: step.expectedOutput.variableName,
-        outputDescription: step.expectedOutput.description,
+        variableName: expectedOutput.variableName,
+        outputDescription: expectedOutput.description,
       });
 
       const llmResult = await invokeRoleLlm({
@@ -155,7 +196,7 @@ export async function extractStepOutput(
       const normalised = normaliseExtractorOutput(
         parsed,
         expectedType,
-        step.expectedOutput.variableName,
+        expectedOutput.variableName,
       );
 
       const validation = validateOutputShape(expectedType, normalised);
@@ -174,7 +215,7 @@ export async function extractStepOutput(
       logger.info("Extraction complete", {
         stepId: step.id,
         outputType: expectedType,
-        variableName: step.expectedOutput.variableName,
+        variableName: expectedOutput.variableName,
       });
 
       return { data: normalised, llmCallsUsed: 1 };

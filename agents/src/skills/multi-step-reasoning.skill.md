@@ -8,6 +8,8 @@ tools: sql_execute, semantic_search
 
 Handle complex queries that require multiple dependent steps with LLM reasoning between them.
 
+**IMPORTANT:** Every SQL query step MUST include `c.id as chunk_id` (or `MIN(c.id) as chunk_id` for aggregates). This is mandatory for citations.
+
 ## When Multi-Step is Required
 
 **Single SQL can handle:**
@@ -175,7 +177,7 @@ interface SkillStep {
     {
       "id": "find_session",
       "type": "sql",
-      "sql": "SELECT MIN(captured_at) as start, MAX(captured_at) as end FROM frames WHERE app_name IN ('VS Code', 'Cursor') AND date(captured_at) = date('now', '-1 day')",
+      "sql": "SELECT MIN(c.id) as chunk_id, MIN(f.captured_at) as start, MAX(f.captured_at) as end FROM frames f LEFT JOIN chunks c ON c.frame_id = f.id WHERE f.app_name IN ('VS Code', 'Cursor') AND date(f.captured_at) = date('now', '-1 day')",
       "dependsOn": []
     },
     {
@@ -200,7 +202,7 @@ interface SkillStep {
     {
       "id": "get_tabs",
       "type": "sql",
-      "sql": "SELECT DISTINCT window_title, browser_url, captured_at FROM frames WHERE app_name IN ('Chrome', 'Firefox', 'Arc') AND captured_at BETWEEN '{find_session.start}' AND '{find_session.end}' ORDER BY captured_at LIMIT 30",
+      "sql": "SELECT c.id as chunk_id, window_title, browser_url, f.captured_at FROM frames f LEFT JOIN chunks c ON c.frame_id = f.id WHERE f.app_name IN ('Chrome', 'Firefox', 'Arc') AND f.captured_at BETWEEN '{find_session.start}' AND '{find_session.end}' ORDER BY f.captured_at LIMIT 30",
       "dependsOn": ["check_session"]
     },
     {

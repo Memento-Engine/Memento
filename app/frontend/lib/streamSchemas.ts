@@ -1,14 +1,77 @@
 import { z } from "zod";
 import { thinkingSchema, sourcesPayloadSchema } from "@/components/types";
 
-// Re-export for convenience
-export { thinkingSchema, sourcesPayloadSchema };
-
 // Base event schema
 export const streamEventBaseSchema = z.object({
   type: z.string(),
   timestamp: z.string().optional(),
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEARCH QUERY EVENT - Shows what's being searched dynamically
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const searchQueryDataSchema = z.object({
+  searchId: z.string(),
+  query: z.string(),
+  searchType: z.enum(["sql", "semantic", "hybrid"]),
+  status: z.enum(["searching", "completed", "failed"]),
+  resultCount: z.number().optional(),
+  keywords: z.array(z.string()).optional(),
+  filters: z
+    .object({
+      app_names: z.array(z.string()).optional(),
+      time_range: z
+        .object({
+          start: z.string().optional(),
+          end: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
+export type SearchQueryData = z.infer<typeof searchQueryDataSchema>;
+
+export const searchQueryEventSchema = z.object({
+  type: z.literal("search_query"),
+  data: searchQueryDataSchema,
+  timestamp: z.string().optional(),
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOURCE REVIEW EVENT - Shows sources being reviewed with status icons
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const reviewedSourceSchema = z.object({
+  chunkId: z.string(),
+  title: z.string(),
+  appName: z.string(),
+  snippet: z.string().optional(),
+  capturedAt: z.string().optional(),
+  status: z.enum(["pending", "reviewing", "relevant", "not_relevant", "error"]),
+  relevanceScore: z.number().optional(),
+  url: z.string().optional(),
+});
+
+export const sourceReviewDataSchema = z.object({
+  phase: z.enum(["collecting", "reviewing", "complete"]),
+  totalSources: z.number(),
+  currentlyReviewing: z.number().optional(),
+  sources: z.array(reviewedSourceSchema),
+});
+
+export type SourceReviewData = z.infer<typeof sourceReviewDataSchema>;
+
+export const sourceReviewEventSchema = z.object({
+  type: z.literal("source_review"),
+  data: sourceReviewDataSchema,
+  timestamp: z.string().optional(),
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ERROR EVENT
+// ═══════════════════════════════════════════════════════════════════════════
 
 // Error event schema
 export const errorEventDataSchema = z.object({
@@ -50,7 +113,9 @@ export const completionEventDataSchema = z.object({
   timestamp: z.string().optional(),
   status: z.enum(["running", "completed", "failed", "final"]).optional(),
   stepId: z.string().optional(),
-  stepType: z.enum(["planning", "searching", "reasoning", "completion"]).optional(),
+  stepType: z
+    .enum(["planning", "searching", "reasoning", "completion"])
+    .optional(),
   title: z.string().optional(),
   message: z.string().optional(),
   metadata: completionMetadataSchema.optional(),
@@ -101,6 +166,7 @@ export type AgentStreamEvent = z.infer<typeof agentStreamEventSchema>;
 
 // Parse and validate an event, returning a typed result
 export function parseStreamEvent(rawEvent: unknown): AgentStreamEvent | null {
+  console.log('raw Data from parsing stream event:', rawEvent);
   const result = agentStreamEventSchema.safeParse(rawEvent);
   if (!result.success) {
     console.warn("Failed to parse stream event:", result.error.issues);

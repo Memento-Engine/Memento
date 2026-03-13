@@ -37,6 +37,7 @@ const configSchema = z.object({
     executor: roleConfigSchema,
     query_builder: roleConfigSchema,
     final: roleConfigSchema,
+    clarifyAndRewriter : roleConfigSchema
   }),
   limits: z.object({
     free: z.object({
@@ -138,6 +139,14 @@ export function loadConfig(): GatewayConfig {
         maxOutputTokens: parseInt(process.env.AI_GATEWAY_PLANNER_MAX_OUTPUT_TOKENS ?? "65536", 10),
       },
       executor: {
+        defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL ?? "deepseek/deepseek-chat",
+        fallbackModels: (process.env.AI_GATEWAY_EXECUTOR_FALLBACKS ?? "mistralai/mistral-large,openai/gpt-4o-mini")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS ?? "65536", 10),
+      },
+       clarifyAndRewriter: {
         defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL ?? "deepseek/deepseek-chat",
         fallbackModels: (process.env.AI_GATEWAY_EXECUTOR_FALLBACKS ?? "mistralai/mistral-large,openai/gpt-4o-mini")
           .split(",")

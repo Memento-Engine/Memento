@@ -7,12 +7,14 @@ import { ExecutorError, ErrorCode } from "../types/errors";
 import {
   emitCompletion,
   emitError,
+  emitSources,
   emitStepEvent,
   emitTextChunk,
 } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlmStreaming } from "../llm/routing";
 import { normalizeOcrLayout, NormalizedOcrLayout } from "../utils/ocrLayout";
+import { emit } from "cluster";
 
 /*
 ============================================================
@@ -75,9 +77,31 @@ function flattenSearchRows(
   stepResults: Record<string, any> | undefined,
 ): SearchRowLike[] {
   if (!stepResults) return [];
-  return Object.values(stepResults)
-    .flatMap((val) => (Array.isArray(val) ? val : []))
-    .filter((row) => row && typeof row === "object" && "chunk_id" in row);
+
+  const rows: SearchRowLike[] = [];
+
+  for (const val of Object.values(stepResults)) {
+    if (!val || typeof val !== "object") continue;
+
+    // Check for react_chunks (new format from ReAct executor)
+    if (Array.isArray(val.react_chunks)) {
+      for (const chunk of val.react_chunks) {
+        if (chunk && typeof chunk === "object" && "chunk_id" in chunk) {
+          rows.push(chunk);
+        }
+      }
+    }
+    // Also check for direct arrays (legacy format)
+    else if (Array.isArray(val)) {
+      for (const row of val) {
+        if (row && typeof row === "object" && "chunk_id" in row) {
+          rows.push(row);
+        }
+      }
+    }
+  }
+
+  return rows;
 }
 
 function buildRetrievedSources(
@@ -91,10 +115,11 @@ function buildRetrievedSources(
       chunk_id: chunkId,
       text_content: row.text_content ?? "",
       text_json: row.text_json,
-      normalized_text_layout: normalizeOcrLayout(
-        row.text_content ?? "",
-        row.text_json,
-      ),
+      normalized_text_layout: { version: 1, normalized_text: "", tokens: [] },
+      // normalized_text_layout: normalizeOcrLayout(
+      //   row.text_content ?? "",
+      //   row.text_json,
+      // ),
       app_name: row.app_name ?? "",
       window_title: row.window_title ?? "",
       browser_url: row.browser_url ?? "",
@@ -172,6 +197,8 @@ export async function finalAnswerNodeV2(
           window_title: src.window_title,
           captured_at: src.captured_at,
           browser_url: src.browser_url,
+          image_path: src.image_path,
+          normalized_text_layout: src.normalized_text_layout,
         }));
 
         const citationInstruction =
@@ -180,19 +207,19 @@ export async function finalAnswerNodeV2(
             : "Do not include citation markers in your response.";
 
         const prompt = await finalAnswerPrompt.invoke({
-          goal,
+          goal: state.rewrittenQuery ?? state.goal,
           retrievedContext: JSON.stringify(llmContext, null, 2),
           citationInstruction,
         });
 
-        emitStepEvent(
-          "finalize_0",
-          "completion",
-          "Preparing your answer",
-          "running",
-          state.requestId,
-          { description: "Organizing the results" },
-        );
+        emitStepEvent(state.requestId, {
+          stepId: "finalize_0",
+          stepType: "completion",
+          title: "Putting it all together...",
+          status: "completed",
+          message:
+            "I'm compiling the information I found into a final answer for you.",
+        });
 
         // Use streaming LLM call for final answer - emit text chunks as they arrive
         const llmResult = await invokeRoleLlmStreaming({
@@ -233,20 +260,8 @@ export async function finalAnswerNodeV2(
           durationMs,
         });
 
-        emitStepEvent(
-          "finalize_0",
-          "completion",
-          "Answer ready",
-          "completed",
-          state.requestId,
-          {
-            description: "Summarized the findings",
-            duration:
-              Math.round(
-                ((Date.now() - (state.startTime ?? Date.now())) / 1000) * 10,
-              ) / 10,
-          },
-        );
+        // Final completion event with the full content
+        emitCompletion(finalResult, state.requestId);
 
         return {
           ...state,

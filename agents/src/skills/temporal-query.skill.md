@@ -114,20 +114,24 @@ LIMIT 20;
 ### First and Last Activity of Day
 ```sql
 SELECT 
-  MIN(captured_at) as first_activity,
-  MAX(captured_at) as last_activity,
-  (julianday(MAX(captured_at)) - julianday(MIN(captured_at))) * 24 as hours_active
-FROM frames
-WHERE date(captured_at) = date('now');
+  MIN(c.id) as chunk_id,  -- REQUIRED for citations
+  MIN(f.captured_at) as first_activity,
+  MAX(f.captured_at) as last_activity,
+  (julianday(MAX(f.captured_at)) - julianday(MIN(f.captured_at))) * 24 as hours_active
+FROM frames f
+LEFT JOIN chunks c ON c.frame_id = f.id
+WHERE date(f.captured_at) = date('now');
 ```
 
 ### Timeline of App Usage
 ```sql
 SELECT 
+  c.id as chunk_id,  -- REQUIRED for citations
   strftime('%H:%M', f.captured_at) as time,
   f.app_name,
   f.window_title
 FROM frames f
+LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE date(f.captured_at) = date('now')
 GROUP BY strftime('%H', f.captured_at), f.app_name
 ORDER BY f.captured_at
@@ -147,10 +151,12 @@ WITH coding_session AS (
     AND date(captured_at) = date('now', '-1 day')
 )
 SELECT DISTINCT
+  c.id as chunk_id,  -- REQUIRED for citations
   f.captured_at,
   f.window_title,
   f.browser_url
 FROM frames f
+LEFT JOIN chunks c ON c.frame_id = f.id
 CROSS JOIN coding_session cs
 WHERE f.app_name IN ('Chrome', 'Firefox', 'Arc', 'Safari', 'Edge')
   AND f.captured_at BETWEEN cs.session_start AND cs.session_end

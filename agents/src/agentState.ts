@@ -8,14 +8,30 @@ import { RetrievedSource } from "./types/agent";
  * Immutable updates recommended for replay and debugging.
  */
 export const AgentState = Annotation.Root({
+  // -- Core identifiers ─────────────────────────────────────
+  isClarificationNeeded: Annotation<boolean>(),
+  clarificationQuestion: Annotation<string | undefined>(),
+  rewrittenQuery: Annotation<string>(),
+
+  // Intent Router
+  isConversation: Annotation<boolean>({
+    value: (_, next) => next,
+    default: () => false,
+  }),
+
+  isNeedPlanning: Annotation<boolean>({
+    value: (_, next) => next,
+    default: () => false,
+  }),
+  conversationResponse: Annotation<string | undefined>(),
+
+
   // ── Request context ──────────────────────────────────
   goal: Annotation<string>(),
   requestId: Annotation<string>(),
 
   // ── Router outputs ───────────────────────────────────
   route: Annotation<Route | undefined>(),
-  clarificationQuestion: Annotation<string | undefined>(),
-  conversationResponse: Annotation<string | undefined>(),
   routerConfidence: Annotation<number | undefined>(),
 
   // ── Planning phase ───────────────────────────────────

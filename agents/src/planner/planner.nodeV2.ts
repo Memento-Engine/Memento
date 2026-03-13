@@ -9,17 +9,56 @@ import { PlannerError, ErrorCode } from "../types/errors";
 import { emitStepEvent } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlm } from "../llm/routing";
+import { buildPlannerContext, getDatabaseSchemaContext } from "./skillContext";
 
 /*
 ============================================================
 PLANNER NODE (v2)
 ============================================================
 
-Produces a Plan (intent DAG) with NO database queries.
-Steps contain:  id, kind, intent, dependsOn, expectedOutput, searchHints
+Produces a Plan (intent DAG) with knowledge of available skills
+and tools. The planner can recommend which skill/tool to use
+for each search step.
+
+Steps contain: id, kind, intent, dependsOn, stepGoal, 
+               suggestedSkill (optional), suggestedTool (optional)
+
 Retries on validation errors up to maxPlanRetries.
 ============================================================
 */
+
+// Cache for skill/tool context to avoid reloading
+let cachedPlannerContext: {
+  skillsContext: string;
+  toolsContext: string;
+  schemaContext: string;
+} | null = null;
+
+/**
+ * Load and cache the planner context (skills, tools, schema).
+ */
+async function getPlannerContext() {
+  if (!cachedPlannerContext) {
+    const [context, schemaContext] = await Promise.all([
+      buildPlannerContext(),
+      getDatabaseSchemaContext(),
+    ]);
+
+    cachedPlannerContext = {
+      skillsContext: context.skillsContext,
+      toolsContext: context.toolsContext,
+      schemaContext,
+    };
+  }
+  return cachedPlannerContext;
+}
+
+/**
+ * Clear the cached context (useful for testing or hot reload).
+ */
+export function clearPlannerContextCache(): void {
+  cachedPlannerContext = null;
+}
 
 export async function plannerNodeV2(
   state: AgentStateType,
@@ -40,18 +79,21 @@ export async function plannerNodeV2(
       const startMs = Date.now();
       logger.info("Planner node started");
 
-      emitStepEvent(
-        "plan_0",
-        "planning",
-        "Planning your answer",
-        "running",
-        state.requestId,
-        { description: "Breaking the problem into steps", query: state.goal },
-      );
+      emitStepEvent(state.requestId, {
+        stepId: "plan_0",
+        stepType: "planning",
+        title: "Figuring out how to answer your question...",
+        status: "running",
+        message: "I'm analyzing your request to determine the best way to find the information you need.",
+      });
 
       try {
         const config = await getConfig();
         const maxAttempts = Math.max(1, config.agent.maxPlanRetries ?? 2);
+
+        // Load skills and tools context
+        const plannerContext = await getPlannerContext();
+        const currentDate = new Date().toISOString().split("T")[0];
 
         let lastError = "";
         let lastRawError: unknown;
@@ -59,13 +101,19 @@ export async function plannerNodeV2(
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           try {
             const prompt = await plannerPromptV2.invoke({
-              goal: state.goal,
+              goal: state.rewrittenQuery ?? state.goal,
               previousErrors: lastError,
+              availableSkills: plannerContext.skillsContext,
+              availableTools: plannerContext.toolsContext,
+              schemaContext: plannerContext.schemaContext,
+              currentDate,
             });
 
             logger.debug("Invoking planner LLM", {
               attempt: attempt + 1,
               maxAttempts,
+              hasSkillsContext: !!plannerContext.skillsContext,
+              hasToolsContext: !!plannerContext.toolsContext,
             });
 
             const llmResult = await invokeRoleLlm({
@@ -94,25 +142,28 @@ export async function plannerNodeV2(
               });
 
               if (attempt < maxAttempts - 1) {
-                emitStepEvent(
-                  "plan_0",
-                  "planning",
-                  "Refining searching strategy",
-                  "running",
-                  state.requestId,
-                  { description: "Adjusting the approach" },
-                );
+                emitStepEvent(state.requestId, {
+                  stepId: "plan_0",
+                  stepType: "planning",
+                  title: "Refining my approach...",
+                  status: "running",
+                  message: "I'm adjusting my strategy to better find the answer.",
+                });
               }
               continue;
             }
 
             const plan: Plan = validation.data;
+
+            logger.info("Plan", { plan });
+
             const durationMs = Date.now() - startMs;
 
             logger.info("Plan created successfully", {
               attempt: attempt + 1,
               stepCount: plan.steps.length,
               stepIds: plan.steps.map((s) => s.id),
+              stepKinds: plan.steps.map((s) => s.kind),
               durationMs,
             });
 
@@ -150,14 +201,13 @@ export async function plannerNodeV2(
 
         logger.error("Planner node failed", error);
 
-        emitStepEvent(
-          "plan_0",
-          "planning",
-          "Trying another Search approach",
-          "failed",
-          state.requestId,
-          { description: "Adjusting strategy" },
-        );
+        emitStepEvent(state.requestId, {
+          stepId: "plan_0",
+          stepType: "planning",
+          title: "Couldn't find a starting point",
+          status: "failed",
+          message: "I'm having trouble understanding how to begin. I'll try a different approach.",
+        });
 
         return {
           ...state,

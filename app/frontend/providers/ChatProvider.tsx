@@ -8,6 +8,7 @@ import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContex
 import { useStreaming } from "@/hooks/useStreaming";
 import { createUserMessage, truncateBeforeMessage } from "@/lib/messageUtils";
 import { notify } from "@/lib/notify";
+import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -17,6 +18,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus>("Idle");
   const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
+  const [searchQueries, setSearchQueries] = useState<SearchQueryData[]>([]);
+  const [sourceReview, setSourceReview] = useState<SourceReviewData | null>(null);
   
   // Use ref to avoid stale closure issue in callbacks
   const assistantStatusRef = useRef<AssistantStatus>(assistantStatus);
@@ -45,6 +48,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   const { activeRequestRef, streamMessage, abort } = useStreaming({
     setMessages,
     setStepUpdates,
+    setSearchQueries,
+    setSourceReview,
     transitionStatus,
   });
 
@@ -75,6 +80,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
     transitionStatus("LocalPending");
     setStepUpdates([]);
+    setSearchQueries([]);
+    setSourceReview(null);
 
     try {
       // Update messages based on rewrite or new message
@@ -141,6 +148,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     assistantStatus,
     makeTransition: transitionStatus,
     stepUpdates,
+    searchQueries,
+    sourceReview,
   };
 
   return (

@@ -1,5 +1,5 @@
 import { AgentStateType } from "../agentState";
-import { Plan, PlanStep } from "../planner/plan.schema";
+import { Plan, PlanStep, StepOutput } from "../planner/plan.schema";
 import { buildSchedule } from "../scheduler/scheduler";
 import { buildSearchQuery, DependencyData } from "./queryBuilder";
 import { extractStepOutput } from "./extractor";
@@ -20,6 +20,7 @@ import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlm } from "../llm/routing";
 import { SafeJsonParser } from "../utils/parser";
 import { extractorPromptV2 } from "../prompts/extractorPromptV2";
+import { reactExecutorNode } from "./react.node";
 
 /*
 ============================================================
@@ -44,6 +45,47 @@ Per reason step:
 */
 
 // ── Helpers ──────────────────────────────────────────────
+
+/**
+ * Get or generate a default expectedOutput for a step.
+ * If step has no expectedOutput, derive sensible defaults based on step kind.
+ */
+function getExpectedOutput(step: PlanStep): StepOutput {
+  if (step.expectedOutput) {
+    return step.expectedOutput;
+  }
+
+  // Generate default based on step kind
+  switch (step.kind) {
+    case "search":
+      return {
+        type: "table",
+        variableName: `${step.id}_results`,
+        description: step.stepGoal || step.intent,
+      };
+    case "reason":
+      return {
+        type: "object",
+        variableName: `${step.id}_analysis`,
+        description: step.stepGoal || step.intent,
+      };
+    case "final":
+      return {
+        type: "value",
+        variableName: "final_answer",
+        description: step.stepGoal || step.intent,
+      };
+    default: {
+      // Fallback for any future step types
+      const s = step as PlanStep;
+      return {
+        type: "table",
+        variableName: `${s.id}_output`,
+        description: s.intent,
+      };
+    }
+  }
+}
 
 function isEmptyResult(result: unknown): boolean {
   if (result === null || result === undefined) return true;
@@ -84,9 +126,10 @@ function gatherDependencies(
         stepId: step.id,
       });
     }
+    const expectedOutput = getExpectedOutput(depStep);
     return {
       stepId: depId,
-      variableName: depStep.expectedOutput.variableName,
+      variableName: expectedOutput.variableName,
       data: stepResults[depId],
     };
   });
@@ -111,7 +154,7 @@ async function executeSearchStep(
   const { query, llmCallsUsed: builderCalls } = await buildSearchQuery(
     step,
     deps,
-    state.goal,
+    step.stepGoal ?? step.intent,
     state.requestId,
   );
 
@@ -218,6 +261,7 @@ async function executeReasonStep(
     },
     async () => {
       const deps = gatherDependencies(step, plan, stepResults);
+      const expectedOutput = getExpectedOutput(step);
 
       const depContext =
         deps.length > 0
@@ -233,9 +277,9 @@ async function executeReasonStep(
         intent: step.intent,
         searchResults: "(this is a reasoning step — no search results)",
         dependencyData: depContext,
-        outputType: step.expectedOutput.type,
-        variableName: step.expectedOutput.variableName,
-        outputDescription: step.expectedOutput.description,
+        outputType: expectedOutput.type,
+        variableName: expectedOutput.variableName,
+        outputDescription: expectedOutput.description,
       });
 
       const llmResult = await invokeRoleLlm({
@@ -252,7 +296,7 @@ async function executeReasonStep(
 
       logger.info("Reasoning step complete", {
         stepId: step.id,
-        outputType: step.expectedOutput.type,
+        outputType: expectedOutput.type,
       });
 
       return { result: parsed, llmCallsUsed: 1 };
@@ -317,7 +361,7 @@ export async function executorNodeV2(
               maxRuntimeMs,
               elapsedMs: Date.now() - startMs,
             });
-            break;
+            // break;
           }
 
           if (llmCalls >= maxLlmCalls) {
@@ -328,7 +372,7 @@ export async function executorNodeV2(
                 llmCalls,
               },
             );
-            break;
+            // break;
           }
 
           // Skip the "final" step — that's handled by finalAnswerNode
@@ -363,87 +407,22 @@ export async function executorNodeV2(
                 }
               }
 
-              emitStepEvent(
-                step.id,
-                step.kind === "search" ? "searching" : "reasoning",
-                step.kind === "search"
-                  ? "Searching your memories"
-                  : "Evaluating information",
-                "running",
-                state.requestId,
-                { description: step.intent },
-              );
+            
 
               try {
-                let stepResult: { result: unknown; llmCallsUsed: number };
+                const stepResult = await reactExecutorNode(state, step);
 
-                if (step.kind === "search") {
-                  stepResult = await executeSearchStep(
-                    step as PlanStep & { kind: "search" },
-                    plan,
-                    stepResults,
-                    state,
-                    logger,
-                  );
-                } else {
-                  // reason step
-                  stepResult = await executeReasonStep(
-                    step as PlanStep & { kind: "reason" },
-                    plan,
-                    stepResults,
-                    state,
-                    logger,
-                  );
-                }
-
-                stepResults[step.id] = stepResult.result;
-                llmCalls += stepResult.llmCallsUsed;
-
-                const resultEmpty = isEmptyResult(stepResult.result);
-
-                if (step.kind === "search") {
-                  const rows = Array.isArray(stepResult.result)
-                    ? stepResult.result
-                    : [];
-                  const thinkingResults = toThinkingSearchResults(rows);
-                  emitStepEvent(
-                    step.id,
-                    "searching",
-                    resultEmpty
-                      ? "No results found"
-                      : `Found ${thinkingResults.length} results`,
-                    "completed",
-                    state.requestId,
-                    {
-                      description: resultEmpty
-                        ? "No matching records"
-                        : `Found ${thinkingResults.length} relevant result(s)`,
-                      results: thinkingResults,
-                      resultCount: thinkingResults.length,
-                    },
-                  );
-                } else {
-                  emitStepEvent(
-                    step.id,
-                    "reasoning",
-                    "Evaluation complete",
-                    "completed",
-                    state.requestId,
-                    { description: "Verified relevant details" },
-                  );
-                }
-
-                logger.info("Step completed", {
-                  stepId: step.id,
-                  kind: step.kind,
-                  isEmpty: resultEmpty,
-                  llmCallsUsed: stepResult.llmCallsUsed,
+                logger.info("Got Result from Execution Node", {
+                  stepGoal: step.stepGoal,
+                  resultSummary: stepResult.stepResults?.react_summary,
                 });
+
+                // Store chunks and data - final LLM will synthesize answer
+                stepResults[step.id] = stepResult.stepResults ?? null;
+                llmCalls += stepResult.llmCalls ?? 0;
 
                 return { stepId: step.id, success: true as const };
               } catch (error) {
-
-               
                 const errMsg = ErrorHandler.getSafeMessage(error);
                 stepErrors[step.id] = errMsg;
 
@@ -452,17 +431,12 @@ export async function executorNodeV2(
                 });
 
                 // Emit step failure event with clear message
-                emitStepEvent(
-                  step.id,
-                  step.kind === "search" ? "searching" : "reasoning",
-                  "Step failed",
-                  "failed",
-                  state.requestId,
-                  { 
-                    description: errMsg,
-                    message: errMsg,
-                  },
-                );
+                emitStepEvent(state.requestId, {
+                  stepType: step.kind === "search" ? "searching" : "reasoning",
+                  stepId: step.id,
+                  title: "I'm having trouble with this step. I'll keep trying.",
+                  status: "failed",
+                });
 
                 return {
                   stepId: step.id,
@@ -489,7 +463,7 @@ export async function executorNodeV2(
                   failMsg,
                   ErrorCode.EXECUTOR_FAILED,
                   state.requestId,
-                  true
+                  true,
                 );
               } else if (!settled.value.success) {
                 const failedId = settled.value.stepId;
@@ -507,7 +481,7 @@ export async function executorNodeV2(
                     `Step "${failedId}" failed: ${settled.value.error}`,
                     ErrorCode.EXECUTOR_FAILED,
                     state.requestId,
-                    false // Not a system error - could be retried
+                    false, // Not a system error - could be retried
                   );
 
                   return {

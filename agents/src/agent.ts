@@ -10,6 +10,8 @@ import { getConfig } from "./config/config";
 import { runWithSpan } from "./telemetry/tracing";
 import { emitCompletion } from "./utils/eventQueue";
 import type { Plan } from "./planner/plan.schema";
+import { clarifyAndRewrittenNode } from "./clarifyAndRewrittenNode";
+import { intentRouterNode } from "./intentRouterNode";
 
 /*
 ============================================================
@@ -32,22 +34,10 @@ AGENT GRAPH (v2)
  * After the router node: decide which branch to take.
  */
 async function afterRouter(state: AgentStateType): Promise<string> {
-  const config = await getConfig();
-  
-  switch (state.route) {
-    case "conversation":
-      return "conversationExit";
-    case "needs_clarification":
-      return "clarificationExit";
-    case "simple_search":
-    case "plan":
-    default:
-      // Use ReAct executor or legacy planner based on config
-      if (config.agent.useReActExecutor) {
-        return "reactExecutor";
-      }
-      return state.route === "simple_search" ? "simpleSearchPlan" : "planner";
+  if (state.isConversation) {
+    return "conversationExit";
   }
+  return "planner";
 }
 
 /**
@@ -81,6 +71,16 @@ async function afterExecutor(state: AgentStateType): Promise<string> {
   }
 
   return "finalAnswer";
+}
+
+async function afterClarificationAndRewrite(
+  state: AgentStateType,
+): Promise<string> {
+  if (state.isClarificationNeeded) {
+    return "clarificationExit";
+  }
+
+  return "intentRouter";
 }
 
 // ── Terminal exit nodes ──────────────────────────────────
@@ -129,6 +129,7 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
       {
         id: "step1",
         kind: "search",
+        stepGoal: `Find relevant activity for: ${state.goal}`,
         intent: state.goal,
         dependsOn: [],
         expectedOutput: {
@@ -140,6 +141,7 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
       {
         id: "step2",
         kind: "final",
+        stepGoal: "Synthesize final answer",
         intent: `Answer the user's question based on the search results: ${state.goal}`,
         dependsOn: ["step1"],
         expectedOutput: {
@@ -171,50 +173,43 @@ async function buildAgentGraph() {
 
         // Add nodes
         const graphBuilder = workflow
-          .addNode("router", routerNode)
+          .addNode("clarifyAndRewritten", clarifyAndRewrittenNode)
+          .addNode("intentRouter", intentRouterNode)
+          .addNode("clarificationExit", clarificationExit)
+          .addNode("conversationExit", conversationExit)
           .addNode("planner", plannerNodeV2)
           .addNode("executor", executorNodeV2)
-          .addNode("reactExecutor", reactExecutorNode)
           .addNode("finalAnswer", finalAnswerNodeV2)
-          .addNode("conversationExit", conversationExit)
-          .addNode("clarificationExit", clarificationExit)
-          .addNode("simpleSearchPlan", simpleSearchPlan);
+
+        // .addNode("router", routerNode)
+        // .addNode("reactExecutor", reactExecutorNode)
+        // .addNode("simpleSearchPlan", simpleSearchPlan);
 
         // Edges
-        graphBuilder.addEdge(START, "router");
+        graphBuilder.addEdge(START, "clarifyAndRewritten");
 
-        graphBuilder.addConditionalEdges("router", afterRouter, {
+        graphBuilder.addConditionalEdges(
+          "clarifyAndRewritten",
+          afterClarificationAndRewrite,
+          {
+            clarificationExit: "clarificationExit",
+            intentRouter: "intentRouter",
+          },
+        );
+
+        graphBuilder.addConditionalEdges("intentRouter", afterRouter, {
           conversationExit: "conversationExit",
-          clarificationExit: "clarificationExit",
-          simpleSearchPlan: "simpleSearchPlan",
           planner: "planner",
-          reactExecutor: "reactExecutor",
         });
 
-        graphBuilder.addEdge("simpleSearchPlan", "executor");
-        
-        // ReAct executor goes directly to final answer
-        graphBuilder.addEdge("reactExecutor", "finalAnswer");
-
-        graphBuilder.addConditionalEdges("planner", afterPlanner, {
-          planner: "planner",
-          executor: "executor",
-          finalAnswer: "finalAnswer",
-        });
-
-        graphBuilder.addConditionalEdges("executor", afterExecutor, {
-          planner: "planner",
-          finalAnswer: "finalAnswer",
-        });
-
-        // Terminal edges
         graphBuilder.addEdge("conversationExit", END);
         graphBuilder.addEdge("clarificationExit", END);
+        graphBuilder.addEdge("planner", "executor");
+        graphBuilder.addEdge("executor", "finalAnswer");
+
         graphBuilder.addEdge("finalAnswer", END);
 
-        logger.info(
-          "Agent workflow graph v2 built successfully",
-        );
+        logger.info("Agent workflow graph v2 built successfully");
 
         return graphBuilder.compile();
       } catch (error) {

@@ -23,7 +23,7 @@ Fast, cheap model that does two things in one call:
 */
 
 const RouterOutputSchema = z.object({
-  route: z.enum(["needs_clarification", "conversation", "simple_search", "plan"]),
+  route: z.enum(["conversation", "simple_search", "plan"]),
   clarificationQuestion: z.string().optional(),
   conversationResponse: z.string().optional(),
   confidence: z.number().min(0).max(1).default(0.8),
@@ -32,7 +32,9 @@ const RouterOutputSchema = z.object({
 export type RouterOutput = z.infer<typeof RouterOutputSchema>;
 export type Route = RouterOutput["route"];
 
-export async function routerNode(state: AgentStateType): Promise<AgentStateType> {
+export async function routerNode(
+  state: AgentStateType,
+): Promise<AgentStateType> {
   const logger = await createContextLogger(state.requestId, {
     node: "router",
     goal: state.goal,
@@ -90,15 +92,6 @@ export async function routerNode(state: AgentStateType): Promise<AgentStateType>
         );
 
         logger.error("Router node failed — defaulting to plan route", error);
-
-        emitStepEvent(
-          "router_0",
-          "planning",
-          "Processing your request",
-          "completed",
-          state.requestId,
-          { description: "Identified the information needed" },
-        );
 
         // Safe fallback: treat as a planning query
         return {

@@ -5,13 +5,16 @@
  */
 
 import { AsyncLocalStorage } from "async_hooks";
-import { getLogger } from "./logger";
+import { getLogger, logger } from "./logger";
 import { formatLocalTimestamp } from "./time";
 import type {
   AgentStreamEvent,
+  SourcesEvent,
+  SourcesPayload,
   StreamStepStatus,
   StreamStepType,
 } from "../../../shared/types/streaming";
+import { ThinkingStep } from "shared/types/frontend";
 
 type QueuedEvent = AgentStreamEvent;
 
@@ -38,8 +41,7 @@ function logQueue(
       }
       metadata ? logger.error(metadata, message) : logger.error(message);
     })
-    .catch(() => {
-    });
+    .catch(() => {});
 }
 
 class EventQueue {
@@ -95,7 +97,10 @@ const globalEventQueues = new Map<string, EventQueue>();
  * @param streamWriter Optional callback for real-time event streaming
  * @returns The event queue for this request
  */
-export function initializeEventQueue(requestId: string, streamWriter?: StreamCallback): EventQueue {
+export function initializeEventQueue(
+  requestId: string,
+  streamWriter?: StreamCallback,
+): EventQueue {
   logQueue("debug", "Initializing event queue", { requestId });
   const queue = new EventQueue();
   if (streamWriter) {
@@ -133,7 +138,9 @@ const eventQueueStorage = new AsyncLocalStorage<EventQueue>();
  * @param callback Function to run within the queue context
  * @returns Result of callback
  */
-export function withEventQueue<T>(callback: () => T | Promise<T>): T | Promise<T> {
+export function withEventQueue<T>(
+  callback: () => T | Promise<T>,
+): T | Promise<T> {
   logQueue("debug", "Initializing legacy event queue context");
   const queue = new EventQueue();
   const result = eventQueueStorage.run(queue, () => {
@@ -153,23 +160,7 @@ export function withEventQueue<T>(callback: () => T | Promise<T>): T | Promise<T
  * @param requestId Request identifier to route event to correct queue
  * @param details Additional details
  */
-export function emitStepEvent(
-  stepId: string,
-  stepType: StreamStepType,
-  title: string,
-  status: StreamStepStatus,
-  requestId: string,
-  details?: {
-    description?: string;
-    query?: string;
-    results?: any[];
-    resultCount?: number;
-    message?: string;
-    reasoning?: string;
-    queries?: string[];
-    duration?: number;
-  }
-): void {
+export function emitStepEvent(requestId: string, data: ThinkingStep): void {
   // Try to get queue from global map first (preferred for LangGraph compatibility)
   let queue = getEventQueue(requestId);
 
@@ -180,41 +171,52 @@ export function emitStepEvent(
 
   if (!queue) {
     logQueue("warn", "Event queue not initialized - event not emitted", {
-      stepId,
-      stepType,
-      title,
       requestId,
     });
     return;
   }
 
-  const event : QueuedEvent = {
+  const event: QueuedEvent = {
     type: "thinking",
-    data: {
-      stepId,
-      stepType,
-      title,
-      status,
-      description: details?.description,
-      query: details?.query,
-      results: details?.results,
-      resultCount: details?.resultCount,
-      message: details?.message,
-      reasoning: details?.reasoning,
-      queries: details?.queries,
-      duration: details?.duration,
-      timestamp: formatLocalTimestamp(),
-    },
+    data: data,
     timestamp: formatLocalTimestamp(),
   };
 
   queue.add(event);
   logQueue("debug", "Event emitted to queue", {
     requestId,
-    stepId,
-    stepType,
-    status,
-    resultCount: details?.resultCount,
+  });
+}
+
+export function emitSources(requestId: string, data: SourcesPayload): void {
+  // Try to get queue from global map first (preferred for LangGraph compatibility)
+  let queue = getEventQueue(requestId);
+
+  // Fall back to AsyncLocalStorage if global map doesn't have it
+  if (!queue) {
+    queue = eventQueueStorage.getStore();
+  }
+
+  if (!queue) {
+    logQueue("warn", "Event queue not initialized - event not emitted", {
+      requestId,
+    });
+    return;
+  }
+
+  console.log(JSON.stringify(data, null, 2), "Source Payload in emitSources");
+
+  const event: QueuedEvent = {
+    type: "sources",
+    data,
+    timestamp: formatLocalTimestamp(),
+  };
+
+  queue.add(event);
+  logQueue("debug", "Event emitted to queue", {
+    requestId,
+    eventType: "sources",
+    sourceCount: data.sources.length,
   });
 }
 
@@ -224,7 +226,11 @@ export function emitStepEvent(
  * @param requestId Request identifier
  * @param stepId Optional step ID for linking
  */
-export function emitCompletion(content: string, requestId: string, stepId: string = "final"): void {
+export function emitCompletion(
+  content: string,
+  requestId: string,
+  stepId: string = "final",
+): void {
   let queue = getEventQueue(requestId);
   if (!queue) {
     queue = eventQueueStorage.getStore();
@@ -291,7 +297,7 @@ export function emitError(
   message: string,
   code: string,
   requestId: string,
-  isSystemError: boolean = true
+  isSystemError: boolean = true,
 ): void {
   let queue = getEventQueue(requestId);
   if (!queue) {
@@ -348,12 +354,19 @@ export function drainQueuedEvents(requestId: string): QueuedEvent[] {
     const legacyQueue = eventQueueStorage.getStore();
     if (legacyQueue) {
       const events = legacyQueue.drain();
-      logQueue("debug", "Legacy queue drained", { events: events.length, requestId });
+      logQueue("debug", "Legacy queue drained", {
+        events: events.length,
+        requestId,
+      });
       return events;
     }
-    logQueue("warn", "No event queue found in map or AsyncLocalStorage when draining", {
-      requestId,
-    });
+    logQueue(
+      "warn",
+      "No event queue found in map or AsyncLocalStorage when draining",
+      {
+        requestId,
+      },
+    );
     return [];
   }
 

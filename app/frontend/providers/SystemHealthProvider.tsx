@@ -54,13 +54,11 @@ export default function SystemHealthProvider({
     const baseUrl = await getBaseUrl();
 
     if (!baseUrl) {
-      console.log("BASE url is NOne");
       return false;
     }
 
     try {
       const res = await axios.get(`${baseUrl}/healthz`);
-      console.log("Health Status: ", res.status === 200);
       return res.status === 200;
     } catch {
       return false;

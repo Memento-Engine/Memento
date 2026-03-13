@@ -1,12 +1,7 @@
 "use client";
 
 import type { ChatStatus } from "ai";
-import {
-  RefreshCwIcon,
-  Share2,
-  ThumbsDown,
-  ThumbsUp,
-} from "lucide-react";
+import { RefreshCwIcon, Share2, ThumbsDown, ThumbsUp } from "lucide-react";
 import React, { useCallback, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -43,7 +38,7 @@ function MessageItem({
   onRegenerate,
   onEdit,
 }: MessageItemProps): React.ReactElement {
-  const { assistantStatus } = useChatContext();
+  const { assistantStatus, searchQueries, sourceReview } = useChatContext();
   const { setReferenceMeta, setSourceList } = useReferenceContext();
   const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
 
@@ -113,7 +108,7 @@ function MessageItem({
 
   const renderTextPart = (
     part: { type: "text"; text: string },
-    partIndex: number
+    partIndex: number,
   ) => {
     if (!part.text || part.text.trim() === "") {
       return null;

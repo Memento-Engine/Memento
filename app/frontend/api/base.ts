@@ -7,8 +7,6 @@ export async function getBaseUrl(): Promise<string> {
       baseDir: BaseDirectory.LocalData, // <-- Changed this line
     });
 
-    console.log("Got Port From getBaseUrl:", port);
-
     return `http://localhost:${port.trim()}/api/v1`;
   } catch (err) {
     console.log("Failed to read port file, using fallback", err);

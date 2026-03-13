@@ -55,8 +55,14 @@ Full-text search index on chunks. Use for keyword-based search.
 
 **Usage:**
 ```sql
--- FTS5 search
-SELECT c.*, f.* 
+-- FTS5 search (always include chunk_id)
+SELECT 
+  c.id as chunk_id,  -- REQUIRED for every SQL query
+  f.captured_at,
+  f.app_name,
+  f.window_title,
+  f.browser_url,
+  c.text_content
 FROM chunks_fts 
 JOIN chunks c ON chunks_fts.rowid = c.id
 JOIN frames f ON c.frame_id = f.id
@@ -77,7 +83,11 @@ Semantic search is done via a separate API call, not raw SQL.
 
 ## Common Join Patterns
 
-**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements. chunk_id is required for citations.
+**CRITICAL REQUIREMENT:** Every SQL query MUST include `c.id as chunk_id` (or `MIN(c.id) as chunk_id` for aggregates). This is mandatory for citations - the agent cannot provide source references without chunk_id.
+
+- For queries joining chunks: Use `c.id as chunk_id`
+- For queries only on frames: Add `LEFT JOIN chunks c ON c.frame_id = f.id` and select `c.id as chunk_id`
+- For aggregate queries with GROUP BY: Use `MIN(c.id) as chunk_id` to get a representative chunk
 
 ```sql
 -- Get text content with frame metadata (ALWAYS include chunk_id)

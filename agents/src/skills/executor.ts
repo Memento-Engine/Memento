@@ -1,12 +1,21 @@
 import { AgentStateType } from "../agentState";
-import { SkillPlan, SkillStep, SkillStepResult, SkillPlanSchema } from "./types";
+import {
+  SkillPlan,
+  SkillStep,
+  SkillStepResult,
+  SkillPlanSchema,
+} from "./types";
 import { getSkills, buildSkillContext } from "./loader";
 import { executeSql, formatResultsAsJson } from "./sqlExecutor";
 import { getToolRegistry } from "../tools/registry";
 import { createContextLogger, getLogger } from "../utils/logger";
 import { getConfig } from "../config/config";
 import { invokeRoleLlm } from "../llm/routing";
-import { skillPlannerPrompt, skillReasoningPrompt, buildAvailableSkillsDescription } from "./prompts";
+import {
+  skillPlannerPrompt,
+  skillReasoningPrompt,
+  buildAvailableSkillsDescription,
+} from "./prompts";
 import { SafeJsonParser } from "../utils/parser";
 import { runWithSpan } from "../telemetry/tracing";
 import { emitStepEvent } from "../utils/eventQueue";
@@ -17,7 +26,7 @@ import { emitStepEvent } from "../utils/eventQueue";
 async function executeSqlStep(
   step: SkillStep,
   stepResults: Record<string, SkillStepResult>,
-  state: AgentStateType
+  state: AgentStateType,
 ): Promise<SkillStepResult> {
   const startTime = Date.now();
   const logger = await getLogger();
@@ -42,17 +51,26 @@ async function executeSqlStep(
       if (Array.isArray(data) && data.length > 0) {
         const row = data[0];
         for (const [key, value] of Object.entries(row)) {
-          sql = sql.replace(new RegExp(`\\{${depId}\\.${key}\\}`, "g"), String(value));
+          sql = sql.replace(
+            new RegExp(`\\{${depId}\\.${key}\\}`, "g"),
+            String(value),
+          );
         }
       } else if (typeof data === "object") {
         for (const [key, value] of Object.entries(data)) {
-          sql = sql.replace(new RegExp(`\\{${depId}\\.${key}\\}`, "g"), String(value));
+          sql = sql.replace(
+            new RegExp(`\\{${depId}\\.${key}\\}`, "g"),
+            String(value),
+          );
         }
       }
     }
   }
 
-  logger.debug({ stepId: step.id, sql: sql.slice(0, 200) }, "Executing SQL step");
+  logger.debug(
+    { stepId: step.id, sql: sql.slice(0, 200) },
+    "Executing SQL step",
+  );
 
   const result = await executeSql({ sql });
 
@@ -73,7 +91,7 @@ async function executeSqlStep(
 async function executeSemanticStep(
   step: SkillStep,
   stepResults: Record<string, SkillStepResult>,
-  state: AgentStateType
+  state: AgentStateType,
 ): Promise<SkillStepResult> {
   const startTime = Date.now();
   const logger = await getLogger();
@@ -112,7 +130,7 @@ async function executeSemanticStep(
       stepId: step.id,
       attemptNumber: 1,
       timeout: 30000,
-    }
+    },
   );
 
   return {
@@ -120,7 +138,10 @@ async function executeSemanticStep(
     type: "semantic",
     success: toolResult.success,
     data: toolResult.data,
-    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
+    error:
+      typeof toolResult.error === "string"
+        ? toolResult.error
+        : toolResult.error?.message,
     executionTimeMs: Date.now() - startTime,
   };
 }
@@ -131,7 +152,7 @@ async function executeSemanticStep(
 async function executeReasoningStep(
   step: SkillStep,
   stepResults: Record<string, SkillStepResult>,
-  state: AgentStateType
+  state: AgentStateType,
 ): Promise<SkillStepResult> {
   const startTime = Date.now();
   const logger = await getLogger();
@@ -181,7 +202,10 @@ async function executeReasoningStep(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error({ stepId: step.id, error: errorMessage }, "Reasoning step failed");
+    logger.error(
+      { stepId: step.id, error: errorMessage },
+      "Reasoning step failed",
+    );
 
     return {
       stepId: step.id,
@@ -199,7 +223,7 @@ async function executeReasoningStep(
 async function executeStep(
   step: SkillStep,
   stepResults: Record<string, SkillStepResult>,
-  state: AgentStateType
+  state: AgentStateType,
 ): Promise<SkillStepResult> {
   switch (step.type) {
     case "sql":
@@ -224,7 +248,7 @@ async function executeStep(
  */
 function dependenciesSatisfied(
   step: SkillStep,
-  completedSteps: Set<string>
+  completedSteps: Set<string>,
 ): boolean {
   return step.dependsOn.every((depId) => completedSteps.has(depId));
 }
@@ -234,22 +258,24 @@ function dependenciesSatisfied(
  */
 function evaluateCondition(
   condition: string,
-  stepResults: Record<string, SkillStepResult>
+  stepResults: Record<string, SkillStepResult>,
 ): boolean {
   try {
     // Simple condition evaluation
     // Supports: result.length === 0, result[0].column === null
-    const match = condition.match(/^(\w+)(\.length\s*===\s*0|\.data\.length\s*===\s*0|\[\d+\]\.\w+\s*===\s*null)$/);
+    const match = condition.match(
+      /^(\w+)(\.length\s*===\s*0|\.data\.length\s*===\s*0|\[\d+\]\.\w+\s*===\s*null)$/,
+    );
     if (match) {
       const [, stepId, check] = match;
       const result = stepResults[stepId];
-      
+
       if (check.includes("length === 0")) {
         const data = result?.data;
         return Array.isArray(data) ? data.length === 0 : !data;
       }
     }
-    
+
     // Fallback: check if result is empty
     const stepIdMatch = condition.match(/^(\w+)/);
     if (stepIdMatch) {
@@ -257,7 +283,7 @@ function evaluateCondition(
       const data = result?.data;
       return Array.isArray(data) ? data.length === 0 : !data;
     }
-    
+
     return false;
   } catch {
     return false;
@@ -269,7 +295,7 @@ function evaluateCondition(
  */
 export async function executeSkillPlan(
   plan: SkillPlan,
-  state: AgentStateType
+  state: AgentStateType,
 ): Promise<{
   results: Record<string, SkillStepResult>;
   success: boolean;
@@ -280,11 +306,18 @@ export async function executeSkillPlan(
   const completedSteps = new Set<string>();
   const skippedSteps = new Set<string>();
 
-  logger.info({ goal: plan.goal, stepCount: plan.steps.length, requiresMultiStep: plan.requiresMultiStep }, "Executing skill plan");
+  logger.info(
+    {
+      goal: plan.goal,
+      stepCount: plan.steps.length,
+      requiresMultiStep: plan.requiresMultiStep,
+    },
+    "Executing skill plan",
+  );
 
   // Build step lookup
   const stepMap = new Map(plan.steps.map((s) => [s.id, s]));
-  
+
   // Execute steps in dependency order
   let currentStepIndex = 0;
   let lastCompletedStepId = "";
@@ -304,9 +337,11 @@ export async function executeSkillPlan(
       let foundExecutable = false;
       for (let i = currentStepIndex + 1; i < plan.steps.length; i++) {
         const candidateStep = plan.steps[i];
-        if (!completedSteps.has(candidateStep.id) && 
-            !skippedSteps.has(candidateStep.id) &&
-            dependenciesSatisfied(candidateStep, completedSteps)) {
+        if (
+          !completedSteps.has(candidateStep.id) &&
+          !skippedSteps.has(candidateStep.id) &&
+          dependenciesSatisfied(candidateStep, completedSteps)
+        ) {
           // Execute this step first
           const result = await executeStep(candidateStep, stepResults, state);
           stepResults[candidateStep.id] = result;
@@ -314,59 +349,52 @@ export async function executeSkillPlan(
           lastCompletedStepId = candidateStep.id;
           foundExecutable = true;
 
-          const stepType = candidateStep.type === "sql" || candidateStep.type === "semantic" ? "searching" : "reasoning";
-          emitStepEvent(
-            candidateStep.id,
-            stepType,
-            `Executing ${candidateStep.type} step`,
-            "completed",
-            state.requestId,
-            { resultCount: result.rowCount }
-          );
-          
+          const stepType =
+            candidateStep.type === "sql" || candidateStep.type === "semantic"
+              ? "searching"
+              : "reasoning";
+
           break;
         }
       }
-      
+
       if (!foundExecutable) {
         // Deadlock - dependencies can't be satisfied
-        logger.error({ stuckStep: step.id, completedSteps: Array.from(completedSteps) }, "Skill plan execution deadlock");
+        logger.error(
+          { stuckStep: step.id, completedSteps: Array.from(completedSteps) },
+          "Skill plan execution deadlock",
+        );
         break;
       }
       continue;
     }
 
     // Execute the step
-    const stepType = step.type === "sql" || step.type === "semantic" ? "searching" : "reasoning";
-    emitStepEvent(
-      step.id,
-      stepType,
-      `Executing ${step.type} step`,
-      "running",
-      state.requestId
-    );
-    
+    const stepType =
+      step.type === "sql" || step.type === "semantic"
+        ? "searching"
+        : "reasoning";
+
     const result = await executeStep(step, stepResults, state);
     stepResults[step.id] = result;
     completedSteps.add(step.id);
     lastCompletedStepId = step.id;
 
-    emitStepEvent(
-      step.id,
-      stepType,
-      `Completed ${step.type} step`,
-      result.success ? "completed" : "failed",
-      state.requestId,
-      { resultCount: result.rowCount }
-    );
-
     // Handle conditional branching
     if (step.conditionalNext) {
-      const conditionMet = evaluateCondition(step.conditionalNext.condition, stepResults);
-      const nextStepId = conditionMet ? step.conditionalNext.ifTrue : step.conditionalNext.ifFalse;
+      const conditionMet = evaluateCondition(
+        step.conditionalNext.condition,
+        stepResults,
+      );
+      const nextStepId = conditionMet
+        ? step.conditionalNext.ifTrue
+        : step.conditionalNext.ifFalse;
 
       if (nextStepId === "END") {
-        logger.info({ stepId: step.id, conditionMet }, "Conditional branch leads to END");
+        logger.info(
+          { stepId: step.id, conditionMet },
+          "Conditional branch leads to END",
+        );
         break;
       }
 
@@ -382,10 +410,17 @@ export async function executeSkillPlan(
   }
 
   const success = Array.from(completedSteps).every(
-    (id) => stepResults[id]?.success
+    (id) => stepResults[id]?.success,
   );
 
-  logger.info({ completedSteps: completedSteps.size, skippedSteps: skippedSteps.size, success }, "Skill plan execution complete");
+  logger.info(
+    {
+      completedSteps: completedSteps.size,
+      skippedSteps: skippedSteps.size,
+      success,
+    },
+    "Skill plan execution complete",
+  );
 
   return {
     results: stepResults,
@@ -399,7 +434,7 @@ export async function executeSkillPlan(
  */
 export async function generateSkillPlan(
   query: string,
-  state: AgentStateType
+  state: AgentStateType,
 ): Promise<SkillPlan> {
   const logger = await getLogger();
   const skills = await getSkills();
@@ -438,7 +473,15 @@ export async function generateSkillPlan(
   // Validate with Zod
   const validatedPlan = SkillPlanSchema.parse(parsed);
 
-  logger.info({ goal: validatedPlan.goal, stepCount: validatedPlan.steps.length, requiresMultiStep: validatedPlan.requiresMultiStep, selectedSkills: validatedPlan.selectedSkills }, "Skill plan generated");
+  logger.info(
+    {
+      goal: validatedPlan.goal,
+      stepCount: validatedPlan.steps.length,
+      requiresMultiStep: validatedPlan.requiresMultiStep,
+      selectedSkills: validatedPlan.selectedSkills,
+    },
+    "Skill plan generated",
+  );
 
   return validatedPlan;
 }

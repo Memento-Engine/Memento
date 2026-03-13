@@ -1,4 +1,5 @@
 use axum::{ extract::{ Json, State }, response::{ IntoResponse, Response } };
+use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::{ Deserialize, Serialize };
 use sqlx::Column;
@@ -47,6 +48,59 @@ const MAX_ROWS: i32 = 100;
 
 /// Default limit if not specified
 const DEFAULT_LIMIT: i32 = 50;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChunkRequest {
+    pub chunk_ids: Vec<i32>,
+    pub include_text_json: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChunkResult {
+    pub chunk_id: i32,
+    pub app_name: String,
+    pub window_name: String,
+    pub captured_at: DateTime<Utc>,
+    pub browser_url: Option<String>,
+    pub image_path: Option<String>,
+    pub text_content: Option<String>,
+    pub text_json: Option<String>,
+}
+
+pub async fn search_results_by_chunk_ids(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ChunkRequest>
+) -> Response {
+    let start_time = Instant::now();
+    info!("Received request for search results with chunk_ids: {:?}", payload.chunk_ids);
+
+    match state.db.get_results_by_chunk_ids(payload.chunk_ids, payload.include_text_json).await {
+        Ok(results) => {
+            let duration = start_time.elapsed();
+
+            let chunk_result = results
+                .into_iter()
+                .map(|r| ChunkResult {
+                    chunk_id: r.chunk_id,
+                    app_name: r.app_name,
+                    window_name: r.window_title,
+                    captured_at: r.captured_at,
+                    browser_url: Some(r.browser_url),
+                    image_path: Some(r.image_path),
+                    text_content: Some(r.text_content),
+                    text_json: Some(r.text_json),
+                })
+                .collect::<Vec<ChunkResult>>();
+
+            info!("Successfully retrieved search results in {:?} ms", duration.as_millis());
+            (StatusCode::OK, Json(chunk_result)).into_response()
+        }
+        Err(e) => {
+            println!("Error retrieving search results: {:?}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve search results").into_response()
+        }
+    }
+}
 
 /// Validate that the SQL is read-only
 fn validate_sql(sql: &str) -> Result<String, String> {
@@ -263,9 +317,8 @@ use sqlx::{ QueryBuilder, Row };
 
 pub async fn semantic_search(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<SemanticSearchRequest>,
+    Json(payload): Json<SemanticSearchRequest>
 ) -> Response {
-
     let start = Instant::now();
     let limit = payload.limit.unwrap_or(20).clamp(1, 100);
 
@@ -338,15 +391,12 @@ pub async fn semantic_search(
 
     // Apply filters
     if let Some(filters) = &payload.filters {
-
         // App filter
         if let Some(apps) = &filters.app_names {
             if !apps.is_empty() {
-
                 qb.push(" AND (");
 
                 for (i, app) in apps.iter().enumerate() {
-
                     if i > 0 {
                         qb.push(" OR ");
                     }
@@ -361,7 +411,6 @@ pub async fn semantic_search(
 
         // Time filter
         if let Some(time_range) = &filters.time_range {
-
             if let Some(start_time) = &time_range.start {
                 qb.push(" AND f.captured_at >= ");
                 qb.push_bind(start_time);
@@ -464,9 +513,8 @@ pub struct HybridSearchResult {
 /// Hybrid search endpoint - combines FTS and vector search
 pub async fn hybrid_search(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<HybridSearchRequest>,
+    Json(payload): Json<HybridSearchRequest>
 ) -> Response {
-
     let start = Instant::now();
     let limit = payload.limit.unwrap_or(20).clamp(1, 100);
     let fetch_limit = limit * 3;
@@ -517,8 +565,7 @@ pub async fn hybrid_search(
             .map(|k| format!("\"{}\"", k.replace('"', "")))
             .collect()
     } else {
-        payload
-            .query
+        payload.query
             .split_whitespace()
             .filter(|w| w.len() > 2)
             .map(|w| format!("\"{}\"", w.replace('"', "")))
@@ -543,7 +590,7 @@ pub async fn hybrid_search(
                 COALESCE(f.browser_url,'') as browser_url,
                 c.text_content,
                 1.0 - vec_distance_cosine(v.embedding,
-        "#,
+        "#
     );
 
     qb.push_bind(&embedding_json);
@@ -554,19 +601,16 @@ pub async fn hybrid_search(
         JOIN chunks c ON v.chunk_id = c.id
         JOIN frames f ON c.frame_id = f.id
         WHERE 1=1
-        "#,
+        "#
     );
 
     // Filters
     if let Some(filters) = &payload.filters {
-
         if let Some(apps) = &filters.app_names {
             if !apps.is_empty() {
-
                 qb.push(" AND (");
 
                 for (i, app) in apps.iter().enumerate() {
-
                     if i > 0 {
                         qb.push(" OR ");
                     }
@@ -580,7 +624,6 @@ pub async fn hybrid_search(
         }
 
         if let Some(time_range) = &filters.time_range {
-
             if let Some(start) = &time_range.start {
                 qb.push(" AND f.captured_at >= ");
                 qb.push_bind(start);
@@ -613,7 +656,7 @@ pub async fn hybrid_search(
             JOIN chunks c ON chunks_fts.rowid = c.id
             JOIN frames f ON c.frame_id = f.id
             WHERE chunks_fts MATCH
-        "#,
+        "#
     );
 
     qb.push_bind(&fts_match);
@@ -684,7 +727,7 @@ pub async fn hybrid_search(
         FROM combined
         ORDER BY combined_score DESC
         LIMIT
-        "#,
+        "#
     );
 
     qb.push_bind(limit);
@@ -737,6 +780,5 @@ pub async fn hybrid_search(
             error: None,
             execution_time_ms: start.elapsed().as_millis(),
         }),
-    )
-    .into_response()
+    ).into_response()
 }

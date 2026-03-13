@@ -115,6 +115,7 @@ LIMIT 20;
 ### Count Occurrences by Day
 ```sql
 SELECT 
+  MIN(c.id) as chunk_id,  -- REQUIRED for citations
   date(f.captured_at) as day,
   COUNT(*) as mentions
 FROM chunks_fts
@@ -129,6 +130,7 @@ LIMIT 14;
 ### Count Occurrences by App
 ```sql
 SELECT 
+  MIN(c.id) as chunk_id,  -- REQUIRED for citations
   f.app_name,
   COUNT(*) as mentions
 FROM chunks_fts

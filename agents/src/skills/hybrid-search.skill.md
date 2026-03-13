@@ -30,6 +30,8 @@ Combines keyword-based FTS and meaning-based semantic search for optimal results
 
 ## Execution Pattern
 
+**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
+
 ### Step 1: FTS Search
 ```sql
 SELECT 

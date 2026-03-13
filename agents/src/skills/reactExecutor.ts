@@ -7,8 +7,10 @@ import { invokeRoleLlm } from "../llm/routing";
 import { getSkills, buildSkillContext } from "./loader";
 import { SafeJsonParser } from "../utils/parser";
 import { runWithSpan } from "../telemetry/tracing";
-import { emitStepEvent } from "../utils/eventQueue";
+import { emitSources, emitStepEvent } from "../utils/eventQueue";
 import { z } from "zod";
+import { PlanStep } from "../planner/plan.schema";
+import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -16,35 +18,43 @@ import { z } from "zod";
 
 /**
  * Action types the LLM can take in the ReAct loop.
+ * Note: ReAct is a DATA COLLECTOR, not an answerer.
+ * The final LLM synthesizes answers from collected chunks.
  */
-export type ReActActionType = "sql" | "semantic" | "hybrid" | "think" | "answer";
+export type ReActActionType = "sql" | "semantic" | "hybrid" | "think" | "done";
 
 /**
  * Schema for LLM action output.
  */
 export const ReActActionSchema = z.object({
-  thought: z.string().describe("Reasoning about current state and what to do next"),
-  action: z.enum(["sql", "semantic", "hybrid", "think", "answer"]),
-  
+  thought: z
+    .string()
+    .describe("Reasoning about current state and what to do next"),
+  action: z.enum(["sql", "semantic", "hybrid", "think", "done"]),
+
   // For sql action
   sql: z.string().optional(),
-  
+
   // For semantic/hybrid action
   query: z.string().optional(),
   keywords: z.array(z.string()).optional(),
-  filters: z.object({
-    app_names: z.array(z.string()).optional(),
-    time_range: z.object({
-      start: z.string().optional(),
-      end: z.string().optional(),
-    }).optional(),
-  }).optional(),
-  
+  filters: z
+    .object({
+      app_names: z.array(z.string()).optional(),
+      time_range: z
+        .object({
+          start: z.string().optional(),
+          end: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+
   // For think action - intermediate reasoning
   analysis: z.string().optional(),
-  
-  // For answer action - final response
-  answer: z.string().optional(),
+
+  // For done action - brief summary of what was collected (NOT the final answer)
+  summary: z.string().optional(),
   confidence: z.enum(["high", "medium", "low"]).optional(),
 });
 
@@ -66,12 +76,30 @@ export interface ReActTurn {
 }
 
 /**
+ * Collected chunk with identifiers for citation.
+ */
+export interface CollectedChunk {
+  chunk_id: number;
+  frame_id?: number;
+  captured_at?: string;
+  app_name?: string;
+  window_title?: string;
+  text_content?: string;
+  relevance_score?: number;
+  source_action?: "sql" | "semantic" | "hybrid";
+}
+
+/**
  * Final result of ReAct execution.
+ * Note: ReAct collects chunks with IDs - final LLM synthesizes answer with citations.
  */
 export interface ReActResult {
   success: boolean;
-  answer?: string;
+  /** Brief summary from ReAct (NOT the final answer) */
+  summary?: string;
   confidence?: "high" | "medium" | "low";
+  /** All collected chunks with chunk_ids for citations */
+  collectedChunks: CollectedChunk[];
   turns: ReActTurn[];
   totalTimeMs: number;
   error?: string;
@@ -85,36 +113,95 @@ export interface ReActResult {
  * Fuzzy concept indicators that suggest semantic search.
  */
 const FUZZY_CONCEPTS = [
-  "session", "coding", "programming", "work", "working", "learning", "learned",
-  "studying", "reading", "browsing", "searching", "debugging", "deep work",
-  "focused", "productive", "meeting", "call", "conversation", "discussion",
-  "tutorial", "guide", "documentation", "research", "exploring", "watching",
-  "activity", "activities", "doing", "did", "stuff", "things"
+  "session",
+  "coding",
+  "programming",
+  "work",
+  "working",
+  "learning",
+  "learned",
+  "studying",
+  "reading",
+  "browsing",
+  "searching",
+  "debugging",
+  "deep work",
+  "focused",
+  "productive",
+  "meeting",
+  "call",
+  "conversation",
+  "discussion",
+  "tutorial",
+  "guide",
+  "documentation",
+  "research",
+  "exploring",
+  "watching",
+  "activity",
+  "activities",
+  "doing",
+  "did",
+  "stuff",
+  "things",
 ];
 
 /**
  * Exact keyword indicators that suggest SQL/FTS search.
  */
 const EXACT_INDICATORS = [
-  "error", "exception", "failed", "404", "500", "crash", "bug",
-  "line", "file", "function", "variable", "import", "export",
-  "exact", "specific", "precisely", "literally"
+  "error",
+  "exception",
+  "failed",
+  "404",
+  "500",
+  "crash",
+  "bug",
+  "line",
+  "file",
+  "function",
+  "variable",
+  "import",
+  "export",
+  "exact",
+  "specific",
+  "precisely",
+  "literally",
 ];
 
 /**
  * Aggregate/structural indicators that suggest SQL.
  */
 const AGGREGATE_INDICATORS = [
-  "count", "how many", "total", "sum", "average", "most", "least",
-  "grouped", "per app", "per day", "breakdown", "statistics"
+  "count",
+  "how many",
+  "total",
+  "sum",
+  "average",
+  "most",
+  "least",
+  "grouped",
+  "per app",
+  "per day",
+  "breakdown",
+  "statistics",
 ];
 
 /**
  * Time-specific indicators that suggest SQL.
  */
 const TIME_INDICATORS = [
-  "at \\d", "\\d:\\d\\d", "\\d pm", "\\d am", "yesterday", "today", "this morning",
-  "this afternoon", "last week", "last hour", "\\d minutes ago"
+  "at \\d",
+  "\\d:\\d\\d",
+  "\\d pm",
+  "\\d am",
+  "yesterday",
+  "today",
+  "this morning",
+  "this afternoon",
+  "last week",
+  "last hour",
+  "\\d minutes ago",
 ];
 
 /**
@@ -127,31 +214,35 @@ function analyzeQueryIntent(query: string): {
 } {
   const q = query.toLowerCase();
   const hints: string[] = [];
-  
+
   // Check for fuzzy concepts
-  const hasFuzzyConcept = FUZZY_CONCEPTS.some(concept => q.includes(concept));
+  const hasFuzzyConcept = FUZZY_CONCEPTS.some((concept) => q.includes(concept));
   if (hasFuzzyConcept) {
     hints.push("Query contains fuzzy concepts (coding, learning, etc.)");
   }
-  
+
   // Check for exact keywords
-  const hasExactIndicator = EXACT_INDICATORS.some(ind => q.includes(ind));
+  const hasExactIndicator = EXACT_INDICATORS.some((ind) => q.includes(ind));
   if (hasExactIndicator) {
     hints.push("Query contains exact keyword indicators (error, file, etc.)");
   }
-  
+
   // Check for aggregates
-  const hasAggregateIndicator = AGGREGATE_INDICATORS.some(ind => q.includes(ind));
+  const hasAggregateIndicator = AGGREGATE_INDICATORS.some((ind) =>
+    q.includes(ind),
+  );
   if (hasAggregateIndicator) {
     hints.push("Query requests aggregation or counting");
   }
-  
+
   // Check for time specifics
-  const hasTimeIndicator = TIME_INDICATORS.some(ind => new RegExp(ind, "i").test(query));
+  const hasTimeIndicator = TIME_INDICATORS.some((ind) =>
+    new RegExp(ind, "i").test(query),
+  );
   if (hasTimeIndicator) {
     hints.push("Query has specific time references");
   }
-  
+
   // Decision logic
   if (hasAggregateIndicator) {
     return {
@@ -160,7 +251,7 @@ function analyzeQueryIntent(query: string): {
       hints,
     };
   }
-  
+
   if (hasFuzzyConcept && !hasExactIndicator) {
     return {
       suggestedAction: "semantic",
@@ -168,7 +259,7 @@ function analyzeQueryIntent(query: string): {
       hints,
     };
   }
-  
+
   if (hasExactIndicator && !hasFuzzyConcept) {
     return {
       suggestedAction: "sql",
@@ -176,7 +267,7 @@ function analyzeQueryIntent(query: string): {
       hints,
     };
   }
-  
+
   if (hasFuzzyConcept && hasExactIndicator) {
     return {
       suggestedAction: "hybrid",
@@ -184,7 +275,7 @@ function analyzeQueryIntent(query: string): {
       hints,
     };
   }
-  
+
   if (hasTimeIndicator && !hasFuzzyConcept) {
     return {
       suggestedAction: "sql",
@@ -192,7 +283,7 @@ function analyzeQueryIntent(query: string): {
       hints,
     };
   }
-  
+
   // Default to hybrid for safety
   return {
     suggestedAction: "hybrid",
@@ -208,26 +299,28 @@ function analyzeQueryIntent(query: string): {
 /**
  * Build skill reference sections for the prompt.
  */
-function buildSkillReferences(skills: Map<string, { metadata: { name: string }; content: string }>): string {
+function buildSkillReferences(
+  skills: Map<string, { metadata: { name: string }; content: string }>,
+): string {
   const sections: string[] = [];
-  
+
   // Include these skills in order - skill-selection comes first with critical guidance
   const skillOrder = [
-    "skill-selection",  // Critical: Action selection guidance
+    "skill-selection", // Critical: Action selection guidance
     "fts-search",
-    "semantic-search", 
+    "semantic-search",
     "hybrid-search",
     "temporal-query",
     "aggregation-digest",
   ];
-  
+
   for (const skillName of skillOrder) {
     const skill = skills.get(skillName);
     if (skill) {
       sections.push(`### ${skill.metadata.name}\n${skill.content}`);
     }
   }
-  
+
   return sections.join("\n\n");
 }
 
@@ -239,7 +332,7 @@ async function buildReActSystemPrompt(): Promise<string> {
   const schemaSkill = skills.get("database-schema");
   const schemaContext = schemaSkill?.content ?? "";
   const skillReferences = buildSkillReferences(skills);
-  
+
   return `You are a search agent with access to a screen activity database. Your job is to find information about the user's screen activity by choosing the RIGHT search strategy.
 
 ## Database Schema
@@ -335,10 +428,11 @@ Pause to reason about results before next action.
 {"action": "think", "thought": "Got empty results from SQL", "analysis": "SQL didn't work because 'rust coding' is conceptual. Need to try semantic search instead targeting code editors."}
 \`\`\`
 
-### answer
-Provide final answer when you have enough information.
+### done
+Signal that you have collected enough data. DO NOT synthesize an answer - just summarize what you found.
+The final LLM will use the collected chunks to generate an answer with citations.
 \`\`\`json
-{"action": "answer", "thought": "Found relevant data", "answer": "Based on your screen activity...", "confidence": "high"}
+{"action": "done", "thought": "Found sufficient data about user activities", "summary": "Collected 25 chunks: 15 from VS Code showing coding activity, 10 from Chrome showing web browsing", "confidence": "high"}
 \`\`\`
 
 ## RETRY STRATEGY
@@ -376,10 +470,39 @@ Turn 1: {"action": "sql", "thought": "Error messages = exact keyword search", "s
  */
 function buildTurnPrompt(
   userQuery: string,
-  history: ReActTurn[]
+  history: ReActTurn[],
+  depContext: Record<string, any>,
 ): string {
   let prompt = `## User Query\n${userQuery}\n\n`;
-  
+
+  // Dependency context
+  if (depContext && Object.keys(depContext).length > 0) {
+    prompt += `## Available Context From Previous Steps\n`;
+    prompt += `You may reuse these results instead of searching again.\n\n`;
+
+    for (const [stepId, result] of Object.entries(depContext)) {
+      prompt += `### ${stepId}\n`;
+
+      if (Array.isArray(result)) {
+        if (result.length === 0) {
+          prompt += `Result: Empty\n`;
+        } else if (result.length <= 10) {
+          prompt += `\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`;
+        } else {
+          prompt += `${result.length} rows available. First 5:\n`;
+          prompt += `\`\`\`json\n${JSON.stringify(result.slice(0, 5), null, 2)}\n\`\`\`\n`;
+          prompt += `... (${result.length - 5} more rows)\n`;
+        }
+      } else {
+        prompt += `\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`;
+      }
+
+      prompt += `\n`;
+    }
+
+    prompt += `---\n\n`;
+  }
+
   // On first turn, add query analysis to help guide action selection
   if (history.length === 0) {
     const analysis = analyzeQueryIntent(userQuery);
@@ -394,19 +517,19 @@ function buildTurnPrompt(
     }
     prompt += `\n⚠️ This is a suggestion. Use your judgment, but strongly consider this guidance.\n\n`;
   }
-  
+
   // Track empty results for retry guidance
   let emptyResultsCount = 0;
   let lastEmptyAction: ReActActionType | null = null;
-  
+
   if (history.length > 0) {
     prompt += `## Previous Actions & Observations\n`;
-    
+
     for (const turn of history) {
       prompt += `\n### Turn ${turn.turnNumber}\n`;
       prompt += `**Thought:** ${turn.action.thought}\n`;
       prompt += `**Action:** ${turn.action.action}\n`;
-      
+
       if (turn.action.sql) {
         prompt += `**SQL:** \`${turn.action.sql}\`\n`;
       }
@@ -422,7 +545,7 @@ function buildTurnPrompt(
       if (turn.action.analysis) {
         prompt += `**Analysis:** ${turn.action.analysis}\n`;
       }
-      
+
       prompt += `\n**Observation:**\n`;
       if (turn.observation.success) {
         const data = turn.observation.data;
@@ -446,14 +569,14 @@ function buildTurnPrompt(
         prompt += `❌ Error: ${turn.observation.error}\n`;
       }
     }
-    
+
     prompt += `\n---\n`;
-    
+
     // Add retry guidance if we have empty results
     if (emptyResultsCount > 0 && lastEmptyAction) {
       prompt += `\n## ⚠️ RETRY GUIDANCE\n`;
       prompt += `Your ${lastEmptyAction} action returned empty. You MUST try a DIFFERENT strategy:\n`;
-      
+
       switch (lastEmptyAction) {
         case "sql":
           prompt += `- SQL didn't find matches → Try **semantic** or **hybrid** search instead\n`;
@@ -471,15 +594,15 @@ function buildTurnPrompt(
           prompt += `- Consider: maybe no data exists for this query\n`;
           break;
       }
-      
+
       if (emptyResultsCount >= 3) {
-        prompt += `\n⚠️ Multiple empty results. If no strategy works, use **answer** action to inform the user that no matching activity was found and suggest alternatives.\n`;
+        prompt += `\n⚠️ Multiple empty results. If no strategy works, use **done** action to signal completion with what you found (even if empty). The final LLM will inform the user.\n`;
       }
     }
   }
-  
+
   prompt += `\nBased on the above, what is your next action? Output ONLY the JSON action.`;
-  
+
   return prompt;
 }
 
@@ -489,14 +612,18 @@ function buildTurnPrompt(
 
 async function executeSqlAction(
   action: ReActAction,
-  state: AgentStateType
+  requestId: string,
 ): Promise<ReActTurn["observation"]> {
   if (!action.sql) {
     return { success: false, error: "Missing SQL in action" };
   }
-  
+
+  // Extract query text from SQL for display (simplified)
+  const queryDisplay =
+    action.sql.length > 80 ? action.sql.slice(0, 80) + "..." : action.sql;
+
   const result = await executeSql({ sql: action.sql });
-  
+
   return {
     success: result.success,
     data: result.rows,
@@ -508,19 +635,19 @@ async function executeSqlAction(
 
 async function executeSemanticAction(
   action: ReActAction,
-  state: AgentStateType
+  requestId: string,
 ): Promise<ReActTurn["observation"]> {
   if (!action.query) {
     return { success: false, error: "Missing query in semantic action" };
   }
-  
+
   const toolRegistry = await getToolRegistry();
   const semanticTool = toolRegistry.get("semantic_search");
-  
+
   if (!semanticTool) {
     return { success: false, error: "Semantic search tool not available" };
   }
-  
+
   const toolResult = await semanticTool.execute(
     {
       query: action.query,
@@ -528,42 +655,48 @@ async function executeSemanticAction(
       filters: action.filters,
     },
     {
-      requestId: state.requestId,
+      requestId,
       stepId: `react-semantic`,
       attemptNumber: 1,
       timeout: 30000,
-    }
+    },
   );
-  
+
   // Extract the actual results array - it's nested in toolResult.data.data
   const nestedData = toolResult.data as { data?: unknown[] };
-  const results = Array.isArray(nestedData?.data) ? nestedData.data : 
-                  Array.isArray(toolResult.data) ? toolResult.data : [];
-  
+  const results = Array.isArray(nestedData?.data)
+    ? nestedData.data
+    : Array.isArray(toolResult.data)
+      ? toolResult.data
+      : [];
+
   return {
     success: toolResult.success,
     data: results,
     rowCount: results.length,
-    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
+    error:
+      typeof toolResult.error === "string"
+        ? toolResult.error
+        : toolResult.error?.message,
     executionTimeMs: toolResult.metadata?.executionTime,
   };
 }
 
 async function executeHybridAction(
   action: ReActAction,
-  state: AgentStateType
+  requestId: string,
 ): Promise<ReActTurn["observation"]> {
   if (!action.query) {
     return { success: false, error: "Missing query in hybrid action" };
   }
-  
+
   const toolRegistry = await getToolRegistry();
   const hybridTool = toolRegistry.get("hybrid_search");
-  
+
   if (!hybridTool) {
     return { success: false, error: "Hybrid search tool not available" };
   }
-  
+
   const toolResult = await hybridTool.execute(
     {
       query: action.query,
@@ -572,35 +705,108 @@ async function executeHybridAction(
       filters: action.filters,
     },
     {
-      requestId: state.requestId,
+      requestId,
       stepId: `react-hybrid`,
       attemptNumber: 1,
       timeout: 30000,
-    }
+    },
   );
-  
+
   // Extract the actual results array - it's nested in toolResult.data.data
   const nestedData = toolResult.data as { data?: unknown[] };
-  const results = Array.isArray(nestedData?.data) ? nestedData.data : 
-                  Array.isArray(toolResult.data) ? toolResult.data : [];
-  
+  const results = Array.isArray(nestedData?.data)
+    ? nestedData.data
+    : Array.isArray(toolResult.data)
+      ? toolResult.data
+      : [];
+
   return {
     success: toolResult.success,
     data: results,
     rowCount: results.length,
-    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
+    error:
+      typeof toolResult.error === "string"
+        ? toolResult.error
+        : toolResult.error?.message,
     executionTimeMs: toolResult.metadata?.executionTime,
   };
 }
 
 async function executeThinkAction(
-  action: ReActAction
+  action: ReActAction,
 ): Promise<ReActTurn["observation"]> {
   // Think action just records the analysis - no external call
   return {
     success: true,
     data: { analysis: action.analysis },
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHUNK EXTRACTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Extract all chunks from ReAct turn history for citation.
+ * Deduplicates by chunk_id and preserves source action type.
+ */
+function extractChunksFromHistory(history: ReActTurn[]): CollectedChunk[] {
+  const chunkMap = new Map<number, CollectedChunk>();
+
+  for (const turn of history) {
+    if (!turn.observation.success || !turn.observation.data) {
+      continue;
+    }
+
+    // Skip non-search actions
+    const actionType = turn.action.action;
+    if (actionType === "think" || actionType === "done") {
+      continue;
+    }
+
+    const sourceAction = actionType as "sql" | "semantic" | "hybrid";
+    const data = turn.observation.data;
+    if (!Array.isArray(data)) {
+      continue;
+    }
+
+    for (const row of data) {
+      // Handle different result formats
+      const chunkId = row.chunk_id ?? row.id ?? row.rowid;
+      if (typeof chunkId !== "number") {
+        continue;
+      }
+
+      // Deduplicate by chunk_id - keep first occurrence (earlier turns)
+      if (chunkMap.has(chunkId)) {
+        continue;
+      }
+
+      chunkMap.set(chunkId, {
+        chunk_id: chunkId,
+        frame_id: row.frame_id,
+        captured_at: row.captured_at,
+        app_name: row.app_name,
+        window_title: row.window_title,
+        text_content: row.text_content,
+        relevance_score: row.rank ?? row.score ?? row.similarity,
+        source_action: sourceAction,
+      });
+    }
+  }
+
+  // Return chunks sorted by relevance (if available) or capture time
+  return Array.from(chunkMap.values()).sort((a, b) => {
+    if (a.relevance_score !== undefined && b.relevance_score !== undefined) {
+      return b.relevance_score - a.relevance_score;
+    }
+    if (a.captured_at && b.captured_at) {
+      return (
+        new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime()
+      );
+    }
+    return 0;
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -611,7 +817,7 @@ const MAX_TURNS = 4;
 
 /**
  * Execute a query using the ReAct loop.
- * 
+ *
  * The LLM iteratively:
  * 1. Thinks about what to do
  * 2. Takes an action (sql, semantic, hybrid, think)
@@ -619,28 +825,27 @@ const MAX_TURNS = 4;
  * 4. Repeats until it has an answer
  */
 export async function executeReActLoop(
-  userQuery: string,
-  state: AgentStateType
+  currentPlanStep: PlanStep,
+  requestId: string,
+  depContext: Record<string, any>,
 ): Promise<ReActResult> {
   const logger = await getLogger();
   const startTime = Date.now();
   const history: ReActTurn[] = [];
-  
-  logger.info({ query: userQuery }, "Starting ReAct loop");
-  
+
+  logger.info({ query: currentPlanStep.stepGoal }, "Starting ReAct loop");
+
   const systemPrompt = await buildReActSystemPrompt();
-  
+
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
-    const turnPrompt = buildTurnPrompt(userQuery, history);
-    
-    emitStepEvent(
-      `react-turn-${turn}`,
-      "reasoning",
-      `Turn ${turn}: Deciding next action`,
-      "running",
-      state.requestId
+    const turnPrompt = buildTurnPrompt(
+      currentPlanStep.stepGoal,
+      history,
+      depContext,
     );
-    
+
+    logger.info({ history }, `Turn history before LLM call. Turn :  ${turn}`);
+
     // Call LLM for next action
     const { response } = await invokeRoleLlm({
       role: "executor",
@@ -648,13 +853,13 @@ export async function executeReActLoop(
         { role: "system", content: systemPrompt },
         { role: "user", content: turnPrompt },
       ],
-      requestId: state.requestId,
+      requestId: requestId,
       spanName: "react.turn",
       spanAttributes: { turn_number: turn },
     });
-    
+
     const content = typeof response === "string" ? response : response.content;
-    
+
     // Parse the action
     let action: ReActAction;
     try {
@@ -665,7 +870,7 @@ export async function executeReActLoop(
       action = ReActActionSchema.parse(parsed);
     } catch (error) {
       logger.error({ content, error }, "Failed to parse ReAct action");
-      
+
       // Try to continue with a think action
       action = {
         thought: "Parse error, attempting recovery",
@@ -673,137 +878,195 @@ export async function executeReActLoop(
         analysis: `Could not parse: ${content.slice(0, 200)}`,
       };
     }
-    
-    logger.info({ turn, action: action.action, thought: action.thought?.slice(0, 100) }, "ReAct action");
-    
-    // Check for answer action (terminal)
-    if (action.action === "answer") {
-      emitStepEvent(
-        `react-turn-${turn}`,
-        "reasoning",
-        "Generating answer",
-        "completed",
-        state.requestId
-      );
-      
+
+    logger.info(
+      { turn, action: action.action, thought: action.thought },
+      "ReAct action",
+    );
+
+    // Check for done action (terminal) - collect all chunks and return
+    if (action.action === "done") {
+      // Complete source review
+
       history.push({
         turnNumber: turn,
         action,
-        observation: { success: true, data: { answer: action.answer } },
+        observation: { success: true, data: { summary: action.summary } },
       });
-      
-      logger.info({ turns: turn, confidence: action.confidence }, "ReAct loop completed with answer");
-      
+
+      // Collect all chunks from history for citation
+      const collectedChunks = extractChunksFromHistory(history);
+
+      logger.info({ collectedChunks }, "collectedChunks in reactExector");
+      logger.info({ turnHistory: history }, "turnHistory in reactExector");
+
+      const chunkIds = collectedChunks.map((c) => c.chunk_id);
+      const searchResults = await getSearchResultsByChunkIds(
+        chunkIds,
+        requestId,
+      );
+
+      logger.info(
+        { result: searchResults },
+        "Search Results for collected chunks in done action",
+      );
+
+      emitStepEvent(requestId, {
+        stepType: "searching",
+        stepId: currentPlanStep.id,
+        title: "Found relevant information",
+        resultCount: searchResults.length,
+        results: searchResults,
+        status: "running",
+      });
+
+      // for sources
+
+      emitSources(requestId, {
+        includeImages: false,
+        sources: searchResults.map((s) => ({
+          chunkId: s.chunk_id,
+          appName: s.app_name,
+          windowTitle: s.window_name,
+          capturedAt: s.captured_at,
+          browserUrl: s.browser_url,
+          textContent: s.text_content,
+          textJson: s.text_json,
+        })),
+      });
+
+      logger.info(
+        {
+          turns: turn,
+          confidence: action.confidence,
+          chunkCount: collectedChunks.length,
+        },
+        "ReAct loop completed - data collected",
+      );
+
       return {
         success: true,
-        answer: action.answer,
+        summary: action.summary,
         confidence: action.confidence,
+        collectedChunks,
         turns: history,
         totalTimeMs: Date.now() - startTime,
       };
     }
-    
+
     // Execute the action
     let observation: ReActTurn["observation"];
-    
+
+    // Let the user know what the agent is thinking
+    if (turn === 1) {
+      emitStepEvent(requestId, {
+        stepType: "searching",
+        stepId: currentPlanStep.id,
+        title: "Thinking...",
+        message: action.thought,
+        status: "running",
+      });
+    } else {
+      emitStepEvent(requestId, {
+        stepType: "searching",
+        stepId: currentPlanStep.id,
+        title: "Still searching...",
+        message: action.thought,
+        status: "running",
+      });
+    }
+
     switch (action.action) {
       case "sql":
-        emitStepEvent(
-          `react-turn-${turn}`,
-          "searching",
-          `Executing SQL query`,
-          "running",
-          state.requestId
-        );
-        observation = await executeSqlAction(action, state);
+        observation = await executeSqlAction(action, requestId);
         break;
-        
+
       case "semantic":
-        emitStepEvent(
-          `react-turn-${turn}`,
-          "searching",
-          `Running semantic search`,
-          "running",
-          state.requestId
-        );
-        observation = await executeSemanticAction(action, state);
+        observation = await executeSemanticAction(action, requestId);
         break;
-        
+
       case "hybrid":
-        emitStepEvent(
-          `react-turn-${turn}`,
-          "searching",
-          `Running hybrid search`,
-          "running",
-          state.requestId
-        );
-        observation = await executeHybridAction(action, state);
+        observation = await executeHybridAction(action, requestId);
         break;
-        
+
       case "think":
         observation = await executeThinkAction(action);
         break;
-        
+
       default:
-        observation = { success: false, error: `Unknown action: ${action.action}` };
+        observation = {
+          success: false,
+          error: `Unknown action: ${action.action}`,
+        };
     }
-    
+
     // Record the turn
     history.push({
       turnNumber: turn,
       action,
       observation,
     });
-    
-    emitStepEvent(
-      `react-turn-${turn}`,
-      action.action === "think" ? "reasoning" : "searching",
-      `Turn ${turn} complete`,
-      observation.success ? "completed" : "failed",
-      state.requestId,
-      { resultCount: observation.rowCount }
-    );
-    
+
     // If action failed, log but continue - LLM can adapt
     if (!observation.success) {
-      logger.warn({ turn, error: observation.error }, "Action failed, continuing loop");
+      logger.warn(
+        { turn, error: observation.error },
+        "Action failed, continuing loop",
+      );
     }
   }
-  
-  // Max turns reached without answer
-  logger.warn({ turns: MAX_TURNS }, "ReAct loop hit max turns without answer");
-  
+
+  // Max turns reached without done action - still collect what we have
+  logger.warn(
+    { turns: MAX_TURNS },
+    "ReAct loop hit max turns - collecting available data",
+  );
+
+  const collectedChunks = extractChunksFromHistory(history);
+
   return {
-    success: false,
+    success: collectedChunks.length > 0,
+    collectedChunks,
     turns: history,
     totalTimeMs: Date.now() - startTime,
-    error: `Max turns (${MAX_TURNS}) reached without final answer`,
+    error:
+      collectedChunks.length > 0
+        ? undefined
+        : `Max turns (${MAX_TURNS}) reached without finding data`,
   };
 }
 
 /**
  * Format ReAct results for the final answer generator.
+ * Returns collected chunks with their IDs so final LLM can cite them.
  */
 export function formatReActResultsForAnswer(result: ReActResult): string {
-  if (result.answer) {
-    return result.answer;
+  if (!result.success || result.collectedChunks.length === 0) {
+    return JSON.stringify({
+      summary: result.summary || "No data found",
+      chunks: [],
+      error: result.error,
+    });
   }
-  
-  // Build a summary of what was found
-  const searches = result.turns.filter(t => 
-    t.action.action === "sql" || 
-    t.action.action === "semantic" || 
-    t.action.action === "hybrid"
+
+  // Format chunks for final LLM - include chunk_id for citations
+  const formattedChunks = result.collectedChunks.map((chunk) => ({
+    chunk_id: chunk.chunk_id,
+    captured_at: chunk.captured_at,
+    app_name: chunk.app_name,
+    window_title: chunk.window_title,
+    text_content: chunk.text_content?.slice(0, 500), // Truncate for context window
+    relevance_score: chunk.relevance_score,
+  }));
+
+  return JSON.stringify(
+    {
+      summary: result.summary,
+      confidence: result.confidence,
+      totalChunks: result.collectedChunks.length,
+      chunks: formattedChunks,
+    },
+    null,
+    2,
   );
-  
-  if (searches.length === 0) {
-    return "No search results available.";
-  }
-  
-  const lastSearch = searches[searches.length - 1];
-  if (lastSearch.observation.success && lastSearch.observation.data) {
-    return JSON.stringify(lastSearch.observation.data, null, 2);
-  }
-  
-  return "Search completed but no clear results.";
 }

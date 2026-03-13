@@ -42,12 +42,14 @@ export const MOCK_MESSAGES: MementoUIMessage[] = [
           resultCount: 6,
           results: [
             {
+              chunk_id: 1,
               app_name: "Notion",
               window_name: "Rust Async Working Group – Weekly Sync",
               image_path: "",
               captured_at: "2026-03-04T09:52:10.000Z",
             },
             {
+              chunk_id: 2,
               app_name: "Google Chrome",
               window_name: "Rust Async Book – async/.await",
               image_path: "",
@@ -69,6 +71,7 @@ export const MOCK_MESSAGES: MementoUIMessage[] = [
           resultCount: 3,
           results: [
             {
+              chunk_id: 3,
               app_name: "Slack",
               window_name: "#rust-async – action items thread",
               image_path: "",

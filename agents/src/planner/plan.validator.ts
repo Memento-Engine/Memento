@@ -97,18 +97,5 @@ export function validatePlan(raw: unknown): ValidState<Plan> {
     return { valid: false, error: "Last step must be kind 'final'" };
   }
 
-  // 7. Unique variableNames
-  const varNames = new Set<string>();
-  for (const step of plan.steps) {
-    const vn = step.expectedOutput.variableName;
-    if (varNames.has(vn)) {
-      return {
-        valid: false,
-        error: `Duplicate variableName "${vn}" in step "${step.id}"`,
-      };
-    }
-    varNames.add(vn);
-  }
-
   return { valid: true, data: plan };
 }

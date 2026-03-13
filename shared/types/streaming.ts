@@ -1,3 +1,5 @@
+import { ThinkingStep } from "./frontend";
+
 export type StreamEventType =
   | "step"
   | "thinking"
@@ -12,33 +14,13 @@ export interface StreamEventBase<TType extends StreamEventType, TData> {
   timestamp: string;
 }
 
-export type StreamStepType = "planning" | "searching" | "reasoning" | "completion";
+export type StreamStepType =
+  | "planning"
+  | "searching"
+  | "reasoning"
+  | "completion";
 export type StreamStepStatus = "running" | "completed" | "failed" | "final";
-
-export interface StepSearchResult {
-  app_name: string;
-  window_name: string;
-  image_path: string;
-  captured_at: string;
-}
-
-export interface ThinkingStepPayload {
-  stepId: string;
-  stepType: StreamStepType;
-  status: StreamStepStatus;
-  title: string;
-  description?: string;
-  query?: string;
-  results?: StepSearchResult[] | null;
-  resultCount?: number;
-  message?: string | null;
-  reasoning?: string;
-  queries?: string[] | null;
-  duration?: number;
-  timestamp?: string;
-}
-
-export type ThinkingEvent = StreamEventBase<"thinking", ThinkingStepPayload>;
+export type ThinkingEvent = StreamEventBase<"thinking", ThinkingStep>;
 
 export type ErrorEventData = {
   message: string;
@@ -49,7 +31,10 @@ export type ErrorEventData = {
 
 export type ErrorEvent = StreamEventBase<"error", ErrorEventData>;
 
-export type TextChunkEvent = StreamEventBase<"text", { chunk: string; timestamp?: string }>;
+export type TextChunkEvent = StreamEventBase<
+  "text",
+  { chunk: string; timestamp?: string }
+>;
 
 export type CompletionEventData = {
   success?: boolean;
@@ -71,7 +56,7 @@ export type CompletionEventData = {
 export type CompletionEvent = StreamEventBase<"complete", CompletionEventData>;
 
 export interface SourceRecordPayload {
-  chunkId: string;
+  chunkId: number;
   appName?: string;
   windowTitle?: string;
   capturedAt?: string;
