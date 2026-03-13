@@ -57,6 +57,10 @@ export async function clarifyAndRewrittenNode(
   }
 
   //   Have to terminate the agent if the clarify and rewrite node fails, as the downstream search nodes depend on the rewritten query to function correctly. Returning the original state without a rewritten query would likely lead to poor performance in the search nodes, as they may not be able to understand or process the user's intent effectively. By terminating here, we can avoid unnecessary processing and provide a clearer signal that something went wrong in this critical step.
-  logger.error("Clarifier And Rewriter failed.");
-  return state;
+  logger.error("Clarifier And Rewriter failed. Falling back to original goal as rewritten query.");
+  return {
+    ...state,
+    rewrittenQuery: state.goal,
+    isClarificationNeeded: false,
+  };
 }

@@ -3,18 +3,16 @@ import { createContextLogger } from "../utils/logger";
 import { finalAnswerPrompt } from "../prompts/finalResultPrompt";
 import { ErrorHandler } from "../utils/parser";
 import { getConfig } from "../config/config";
-import { ExecutorError, ErrorCode } from "../types/errors";
+import { ErrorCode } from "../types/errors";
 import {
   emitCompletion,
   emitError,
-  emitSources,
   emitStepEvent,
   emitTextChunk,
 } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlmStreaming } from "../llm/routing";
-import { normalizeOcrLayout, NormalizedOcrLayout } from "../utils/ocrLayout";
-import { emit } from "cluster";
+import { NormalizedOcrLayout } from "../utils/ocrLayout";
 
 /*
 ============================================================

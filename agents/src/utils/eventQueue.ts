@@ -204,8 +204,6 @@ export function emitSources(requestId: string, data: SourcesPayload): void {
     return;
   }
 
-  console.log(JSON.stringify(data, null, 2), "Source Payload in emitSources");
-
   const event: QueuedEvent = {
     type: "sources",
     data,

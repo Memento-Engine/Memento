@@ -73,7 +73,6 @@ export async function readDaemonPort(): Promise<number> {
  */
 export async function loadConfig(): Promise<Config> {
   const daemonPort = await readDaemonPort();
-  console.log("Daemon port", daemonPort);
   const config = {
     server: {
       port: parseInt(process.env.SERVER_PORT ?? "4173", 10),
