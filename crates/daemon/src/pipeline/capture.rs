@@ -1071,6 +1071,7 @@ pub async fn continuous_capture_v2(
     scheduler: crate::throttle::AdaptiveScheduler,
     ocr_engine: Arc<WindowsOcrEngine>,
     ocr_cache: Arc<crate::cache::PersistentOcrCache>,
+    privacy_cache: Arc<crate::server::privacy::PrivacyCache>,
     monitor_id: u32,
     shutdown: Arc<crate::core::ShutdownController>,
     lifecycle: Arc<crate::core::DaemonLifecycle>,
@@ -1211,6 +1212,19 @@ pub async fn continuous_capture_v2(
         let (screen_width, screen_height) = image.dimensions();
         
         for captured_window in window_images {
+            // Privacy check: skip masked apps/websites
+            if privacy_cache.should_mask_window(
+                &captured_window.app_name, 
+                captured_window.browser_url.as_deref()
+            ).await {
+                debug!(
+                    "Skipping masked window: app='{}' url={:?}",
+                    captured_window.app_name,
+                    captured_window.browser_url
+                );
+                continue;
+            }
+            
             // Check OCR cache first
             let window_hash = crate::cache::PersistentOcrCache::calculate_image_hash(
                 captured_window.image.as_bytes()

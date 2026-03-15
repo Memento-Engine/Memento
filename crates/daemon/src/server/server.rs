@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
-use axum::{routing::post, routing::get, Router, Json};
+use axum::{routing::post, routing::get, routing::put, routing::delete, Router, Json};
 use serde::Serialize;
 use tower_http::cors::{CorsLayer, Any};
 use tracing::{error, info, warn};
@@ -9,6 +9,13 @@ use crate::core::ShutdownController;
 use crate::server::app_state::AppState;
 use crate::server::search_tool::search_tool;
 use crate::server::skill_endpoints::{sql_execute, semantic_search, hybrid_search, search_results_by_chunk_ids};
+use crate::server::storage_endpoints::{
+    get_disk_usage_handler, get_capture_status, pause_capture, resume_capture, clear_storage
+};
+use crate::server::privacy_endpoints::{
+    list_masked_items, search_masked_items, create_masked_item, 
+    update_masked_item, delete_masked_item, check_should_mask, refresh_privacy_cache
+};
 
 #[derive(Serialize)]
 pub struct HealthStatus {
@@ -35,6 +42,20 @@ fn api_router() -> Router<Arc<AppState>> {
         .route("/search_results_by_chunk_ids", post(search_results_by_chunk_ids))
         .route("/healthz", get(|| async { "ok" }))
         .route("/health", get(health_check))
+        // Storage management endpoints
+        .route("/disk_usage", get(get_disk_usage_handler))
+        .route("/capture/status", get(get_capture_status))
+        .route("/capture/pause", post(pause_capture))
+        .route("/capture/resume", post(resume_capture))
+        .route("/clear", post(clear_storage))
+        // Privacy/masking endpoints
+        .route("/privacy/masked", get(list_masked_items))
+        .route("/privacy/masked", post(create_masked_item))
+        .route("/privacy/masked/search", get(search_masked_items))
+        .route("/privacy/masked/{id}", put(update_masked_item))
+        .route("/privacy/masked/{id}", delete(delete_masked_item))
+        .route("/privacy/check", get(check_should_mask))
+        .route("/privacy/refresh", post(refresh_privacy_cache))
 }
 
 pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownController>) {

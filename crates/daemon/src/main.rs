@@ -24,7 +24,7 @@ use crate::{
         monitor::get_primary_monitor_id,
         processor::OcrProcessor,
     },
-    server::{app_state::AppState, server::start_server},
+    server::{app_state::AppState, server::start_server, privacy::PrivacyManager},
     throttle::AdaptiveScheduler,
     cache::PersistentOcrCache,
 };
@@ -172,6 +172,18 @@ async fn main() {
         }
     };
     
+    // 11a. Initialize privacy manager
+    let privacy_manager = match PrivacyManager::new(db.pool.clone()).await {
+        Ok(pm) => {
+            info!("Privacy manager initialized");
+            Arc::new(pm)
+        }
+        Err(e) => {
+            error!("Failed to initialize privacy manager: {:?}", e);
+            return;
+        }
+    };
+    
     // 11. Initialize persistent OCR cache
     let ocr_cache = Arc::new(PersistentOcrCache::new(
         config.ocr_cache_max_age_secs,
@@ -198,6 +210,8 @@ async fn main() {
         Arc::clone(&db),
         Arc::clone(&embedding_model),
         Arc::clone(&cross_encoder),
+        scheduler.clone(),
+        Arc::clone(&privacy_manager),
     ));
     
     // 15. Mark lifecycle as running
@@ -208,6 +222,7 @@ async fn main() {
     let capture_scheduler = scheduler.clone();
     let capture_ocr_engine = Arc::clone(&ocr_engine);
     let capture_ocr_cache = Arc::clone(&ocr_cache);
+    let capture_privacy_cache = privacy_manager.cache();
     let capture_shutdown = Arc::clone(&shutdown);
     
     let capture_handle = tokio::spawn(async move {
@@ -216,6 +231,7 @@ async fn main() {
             capture_scheduler,
             capture_ocr_engine,
             capture_ocr_cache,
+            capture_privacy_cache,
             monitor_id,
             capture_shutdown,
             capture_lifecycle,

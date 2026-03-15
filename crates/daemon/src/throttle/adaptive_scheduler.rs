@@ -16,6 +16,8 @@ pub enum ScheduleReason {
     UserIdle,
     OnBattery,
     MemoryPressure,
+    /// Manually paused via API (e.g., for database maintenance)
+    ManualPause,
 }
 
 /// Current scheduling parameters
@@ -40,6 +42,8 @@ struct SchedulerState {
     current_interval: Duration,
     consecutive_high_cpu: u32,
     consecutive_low_cpu: u32,
+    /// Manual pause flag - set via API for maintenance operations
+    manual_pause: bool,
 }
 
 impl AdaptiveScheduler {
@@ -54,8 +58,29 @@ impl AdaptiveScheduler {
                 current_interval: base_interval,
                 consecutive_high_cpu: 0,
                 consecutive_low_cpu: 0,
+                manual_pause: false,
             })),
         }
+    }
+    
+    /// Pause capturing manually (for maintenance operations like DB cleanup)
+    pub async fn pause(&self) {
+        let mut state = self.state.write().await;
+        state.manual_pause = true;
+        tracing::info!("Capture manually paused");
+    }
+    
+    /// Resume capturing after manual pause
+    pub async fn resume(&self) {
+        let mut state = self.state.write().await;
+        state.manual_pause = false;
+        tracing::info!("Capture manually resumed");
+    }
+    
+    /// Check if capturing is manually paused
+    pub async fn is_paused(&self) -> bool {
+        let state = self.state.read().await;
+        state.manual_pause
     }
     
     /// Record user activity (mouse move, key press, etc.)
@@ -70,6 +95,18 @@ impl AdaptiveScheduler {
         let memory_usage = self.cpu_monitor.get_memory_usage().await;
         
         let mut state = self.state.write().await;
+        
+        // Check for manual pause first - highest priority
+        if state.manual_pause {
+            return ScheduleParams {
+                interval: Duration::from_secs(1), // Check frequently for resume
+                reason: ScheduleReason::ManualPause,
+                should_capture: false,
+                cpu_usage,
+                memory_usage,
+            };
+        }
+        
         let idle_time = state.last_user_activity.elapsed();
         
         // Determine scheduling reason and parameters

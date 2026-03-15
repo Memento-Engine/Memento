@@ -34,6 +34,11 @@ impl ShutdownController {
         }
     }
     
+    /// Get the shutdown sender (for tray and other components that need to trigger shutdown)
+    pub fn shutdown_sender(&self) -> broadcast::Sender<()> {
+        self.shutdown_tx.clone()
+    }
+    
     /// Get a receiver for shutdown notification
     pub fn subscribe(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()

@@ -72,6 +72,10 @@ fs2 = "0.4.3"
 dirs = "6.0.0"
 toml = "0.8"
 
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winuser"] }
+
 [features]
 default = []
 adaptive-fps = []

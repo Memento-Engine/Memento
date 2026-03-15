@@ -5,7 +5,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-pub mod disk_usage;
 pub mod get_app_icon;
 pub mod get_device_id;
 use tauri_plugin_stronghold::Builder;
