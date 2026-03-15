@@ -134,9 +134,11 @@ export class RateLimiter {
 
   /**
    * Synchronous enforcement using in-memory tracking (legacy support)
+   * @deprecated Use checkRateLimit() instead for proper tier resolution
    */
   enforce(userId: string, estimatedTokens: number, now: number = Date.now()): void {
-    const tier = this.config.limits.proUsers?.includes(userId) ? "premium" : "free";
+    // Legacy method defaults to free tier since we don't have user role context
+    const tier: UserTier = "free";
     const limits = this.config.limits[tier];
 
     const requestCount = this.usageTracker.getUserRequestCountInLastMinute(userId, now);

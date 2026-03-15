@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { CreditsContext, CreditsData, UsageStats } from "@/contexts/creditsContext";
 import { AI_GATEWAY_BASE_URL } from "@/api/base";
 import { GatewayResponse } from "@shared/types/gateway";
+import { clearAuthState } from "@/lib/auth";
+import useOnboarding from "@/hooks/useOnboarding";
 
 interface CreditsProviderProps {
   children: React.ReactNode;
@@ -76,6 +78,8 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const { setIsOnboardingComplete } = useOnboarding();
+
   const refreshCredits = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -105,6 +109,16 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
         headers,
       });
 
+      // Handle auth errors - trigger re-onboarding
+      if (response.status === 401) {
+        console.error("Auth error from usage API - triggering re-onboarding");
+        await clearAuthState();
+        setIsOnboardingComplete(false);
+        setError("Device not registered - please complete setup");
+        setIsLoading(false);
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`Failed to fetch usage: ${response.status}`);
       }
@@ -126,7 +140,7 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [setIsOnboardingComplete]);
 
   // Fetch credits on mount and when auth changes
   useEffect(() => {

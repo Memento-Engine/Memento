@@ -24,6 +24,7 @@ import {
   ForbiddenError,
   InternalServerError,
 } from "@memento/shared/errors.ts";
+import { runMigrations } from "./db/migrate.js";
 
 const messageSchema = z.object({
   role: z.enum(["system", "user", "assistant"]),
@@ -71,6 +72,14 @@ function buildProviderRegistry(
 }
 
 async function startServer(): Promise<void> {
+  // Run database migrations first
+  try {
+    await runMigrations();
+  } catch (error) {
+    console.error("Failed to run migrations, continuing with existing schema:", error);
+    // Don't exit - the schema might already exist from previous runs
+  }
+
   const config = loadConfig();
   const usageTracker = new UsageTracker();
   const rateLimiter = new RateLimiter(config, usageTracker);
@@ -135,11 +144,21 @@ async function startServer(): Promise<void> {
       });
 
       if (!rateLimitResult.allowed) {
+        // Set retry-after header for rate limits
+        if (rateLimitResult.retryAfterMs) {
+          res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
+        }
+        
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
+            type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
+              ? "daily_tokens" 
+              : "requests_per_minute",
+            tier: rateLimitResult.tier,
+            retryAfterMs: rateLimitResult.retryAfterMs,
           },
         };
         return res.status(StatusCodes.TOO_MANY_REQUESTS).json(errResponse);
@@ -178,8 +197,16 @@ async function startServer(): Promise<void> {
 
       const response = await modelRouter.chat(chatRequest);
 
-      // Track usage with enhanced tracking
-      const creditsCost = usePremiumModel ? CREDIT_COSTS.premium : 0;
+      // Only charge credits for expensive roles when using premium models
+      // Simple roles (router, clarifyAndRewriter, query_builder) use free models even in premium tier
+      const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
+      const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
+      const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
+      
+
+      console.log("chat Response", response.content);
+
+
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -195,11 +222,12 @@ async function startServer(): Promise<void> {
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
 
-      // Include usage metadata in response
-      const chatResponse: GatewayResponse<typeof response & { metadata: object }> = {
+      // Include usage metadata in response (hide model from agents for abstraction)
+      const { model: _usedModel, ...responseWithoutModel } = response;
+      const chatResponse: GatewayResponse<typeof responseWithoutModel & { metadata: object }> = {
         success: true,
         data: {
-          ...response,
+          ...responseWithoutModel,
           metadata: {
             tier: rateLimitResult.tier,
             creditsUsed: creditsCost,
@@ -265,11 +293,21 @@ async function startServer(): Promise<void> {
       });
 
       if (!rateLimitResult.allowed) {
+        // Set retry-after header for rate limits
+        if (rateLimitResult.retryAfterMs) {
+          res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
+        }
+        
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
+            type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
+              ? "daily_tokens" 
+              : "requests_per_minute",
+            tier: rateLimitResult.tier,
+            retryAfterMs: rateLimitResult.retryAfterMs,
           },
         };
         return res.status(StatusCodes.TOO_MANY_REQUESTS).json(errResponse);
@@ -313,8 +351,12 @@ async function startServer(): Promise<void> {
         },
       );
 
-      // Track usage with enhanced tracking
-      const creditsCost = usePremiumModel ? CREDIT_COSTS.premium : 0;
+      // Only charge credits for expensive roles when using premium models
+      // Simple roles (router, clarifyAndRewriter, query_builder) use free models even in premium tier
+      const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
+      const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
+      const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
+      
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -330,18 +372,16 @@ async function startServer(): Promise<void> {
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
 
-      // Send final completion event with metadata (GatewayResponse format for SSE)
+      // Send final completion event with metadata (hide model from agents for abstraction)
       const donePayload: GatewayResponse<{
         done: boolean;
         usage: typeof response.usage;
-        model: string;
         metadata: object;
       }> = {
         success: true,
         data: {
           done: true,
           usage: response.usage,
-          model: response.model,
           metadata: {
             tier: rateLimitResult.tier,
             creditsUsed: creditsCost,

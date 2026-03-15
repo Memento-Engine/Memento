@@ -82,19 +82,21 @@ export const registerDevice = async () => {
       throw new Error("Invalid gateway response format");
     }
 
-    const { accessToken, refreshToken } = parsedDevice.data;
+    const { accessToken, refreshToken, deviceId: serverDeviceId } = parsedDevice.data;
 
-    if (!accessToken || !refreshToken) {
-      console.log("Access token or refresh token missed");
+    if (!accessToken || !refreshToken || !serverDeviceId) {
+      console.log("Access token, refresh token, or device ID missing");
       throw new Error(
-        "Access token or refresh token not received from gateway",
+        "Access token, refresh token, or device ID not received from gateway",
       );
     }
     console.log("Received access token:", accessToken);
     console.log("Received refresh token:", refreshToken);
+    console.log("Received server device ID:", serverDeviceId);
 
-    // Save device ID to localStorage for future requests
-    localStorage.setItem("deviceId", deviceId);
+    // Save SERVER-GENERATED device ID to localStorage for future requests
+    // This must match the deviceId in the JWT token for auth to work
+    localStorage.setItem("deviceId", serverDeviceId);
 
     await setPassword("memento-ai", "device-token", refreshToken);
     document.cookie = `accessToken=${accessToken}; path=/; secure; samesite=strict`;

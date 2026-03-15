@@ -1,0 +1,15 @@
+{
+  "id": "0003_add_daily_usage_constraint",
+  "prevId": "0002_usage_tracking_system",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {},
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

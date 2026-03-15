@@ -84,6 +84,7 @@ export const usageLog = pgTable("usage_log", {
 });
 
 // Daily usage aggregation (for rate limiting)
+// Note: Has UNIQUE(device_id, date_key) constraint defined in migration
 export const dailyUsage = pgTable("daily_usage", {
   id: serial("id").primaryKey(),
 
@@ -91,6 +92,7 @@ export const dailyUsage = pgTable("daily_usage", {
   userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
 
   // Date key for aggregation (YYYY-MM-DD format)
+  // Combined with deviceId forms unique constraint for upsert operations
   dateKey: text("date_key").notNull(),
 
   // Daily counts

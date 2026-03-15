@@ -46,7 +46,7 @@ const configSchema = z.object({
       .enum(["openrouter", "openai", "anthropic", "gemini"])
       .default("openrouter"),
     temperature: z.number().min(0).max(2).default(0),
-    model: z.string().default("openai/gpt-4o-mini"),
+    model: z.string().default("google/gemini-2.0-flash-001"),
     maxTokens: z.number().int().min(64).default(65536),
   }),
   providers: z.array(providerSchema),
@@ -158,7 +158,7 @@ export function loadConfig(): GatewayConfig {
       temperature: parseFloat(
         process.env.AI_GATEWAY_DEFAULT_TEMPERATURE ?? "0",
       ),
-      model: process.env.AI_GATEWAY_DEFAULT_MODEL ?? "openai/gpt-4o-mini",
+      model: process.env.AI_GATEWAY_DEFAULT_MODEL ?? "google/gemini-2.0-flash-001",
       maxTokens: parseInt(
         process.env.AI_GATEWAY_DEFAULT_MAX_TOKENS ?? "65536",
         10,
@@ -168,74 +168,74 @@ export function loadConfig(): GatewayConfig {
     roles: {
       router: {
         free: {
-          defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_FREE ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['mistralai/mistral-small-3.1-24b-instruct:free', 'deepseek/deepseek-chat'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_ROUTER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
         },
         premium: {
-          defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o', 'google/gemini-2.0-flash-001'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_ROUTER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
         }
       },
       planner: {
         free: {
-          defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL_FREE ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['deepseek/deepseek-chat', 'mistralai/mistral-small-3.1-24b-instruct:free'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_PLANNER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
         },
         premium: {
-          defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o', 'google/gemini-2.0-flash-001'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_PLANNER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
         }
       },
 
       executor: {
         free: {
-          defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL_FREE ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['deepseek/deepseek-chat', 'mistralai/mistral-small-3.1-24b-instruct:free'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
         },
         premium: {
-          defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o', 'google/gemini-2.0-flash-001'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
         }
       },
       clarifyAndRewriter: {
         free: {
-          defaultModel: process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MODEL_FREE ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['mistralai/mistral-small-3.1-24b-instruct:free', 'deepseek/deepseek-chat'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
         },
         premium: {
-          defaultModel: process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
         }
       },
       query_builder: {
         free: {
-          defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL_FREE ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['mistralai/mistral-small-3.1-24b-instruct:free', 'deepseek/deepseek-chat'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_QUERY_BUILDER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
         },
         premium: {
-          defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_QUERY_BUILDER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
         }
       },
       final: {
         free: {
-          defaultModel: process.env.AI_GATEWAY_FINAL_MODEL_FREE ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_FINAL_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['deepseek/deepseek-chat', 'mistralai/mistral-small-3.1-24b-instruct:free'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_FINAL_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
         },
         premium: {
-          defaultModel: process.env.AI_GATEWAY_FINAL_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
-          fallbackModels: ['anthropic/claude-3-haiku'],
+          defaultModel: process.env.AI_GATEWAY_FINAL_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o', 'google/gemini-2.0-flash-001'],
           maxOutputTokens: parseInt(process.env.AI_GATEWAY_FINAL_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
         }
       },
@@ -243,11 +243,11 @@ export function loadConfig(): GatewayConfig {
     limits: {
       free: {
         requestsPerMinute: parseInt(
-          process.env.AI_GATEWAY_FREE_RPM ?? "20",
+          process.env.AI_GATEWAY_FREE_RPM ?? "30",
           10,
         ),
         dailyTokenLimit: parseInt(
-          process.env.AI_GATEWAY_FREE_DAILY_TOKENS ?? "40000",
+          process.env.AI_GATEWAY_FREE_DAILY_TOKENS ?? "500000",
           10,
         ),
       },
@@ -257,7 +257,7 @@ export function loadConfig(): GatewayConfig {
           10,
         ),
         dailyTokenLimit: parseInt(
-          process.env.AI_GATEWAY_PREMIUM_DAILY_TOKENS ?? "300000",
+          process.env.AI_GATEWAY_PREMIUM_DAILY_TOKENS ?? "2000000",
           10,
         ),
       },

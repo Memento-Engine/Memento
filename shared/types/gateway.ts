@@ -57,6 +57,10 @@ export type GatewayResponse<T> = {
   error?: {
     code: StatusCodes;
     message: string;
+    // Rate limit specific fields
+    type?: "daily_tokens" | "requests_per_minute" | "no_credits";
+    tier?: string;
+    retryAfterMs?: number;
   };
 };
 
@@ -79,6 +83,7 @@ export const registerDeviceSchema = z.object({
 export const registerDeviceResponseSchema = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
+  deviceId: z.string(), // Server-generated device ID to use in subsequent requests
 });
 
 

@@ -79,6 +79,12 @@ export const errorEventDataSchema = z.object({
   code: z.string().optional(),
   isSystemError: z.boolean().optional().default(true),
   timestamp: z.string().optional(),
+  // Rate limit specific fields
+  rateLimit: z.object({
+    tier: z.string(),
+    type: z.enum(["daily_tokens", "requests_per_minute", "no_credits"]),
+    retryAfterMs: z.number().optional(),
+  }).optional(),
 });
 
 export const errorEventSchema = z.object({

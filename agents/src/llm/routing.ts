@@ -1,5 +1,5 @@
 import { getConfig } from "../config/config";
-import { AgentError, ErrorCode } from "../types/errors";
+import { AgentError, ErrorCode, RateLimitError } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
 
 export type LlmRole =
@@ -60,15 +60,80 @@ type GatewayMessage = {
   content: string;
 };
 
-type GatewayResponse = {
-  model?: string;
+// The actual data inside the gateway response
+type GatewayResponseData = {
+  id?: string;
   content: string;
   attempts?: number;
+  fallback_used?: boolean;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
+    total_tokens?: number;
+  };
+  metadata?: {
+    tier?: string;
+    creditsUsed?: number;
+    creditsRemaining?: number;
+    contextShrinkApplied?: boolean;
   };
 };
+
+// Wrapped gateway response format
+type GatewayResponse = {
+  success: boolean;
+  data?: GatewayResponseData;
+  error?: {
+    code: number;
+    message: string;
+    type?: "daily_tokens" | "requests_per_minute" | "no_credits";
+    tier?: string;
+    retryAfterMs?: number;
+  };
+};
+
+type GatewayErrorResponse = {
+  success: false;
+  error: {
+    code: number;
+    message: string;
+    type?: "daily_tokens" | "requests_per_minute" | "no_credits";
+    tier?: string;
+    retryAfterMs?: number;
+  };
+};
+
+/**
+ * Parse gateway error response and throw appropriate error
+ */
+function handleGatewayError(status: number, body: string, role: LlmRole): never {
+  let parsed: GatewayErrorResponse | null = null;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Not JSON, use raw body
+  }
+
+  // Handle rate limit errors (429)
+  if (status === 429 && parsed?.error) {
+    const { message, type, tier, retryAfterMs } = parsed.error;
+    throw new RateLimitError(message, {
+      role,
+      type: type || "daily_tokens",
+      tier: tier || "free",
+      retryAfterMs,
+    });
+  }
+
+  // Handle other errors
+  const message = parsed?.error?.message || body || `Gateway error (${status})`;
+  throw new AgentError(
+    message,
+    status === 401 ? ErrorCode.NETWORK_ERROR : ErrorCode.INTERNAL_ERROR,
+    { role, statusCode: status },
+    status
+  );
+}
 
 function mapRole(type: string): "system" | "user" | "assistant" {
   if (type === "system") return "system";
@@ -117,9 +182,9 @@ function extractTokenUsage(response: any): TokenUsage {
   }
 
   return {
-    promptTokens: usage.promptTokens ?? usage.input_tokens ?? usage.inputTokens,
+    promptTokens: usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens ?? usage.inputTokens,
     completionTokens:
-      usage.completionTokens ?? usage.output_tokens ?? usage.outputTokens,
+      usage.completion_tokens ?? usage.completionTokens ?? usage.output_tokens ?? usage.outputTokens,
   };
 }
 
@@ -208,24 +273,35 @@ export async function invokeRoleLlm({
           },
         );
 
+
         if (!gatewayResponse.ok) {
           const body = await gatewayResponse.text();
-          throw new Error(
-            `ai-gateway request failed (${gatewayResponse.status}): ${body}`,
-          );
+          handleGatewayError(gatewayResponse.status, body, role);
         }
 
         const result = (await gatewayResponse.json()) as GatewayResponse;
-        const usage = extractTokenUsage(result);
+        
+        // Handle wrapped response format
+        if (!result.success || !result.data) {
+          throw new AgentError(
+            result.error?.message || "Gateway returned unsuccessful response",
+            ErrorCode.INTERNAL_ERROR,
+            { role, response: result },
+            500
+          );
+        }
+        
+        const responseData = result.data;
+        const usage = extractTokenUsage(responseData);
 
         console.log("ai-gateway response", {
-          model: result.model,
-          content: result.content,
-          attempts: result.attempts,
+          contentLength: responseData.content?.length,
+          attempts: responseData.attempts,
           usage,
           usePremiumCredits,
+          metadata: responseData.metadata,
         });
-        return result;
+        return responseData;
       } finally {
         clearTimeout(timeout);
       }
@@ -235,13 +311,16 @@ export async function invokeRoleLlm({
       response: {
         content: response.content,
       },
-      modelName: response.model ?? "ai-gateway",
+      modelName: "ai-gateway", // Model abstracted away
       retryCount: Math.max(0, (response.attempts ?? 1) - 1),
     };
   } catch (error) {
     console.error("ai-gateway invocation failed", error);
 
-    // if  ()
+    // Re-throw rate limit errors as-is for proper handling upstream
+    if (error instanceof RateLimitError) {
+      throw error;
+    }
 
     throw new AgentError(
       "ai-gateway invocation failed",
@@ -327,9 +406,7 @@ export async function invokeRoleLlmStreaming({
 
         if (!gatewayResponse.ok) {
           const body = await gatewayResponse.text();
-          throw new Error(
-            `ai-gateway streaming request failed (${gatewayResponse.status}): ${body}`,
-          );
+          handleGatewayError(gatewayResponse.status, body, role);
         }
 
         if (!gatewayResponse.body) {
@@ -357,17 +434,31 @@ export async function invokeRoleLlmStreaming({
             try {
               const json = JSON.parse(trimmed.slice(6));
 
+              // Handle chunk messages (simple format)
               if (json.chunk) {
                 fullContent += json.chunk;
                 onChunk(json.chunk);
               }
 
-              if (json.done) {
+              // Handle wrapped done message: { success: true, data: { done: true, ... } }
+              if (json.success && json.data?.done) {
+                // Done message received, extract any metadata if needed
+                console.log("Streaming complete", { metadata: json.data.metadata });
+              }
+
+              // Handle legacy done format
+              if (json.done && !json.success) {
                 modelName = json.model ?? modelName;
               }
 
-              if (json.error) {
-                throw new Error(json.error);
+              // Handle error in wrapped format
+              if (json.success === false && json.error) {
+                throw new Error(json.error.message || "Gateway streaming error");
+              }
+
+              // Handle legacy error format
+              if (json.error && !json.success) {
+                throw new Error(typeof json.error === 'string' ? json.error : json.error.message);
               }
             } catch (parseError) {
               // Skip malformed JSON lines
@@ -382,7 +473,6 @@ export async function invokeRoleLlmStreaming({
         }
 
         console.log("ai-gateway streaming response complete", {
-          model: modelName,
           contentLength: fullContent.length,
         });
 
@@ -390,7 +480,7 @@ export async function invokeRoleLlmStreaming({
           response: {
             content: fullContent,
           },
-          modelName,
+          modelName: "ai-gateway", // Model abstracted away
           retryCount: 0,
         };
       } finally {
@@ -399,6 +489,11 @@ export async function invokeRoleLlmStreaming({
     });
   } catch (error) {
     console.error("ai-gateway streaming invocation failed", error);
+
+    // Re-throw rate limit errors as-is for proper handling upstream
+    if (error instanceof RateLimitError) {
+      throw error;
+    }
 
     throw new AgentError(
       "ai-gateway streaming invocation failed",

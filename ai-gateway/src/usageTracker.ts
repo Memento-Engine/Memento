@@ -79,7 +79,7 @@ export class UsageTracker {
         contextWindowSize,
       });
 
-      // 2. Update or insert daily usage
+      // 2. Update or insert daily usage (composite unique constraint on device_id + date_key)
       await db
         .insert(dailyUsage)
         .values({
@@ -93,7 +93,7 @@ export class UsageTracker {
           lastMinuteResetAt: new Date(),
         })
         .onConflictDoUpdate({
-          target: [dailyUsage.deviceId],
+          target: [dailyUsage.deviceId, dailyUsage.dateKey],
           set: {
             requestCount: sql`${dailyUsage.requestCount} + 1`,
             totalTokens: sql`${dailyUsage.totalTokens} + ${totalTokens}`,

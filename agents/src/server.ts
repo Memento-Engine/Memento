@@ -12,7 +12,7 @@ import {
 } from "./utils/logger";
 import { initializeToolRegistry } from "./tools/registry";
 import { AgentRequest, AgentResponse } from "./types/agent";
-import { isAgentError, ErrorCode } from "./types/errors";
+import { isAgentError, ErrorCode, RateLimitError } from "./types/errors";
 import {
   withEventQueue,
   drainQueuedEvents,
@@ -235,7 +235,33 @@ async function startServer() {
 
               // If there was an execution error
               if (executionError) {
-                if (isAgentError(executionError)) {
+                // Handle rate limit errors with extra details
+                if (executionError instanceof RateLimitError) {
+                  logger.warn("Rate limit exceeded", {
+                    tier: executionError.tier,
+                    type: executionError.type,
+                    retryAfterMs: executionError.retryAfterMs,
+                    duration,
+                  });
+
+                  res.write(
+                    JSON.stringify({
+                      type: "error",
+                      data: {
+                        message: executionError.message,
+                        code: ErrorCode.RATE_LIMIT_ERROR,
+                        isSystemError: true,
+                        rateLimit: {
+                          tier: executionError.tier,
+                          type: executionError.type,
+                          retryAfterMs: executionError.retryAfterMs,
+                        },
+                        timestamp: formatLocalTimestamp(),
+                      },
+                      timestamp: formatLocalTimestamp(),
+                    }) + "\n",
+                  );
+                } else if (isAgentError(executionError)) {
                   logger.warn("Agent execution failed with AgentError", {
                     code: executionError.code,
                     message: executionError.message,

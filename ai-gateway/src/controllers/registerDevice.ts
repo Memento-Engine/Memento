@@ -176,6 +176,7 @@ export default async function registerDevice(
       data: {
         accessToken,
         refreshToken,
+        deviceId: serverGeneratedDeviceId!, // Return server-generated ID for client to use
       },
     };
 

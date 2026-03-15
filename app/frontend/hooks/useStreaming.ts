@@ -101,13 +101,27 @@ export function useStreaming(
 
   const handleErrorEvent = useCallback(
     (event: ErrorEvent) => {
-      const { message, isSystemError = true } = event.data;
+      const { message, isSystemError = true, rateLimit } = event.data;
 
       let errorMessage = message;
       if (!navigator.onLine) {
         errorMessage = "Connection failed";
       } else if (!errorMessage) {
         errorMessage = "Something went wrong, try again.";
+      }
+
+      // Handle rate limit errors with user-friendly message
+      if (rateLimit) {
+        const { tier, type, retryAfterMs } = rateLimit;
+        if (type === "daily_tokens") {
+          errorMessage = "You've reached your daily usage limit. Please try again tomorrow.";
+        } else if (type === "requests_per_minute") {
+          const retrySeconds = retryAfterMs ? Math.ceil(retryAfterMs / 1000) : 60;
+          errorMessage = `Too many requests. Please wait ${retrySeconds} seconds and try again.`;
+        } else if (type === "no_credits") {
+          errorMessage = "No premium credits available. Consider upgrading your plan.";
+        }
+        console.warn("Rate limit error:", { tier, type, retryAfterMs });
       }
 
       if (isSystemError) {
@@ -319,9 +333,15 @@ export function useStreaming(
       });
 
       if (!res.ok) {
-        // Handle 401 specifically - may need to re-authenticate
+        // Handle 401 specifically - try to get more specific error message
         if (res.status === 401) {
-          throw new Error("AUTH_TOKEN_EXPIRED");
+          try {
+            const errorBody = await res.json();
+            const message = errorBody?.error?.message || errorBody?.message || "AUTH_TOKEN_EXPIRED";
+            throw new Error(message);
+          } catch {
+            throw new Error("AUTH_TOKEN_EXPIRED");
+          }
         }
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }

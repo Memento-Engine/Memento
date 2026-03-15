@@ -39,6 +39,7 @@ export enum ErrorCode {
   BACKEND_UNAVAILABLE = "BACKEND_UNAVAILABLE",
   NETWORK_ERROR = "NETWORK_ERROR",
   TIMEOUT_ERROR = "TIMEOUT_ERROR",
+  RATE_LIMIT_ERROR = "RATE_LIMIT_ERROR",
 
   // Internal errors
   INTERNAL_ERROR = "INTERNAL_ERROR",
@@ -140,6 +141,40 @@ export class TimeoutError extends AgentError {
     super(message, ErrorCode.TIMEOUT_ERROR, context, 504);
     this.name = "TimeoutError";
     Object.setPrototypeOf(this, TimeoutError.prototype);
+  }
+}
+
+/**
+ * Rate limit error - API quota or rate limit exceeded.
+ */
+export class RateLimitError extends AgentError {
+  readonly tier: string;
+  readonly type: "daily_tokens" | "requests_per_minute" | "no_credits";
+  readonly retryAfterMs?: number;
+
+  constructor(
+    message: string,
+    context: ErrorContext & {
+      tier?: string;
+      type?: "daily_tokens" | "requests_per_minute" | "no_credits";
+      retryAfterMs?: number;
+    } = {}
+  ) {
+    super(message, ErrorCode.RATE_LIMIT_ERROR, context, 429);
+    this.name = "RateLimitError";
+    this.tier = context.tier || "free";
+    this.type = context.type || "daily_tokens";
+    this.retryAfterMs = context.retryAfterMs;
+    Object.setPrototypeOf(this, RateLimitError.prototype);
+  }
+
+  toJSON() {
+    return {
+      ...super.toJSON(),
+      tier: this.tier,
+      type: this.type,
+      retryAfterMs: this.retryAfterMs,
+    };
   }
 }
 

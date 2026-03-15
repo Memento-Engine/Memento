@@ -11,6 +11,7 @@ import { notify } from "@/lib/notify";
 import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 import { USE_MOCK_DATA, getMockResponse, MOCK_THINKING_STEPS } from "@/mock";
 import useOnboarding from "@/hooks/useOnboarding";
+import { clearAuthState, isAuthError } from "@/lib/auth";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -156,21 +157,14 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       }
 
       // Handle auth errors - redirect to onboarding
-      if (err instanceof Error) {
-        if (
-          err.message === "DEVICE_NOT_REGISTERED" ||
-          err.message === "AUTH_TOKEN_MISSING" ||
-          err.message === "AUTH_TOKEN_EXPIRED"
-        ) {
-          console.error("Auth error - redirecting to onboarding:", err.message);
-          notify.error("Please complete device registration");
-          // Clear local auth state and redirect
-          localStorage.removeItem("deviceId");
-          document.cookie = "accessToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-          setIsOnboardingComplete(false);
-          router.push("/onboarding");
-          return;
-        }
+      if (isAuthError(err)) {
+        console.error("Auth error - redirecting to onboarding:", err);
+        notify.error("Please complete device registration");
+        // Clear all auth state (localStorage, cookie, keyring)
+        await clearAuthState();
+        setIsOnboardingComplete(false);
+        router.push("/onboarding");
+        return;
       }
 
       console.error("Error while sending message:", err);
