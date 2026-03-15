@@ -24,7 +24,7 @@ interface MarkdownProps {
   isUser?: boolean;
   isStreaming?: boolean;
   messageId?: string;
-  sourceMap: Map<string, SourceRecord>;
+  sourceMap: Map<number, SourceRecord>;
 }
 
 // =============================
@@ -87,32 +87,38 @@ function preprocessCitations(text: string) {
   // Handle citation formats:
   // Single: [[chunk_42]]
   // Multiple: [[chunk_1][chunk_2]]
-  
-  // Match anything between [[ and ]] 
-  return text.replace(/\[\[([^\[\]]+(?:\]\[[^\[\]]+)*)\]\]/g, (match, content) => {
-    // content will be like "chunk_374][chunk_421" or just "chunk_42"
-    // Split by ][ to get individual IDs
-    const ids = content
-      .split("][")
-      .map((id: string) => id.trim())
-      .filter(Boolean);
 
-    if (ids.length === 0) {
-      return match;
-    }
+  // Match anything between [[ and ]]
+  return text.replace(
+    /\[\[([^\[\]]+(?:\]\[[^\[\]]+)*)\]\]/g,
+    (match, content) => {
+      // content will be like "chunk_374][chunk_421" or just "chunk_42"
+      // Split by ][ to get individual IDs
+      const ids = content
+        .split("][")
+        .map((id: string) => id.trim())
+        .filter(Boolean);
 
-    return `[${ids.join(",")}](memory://${ids.join(",")})`;
-  });
+      if (ids.length === 0) {
+        return match;
+      }
+
+      return `[${ids.join(",")}](memory://${ids.join(",")})`;
+    },
+  );
 }
 
-function getCitationSummary(chunkIds: string[], sourceMap: Map<string, SourceRecord>) {
+function getCitationSummary(
+  chunkIds: number[],
+  sourceMap: Map<number, SourceRecord>,
+) {
   const uniqueChunkIds = Array.from(new Set(chunkIds));
   const mappedSources = uniqueChunkIds
     .map((chunkId) => ({ chunkId, source: sourceMap.get(chunkId) }))
     .filter((entry) => !!entry.source);
 
   const primary = mappedSources[0];
-  const fallbackPrimaryId = uniqueChunkIds[0] ?? "";
+  const fallbackPrimaryId = uniqueChunkIds[0] ?? 0;
 
   // Build sources array for navigation
   const sources = mappedSources.map((entry) => ({
@@ -166,7 +172,7 @@ function RenderMarkdownComponent({
   messageId,
   sourceMap,
   onMemoryClick,
-}: MarkdownProps & { onMemoryClick?: (id: string) => void }) {
+}: MarkdownProps & { onMemoryClick?: (id: number) => void }) {
   // preprocess content
   const processedContent = useMemo(() => {
     const normalized = normalizeLatex(content);
@@ -186,8 +192,13 @@ function RenderMarkdownComponent({
             .replace("memory://", "")
             .split(",")
             .map((id: string) => id.trim())
-            .filter(Boolean);
+            .filter(Boolean)
+            .map((id: string) => {
+              const parts = id.split("_");
+              return Number(parts.length > 1 ? parts[1] : parts[0]);
+            });
 
+          console.log("chunkIds", chunkIds);
           const citation = getCitationSummary(chunkIds, sourceMap);
 
           return (
@@ -240,7 +251,10 @@ function RenderMarkdownComponent({
             alt={alt ?? "Image"}
             loading="lazy"
             decoding="async"
-            className={cn("h-auto max-w-full rounded-md border border-border", className)}
+            className={cn(
+              "h-auto max-w-full rounded-md border border-border",
+              className,
+            )}
           />
         );
       },
@@ -251,7 +265,10 @@ function RenderMarkdownComponent({
   return (
     <div
       className={cn(
-        "markdown wrap-break-word select-text",
+        "markdown prose prose-neutral dark:prose-invert max-w-none",
+        "prose-pre:rounded-lg prose-pre:bg-neutral-900",
+        "prose-code:before:hidden prose-code:after:hidden",
+        "prose-table:border prose-table:border-neutral-200",
         isUser && "is-user",
         className,
       )}

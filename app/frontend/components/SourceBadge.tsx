@@ -8,7 +8,7 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 
-import { Link2Icon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Link2Icon, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { cn, renderDate } from "@/lib/utils";
 import {
   useAppIcon,
@@ -17,7 +17,7 @@ import {
 } from "@/hooks/useAppIcon";
 
 interface SourceItem {
-  chunkId: string;
+  chunkId: number;
   title?: string;
   appName?: string;
   description?: string;
@@ -26,14 +26,14 @@ interface SourceItem {
 }
 
 interface SourceBadgeProps {
-  id: string;
+  id: number;
   title?: string;
   appName?: string;
   description?: string;
   capturedAt?: string;
   label?: string;
   sources?: SourceItem[];
-  onClick?: (id: string) => void;
+  onClick?: (id: number) => void;
 }
 
 export function SourceBadge({
@@ -177,13 +177,15 @@ export function SourceBadge({
           </div>
 
           {/* Footer */}
-          <div className="mt-1 flex items-center justify-between border-t pt-3">
-            <p className="text-[10px] font-medium text-muted-foreground/80">
-              Captured{" "}
-              {currentSource.capturedAt
-                ? renderDate(currentSource.capturedAt)
-                : "Unknown date"}
-            </p>
+          <div className="mt-1 flex justify-end border-t pt-2">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground/80">
+              <Clock className="h-3 w-3 relative top-[0.5px]" />
+              <span className="leading-none">
+                {currentSource.capturedAt
+                  ? renderDate(currentSource.capturedAt)
+                  : "Unknown date"}
+              </span>
+            </div>
           </div>
         </div>
       </HoverCardContent>

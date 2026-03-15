@@ -13,3 +13,4 @@ export async function getBaseUrl(): Promise<string> {
     return "http://localhost:9090/api/v1";
   }
 }
+export const AI_GATEWAY_BASE_URL = `http://localhost:4180/v1`;

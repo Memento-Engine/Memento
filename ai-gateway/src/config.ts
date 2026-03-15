@@ -1,11 +1,8 @@
 import dotenv from "dotenv";
 import { z } from "zod";
 import type { GatewayRole, ProviderName } from "./types.js";
-import path from "path/win32";
-import fs from "fs";
-dotenv.config({
-  path: path.resolve(process.cwd(), "../.env"),
-});
+import { Router } from "express";
+dotenv.config();
 const providerSchema = z.object({
   name: z.enum(["openrouter", "openai", "anthropic", "gemini"]),
   baseUrl: z.string().url(),
@@ -13,19 +10,41 @@ const providerSchema = z.object({
   timeoutMs: z.number().int().min(1000).default(30000),
 });
 
-const roleConfigSchema = z.object({
+const modelSelectionSchema = z.object({
   defaultModel: z.string().min(1),
   fallbackModels: z.array(z.string().min(1)).default([]),
   maxOutputTokens: z.number().int().min(64),
 });
 
+const roleConfigSchema = z.object({
+  free: modelSelectionSchema,
+  premium: modelSelectionSchema,
+});
+
+const limitsSchema = z.object({
+  free: z.object({
+    requestsPerMinute: z.number().int().min(1).default(20),
+    dailyTokenLimit: z.number().int().min(1).default(40000),
+  }),
+  premium: z.object({
+    requestsPerMinute: z.number().int().min(1).default(120),
+    dailyTokenLimit: z.number().int().min(1).default(300000),
+  }),
+});
+
 const configSchema = z.object({
+  env: z.enum(["development", "production"]).default("development"),
+  db: z.object({
+    url: z.string().url(),
+  }),
   server: z.object({
     host: z.string().default("127.0.0.1"),
     port: z.number().int().min(1000).max(65535).default(4180),
   }),
   defaults: z.object({
-    provider: z.enum(["openrouter", "openai", "anthropic", "gemini"]).default("openrouter"),
+    provider: z
+      .enum(["openrouter", "openai", "anthropic", "gemini"])
+      .default("openrouter"),
     temperature: z.number().min(0).max(2).default(0),
     model: z.string().default("openai/gpt-4o-mini"),
     maxTokens: z.number().int().min(64).default(65536),
@@ -37,28 +56,31 @@ const configSchema = z.object({
     executor: roleConfigSchema,
     query_builder: roleConfigSchema,
     final: roleConfigSchema,
-    clarifyAndRewriter : roleConfigSchema
+    clarifyAndRewriter: roleConfigSchema,
   }),
   limits: z.object({
     free: z.object({
       requestsPerMinute: z.number().int().min(1).default(20),
       dailyTokenLimit: z.number().int().min(1).default(40000),
     }),
-    pro: z.object({
+    premium: z.object({
       requestsPerMinute: z.number().int().min(1).default(120),
       dailyTokenLimit: z.number().int().min(1).default(300000),
     }),
-    proUsers: z.array(z.string().min(1)).default([]),
   }),
 });
 
 export type GatewayConfig = z.infer<typeof configSchema>;
+export type RoleModelConfig = z.infer<typeof roleConfigSchema>["free"] | z.infer<typeof roleConfigSchema>["premium"];
 
 function normalizeProvider(name: ProviderName): string {
   return name.toUpperCase();
 }
 
-function resolveProviderApiKey(providerName: ProviderName, upper: string): string | undefined {
+function resolveProviderApiKey(
+  providerName: ProviderName,
+  upper: string,
+): string | undefined {
   const scopedKey = process.env[`AI_GATEWAY_${upper}_API_KEY`];
   if (scopedKey && scopedKey.trim()) {
     return scopedKey;
@@ -74,7 +96,10 @@ function resolveProviderApiKey(providerName: ProviderName, upper: string): strin
   return undefined;
 }
 
-function resolveProviderBaseUrl(providerName: ProviderName, upper: string): string | undefined {
+function resolveProviderBaseUrl(
+  providerName: ProviderName,
+  upper: string,
+): string | undefined {
   const scopedBaseUrl = process.env[`AI_GATEWAY_${upper}_BASE_URL`];
   if (scopedBaseUrl && scopedBaseUrl.trim()) {
     return scopedBaseUrl;
@@ -87,10 +112,14 @@ function resolveProviderBaseUrl(providerName: ProviderName, upper: string): stri
   return undefined;
 }
 
-export function loadConfig(): GatewayConfig {
-  const defaultProvider = (process.env.AI_GATEWAY_DEFAULT_PROVIDER ?? "openrouter") as ProviderName;
 
-  const providers = (["openrouter", "openai", "anthropic", "gemini"] as ProviderName[])
+export function loadConfig(): GatewayConfig {
+  const defaultProvider = (process.env.AI_GATEWAY_DEFAULT_PROVIDER ??
+    "openrouter") as ProviderName;
+
+  const providers = (
+    ["openrouter", "openai", "anthropic", "gemini"] as ProviderName[]
+  )
     .map((providerName) => {
       const upper = normalizeProvider(providerName);
       const apiKey = resolveProviderApiKey(providerName, upper);
@@ -104,89 +133,136 @@ export function loadConfig(): GatewayConfig {
         name: providerName,
         apiKey,
         baseUrl,
-        timeoutMs: parseInt(process.env[`AI_GATEWAY_${upper}_TIMEOUT_MS`] ?? "30000", 10),
+        timeoutMs: parseInt(
+          process.env[`AI_GATEWAY_${upper}_TIMEOUT_MS`] ?? "30000",
+          10,
+        ),
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
 
-  const config = {
+  const config: GatewayConfig = {
+    db: {
+      url:
+        process.env.NODE_ENV === "production"
+          ? process.env.NEON_DATABASE_URL!
+          : process.env.DATABASE_URL!,
+    },
+    env: (process.env.NODE_ENV === "production" ? "production" : "development"),
     server: {
       host: process.env.AI_GATEWAY_HOST ?? "127.0.0.1",
       port: parseInt(process.env.AI_GATEWAY_PORT ?? "4180", 10),
     },
     defaults: {
       provider: defaultProvider,
-      temperature: parseFloat(process.env.AI_GATEWAY_DEFAULT_TEMPERATURE ?? "0"),
+      temperature: parseFloat(
+        process.env.AI_GATEWAY_DEFAULT_TEMPERATURE ?? "0",
+      ),
       model: process.env.AI_GATEWAY_DEFAULT_MODEL ?? "openai/gpt-4o-mini",
-      maxTokens: parseInt(process.env.AI_GATEWAY_DEFAULT_MAX_TOKENS ?? "65536", 10),
+      maxTokens: parseInt(
+        process.env.AI_GATEWAY_DEFAULT_MAX_TOKENS ?? "65536",
+        10,
+      ),
     },
     providers,
     roles: {
       router: {
-        defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL ?? "openai/gpt-4o-mini",
-        fallbackModels: (process.env.AI_GATEWAY_ROUTER_FALLBACKS ?? "anthropic/claude-3-haiku")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        maxOutputTokens: parseInt(process.env.AI_GATEWAY_ROUTER_MAX_OUTPUT_TOKENS ?? "4096", 10),
+        free: {
+          defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_FREE ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_ROUTER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_ROUTER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
+        }
       },
       planner: {
-        defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL ?? "openai/gpt-4o-mini",
-        fallbackModels: (process.env.AI_GATEWAY_PLANNER_FALLBACKS ?? "anthropic/claude-3-haiku")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        maxOutputTokens: parseInt(process.env.AI_GATEWAY_PLANNER_MAX_OUTPUT_TOKENS ?? "65536", 10),
+        free: {
+          defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL_FREE ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_PLANNER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_PLANNER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_PLANNER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
+        }
       },
+
       executor: {
-        defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL ?? "deepseek/deepseek-chat",
-        fallbackModels: (process.env.AI_GATEWAY_EXECUTOR_FALLBACKS ?? "mistralai/mistral-large,openai/gpt-4o-mini")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS ?? "65536", 10),
+        free: {
+          defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL_FREE ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
+        }
       },
-       clarifyAndRewriter: {
-        defaultModel: process.env.AI_GATEWAY_EXECUTOR_MODEL ?? "deepseek/deepseek-chat",
-        fallbackModels: (process.env.AI_GATEWAY_EXECUTOR_FALLBACKS ?? "mistralai/mistral-large,openai/gpt-4o-mini")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        maxOutputTokens: parseInt(process.env.AI_GATEWAY_EXECUTOR_MAX_OUTPUT_TOKENS ?? "65536", 10),
+      clarifyAndRewriter: {
+        free: {
+          defaultModel: process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MODEL_FREE ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_CLARIFY_AND_REWRITER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
+        }
       },
       query_builder: {
-        defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL ?? "deepseek/deepseek-chat",
-        fallbackModels: (process.env.AI_GATEWAY_QUERY_BUILDER_FALLBACKS ?? "openai/gpt-4o-mini")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        maxOutputTokens: parseInt(process.env.AI_GATEWAY_QUERY_BUILDER_MAX_OUTPUT_TOKENS ?? "4096", 10),
+        free: {
+          defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL_FREE ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_QUERY_BUILDER_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_QUERY_BUILDER_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_QUERY_BUILDER_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
+        }
       },
       final: {
-        defaultModel: process.env.AI_GATEWAY_FINAL_MODEL ?? "openai/gpt-4o-mini",
-        fallbackModels: (process.env.AI_GATEWAY_FINAL_FALLBACKS ?? "anthropic/claude-3-haiku")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        maxOutputTokens: parseInt(process.env.AI_GATEWAY_FINAL_MAX_OUTPUT_TOKENS ?? "65536", 10),
+        free: {
+          defaultModel: process.env.AI_GATEWAY_FINAL_MODEL_FREE ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_FINAL_MAX_OUTPUT_TOKENS_FREE ?? "65536", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_FINAL_MODEL_PREMIUM ?? "openai/gpt-4o-mini",
+          fallbackModels: ['anthropic/claude-3-haiku'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_FINAL_MAX_OUTPUT_TOKENS_PREMIUM ?? "65536", 10),
+        }
       },
     },
     limits: {
       free: {
-        requestsPerMinute: parseInt(process.env.AI_GATEWAY_FREE_RPM ?? "20", 10),
-        dailyTokenLimit: parseInt(process.env.AI_GATEWAY_FREE_DAILY_TOKENS ?? "40000", 10),
+        requestsPerMinute: parseInt(
+          process.env.AI_GATEWAY_FREE_RPM ?? "20",
+          10,
+        ),
+        dailyTokenLimit: parseInt(
+          process.env.AI_GATEWAY_FREE_DAILY_TOKENS ?? "40000",
+          10,
+        ),
       },
-      pro: {
-        requestsPerMinute: parseInt(process.env.AI_GATEWAY_PRO_RPM ?? "120", 10),
-        dailyTokenLimit: parseInt(process.env.AI_GATEWAY_PRO_DAILY_TOKENS ?? "300000", 10),
+      premium: {
+        requestsPerMinute: parseInt(
+          process.env.AI_GATEWAY_PREMIUM_RPM ?? "120",
+          10,
+        ),
+        dailyTokenLimit: parseInt(
+          process.env.AI_GATEWAY_PREMIUM_DAILY_TOKENS ?? "300000",
+          10,
+        ),
       },
-      proUsers: (process.env.AI_GATEWAY_PRO_USERS ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
     },
   };
-
 
   const parsed = configSchema.parse(config);
 
@@ -199,11 +275,11 @@ export function loadConfig(): GatewayConfig {
   return parsed;
 }
 
-export function selectRoleModelConfig(config: GatewayConfig, role?: GatewayRole): {
-  defaultModel: string;
-  fallbackModels: string[];
-  maxOutputTokens: number;
-} {
+export function selectRoleModelConfig(
+  config: GatewayConfig,
+  role?: GatewayRole,
+  access: "free" | "premium" = "free"
+) : RoleModelConfig {
   if (!role) {
     return {
       defaultModel: config.defaults.model,
@@ -212,5 +288,5 @@ export function selectRoleModelConfig(config: GatewayConfig, role?: GatewayRole)
     };
   }
 
-  return config.roles[role];
+  return config.roles[role][access];
 }

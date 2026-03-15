@@ -61,6 +61,7 @@ export async function routerNode(
           requestId: state.requestId,
           spanName: "agent.node.router.llm",
           spanAttributes: { node: "router" },
+          authHeaders: state.authHeaders,
         });
 
         const parsed = await SafeJsonParser.parseAndValidate(

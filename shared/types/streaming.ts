@@ -1,4 +1,4 @@
-import { ThinkingStep } from "./frontend";
+import { ThinkingStep } from "./frontend.ts";
 
 export type StreamEventType =
   | "step"

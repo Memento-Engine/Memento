@@ -1,4 +1,4 @@
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppIcon {
@@ -21,10 +21,10 @@ lazy_static! {
 #[cfg(target_os = "windows")]
 pub async fn get_app_icon(
     app_name: &str,
-    app_path: Option<String>
+    app_path: Option<String>,
 ) -> Result<Option<AppIcon>, String> {
     use image::codecs::png::PngEncoder;
-    use image::{ ExtendedColorType, ImageEncoder };
+    use image::{ExtendedColorType, ImageEncoder};
     use std::io::Cursor;
     use std::path::Path;
     use windows_icons::get_icon_by_path;
@@ -36,10 +36,9 @@ pub async fn get_app_icon(
         }
 
         let path_without_icon_index = trimmed.split(',').next().unwrap_or(trimmed).trim();
-        let looks_like_path =
-            path_without_icon_index.contains('\\') ||
-            path_without_icon_index.contains('/') ||
-            path_without_icon_index.contains(':');
+        let looks_like_path = path_without_icon_index.contains('\\')
+            || path_without_icon_index.contains('/')
+            || path_without_icon_index.contains(':');
 
         if !looks_like_path {
             return None;
@@ -79,12 +78,14 @@ pub async fn get_app_icon(
     } else if let Some(candidate) = existing_path(app_name) {
         candidate
     } else {
-        find_exe_path(app_name).await.ok_or_else(||
-            "app_path is None and could not find executable path".to_string()
-        )?
+        find_exe_path(app_name)
+            .await
+            .ok_or_else(|| "app_path is None and could not find executable path".to_string())?
     };
 
-    let image_buffer = (async { get_icon_by_path(&path) }).await.map_err(|e| e.to_string())?;
+    let image_buffer = (async { get_icon_by_path(&path) })
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut data = Vec::new();
     {
@@ -95,16 +96,14 @@ pub async fn get_app_icon(
                 &image_buffer,
                 image_buffer.width(),
                 image_buffer.height(),
-                ExtendedColorType::Rgba8
+                ExtendedColorType::Rgba8,
             )
             .map_err(|e| e.to_string())?;
     }
-    Ok(
-        Some(AppIcon {
-            data,
-            path: Some(path),
-        })
-    )
+    Ok(Some(AppIcon {
+        data,
+        path: Some(path),
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -127,7 +126,10 @@ fn get_exe_by_reg_key(app_name: &str) -> Option<String> {
             for subkey in key.enum_keys().filter_map(Result::ok) {
                 if let Ok(app_key) = key.open_subkey(&subkey) {
                     if let Ok(display_name) = app_key.get_value::<String, _>("DisplayName") {
-                        if display_name.to_lowercase().contains(&app_name.to_lowercase()) {
+                        if display_name
+                            .to_lowercase()
+                            .contains(&app_name.to_lowercase())
+                        {
                             if let Ok(path) = app_key.get_value::<String, _>("DisplayIcon") {
                                 let cleaned_path = path
                                     .split(',')
@@ -161,7 +163,10 @@ async fn get_exe_from_potential_path(app_name: &str) -> Option<String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let app_name = app_name.strip_suffix(".exe").unwrap_or(&app_name);
     let potential_paths = [
-        (r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs", true),
+        (
+            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+            true,
+        ),
         (r"C:\Windows\", false),
     ];
     for (path, recursive) in &potential_paths {
@@ -170,30 +175,28 @@ async fn get_exe_from_potential_path(app_name: &str) -> Option<String> {
                 r#"
                     Get-ChildItem -Path "{}" -Filter "*{}*.exe" -Recurse | ForEach-Object {{ $_.FullName }}
                     "#,
-                path,
-                app_name
+                path, app_name
             )
         } else {
             format!(
                 r#"
                     Get-ChildItem -Path "{}" -Filter "*{}*.exe" | ForEach-Object {{ $_.FullName }}
                     "#,
-                path,
-                app_name
+                path, app_name
             )
         };
 
         let _permit = SEMAPHORE.acquire().await.unwrap();
 
-        let output = tokio::process::Command
-            ::new("powershell")
+        let output = tokio::process::Command::new("powershell")
             .arg("-NoProfile")
             .arg("-WindowStyle")
             .arg("hidden")
             .arg("-Command")
             .arg(command)
             .creation_flags(CREATE_NO_WINDOW)
-            .output().await
+            .output()
+            .await
             .ok()?;
 
         if output.status.success() {
@@ -216,17 +219,18 @@ async fn get_exe_by_appx(app_name: &str) -> Option<String> {
 
     let _permit = SEMAPHORE.acquire().await.unwrap();
 
-    let output = tokio::process::Command
-        ::new("powershell")
+    let output = tokio::process::Command::new("powershell")
         .arg("-NoProfile")
         .arg("-WindowStyle")
         .arg("hidden")
         .arg("-Command")
-        .arg(
-            format!(r#"Get-AppxPackage | Where-Object {{ $_.Name -like "*{}*" }}"#, app_name_withoutspace)
-        )
+        .arg(format!(
+            r#"Get-AppxPackage | Where-Object {{ $_.Name -like "*{}*" }}"#,
+            app_name_withoutspace
+        ))
         .creation_flags(CREATE_NO_WINDOW)
-        .output().await
+        .output()
+        .await
         .expect("failed to execute powershell command");
 
     if !output.status.success() {

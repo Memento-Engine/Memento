@@ -7,4 +7,7 @@ export type {
   ChatResponse,
   TokenUsage,
   UsageRecord,
+  UserRole,
+  UserTier,
+  GatewayResponse,
 } from "../../shared/types/gateway.js";

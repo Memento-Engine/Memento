@@ -2,6 +2,7 @@ import { Annotation } from "@langchain/langgraph";
 import { Plan } from "./planner/plan.schema";
 import { Route } from "./router/router.node";
 import { RetrievedSource } from "./types/agent";
+import { AuthHeaders } from "./llm/routing";
 
 /**
  * Agent execution state representing the complete workflow state.
@@ -29,6 +30,9 @@ export const AgentState = Annotation.Root({
   // ── Request context ──────────────────────────────────
   goal: Annotation<string>(),
   requestId: Annotation<string>(),
+
+  // ── Auth context for credit tracking ─────────────────
+  authHeaders: Annotation<AuthHeaders | undefined>(),
 
   // ── Router outputs ───────────────────────────────────
   route: Annotation<Route | undefined>(),

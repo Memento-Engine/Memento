@@ -22,7 +22,7 @@ Dynamic variables:
 export const plannerPromptV2 = ChatPromptTemplate.fromMessages([
   [
     "system",
-`You are a planner for a personal memory search engine.
+    `You are a planner for a personal memory search engine.
 
 The system captures screen activity and stores:
 - app_name, window_title, browser_url
@@ -134,21 +134,30 @@ OUTPUT FORMAT
 Return ONLY valid JSON. No markdown, no explanations.
 
 {{
-  "goal": "restated user goal",
+  "goal": "Restated user goal",
   "steps": [
-   {{
+    {{
       "id": "step1",
       "kind": "search",
-      "stepGoal": "find VS Code activity yesterday",
+      "stepGoal": "Find VS Code activity yesterday",
+      "uiSearchQueries": ["VS Code activity yesterday", "Cursor editor usage yesterday"],
       "intent": "Use sql_execute with temporal-query skill to find frames where app_name contains 'VS Code' or 'Cursor' from yesterday",
       "dependsOn": []
   }},
     {{
       "id": "step2",
-      "kind": "final",
-      "stepGoal": "summarize coding activity",
-      "intent": "Summarize the coding sessions from {{step1_results}} including duration and projects",
+      "kind": "reason",
+      "stepGoal": "Analyze coding sessions",
+      "uiReason": "Analyze VS Code sessions to determine coding activity",
+      "intent": "Analyze results from {{step1_results}} to determine coding sessions, duration, and related projects",
       "dependsOn": ["step1"]
+  }},
+    {{
+      "id": "step3",
+      "kind": "final",
+      "stepGoal": "Summarize coding activity",
+      "intent": "Summarize the coding sessions from {{step2_results}} including duration and projects",
+      "dependsOn": ["step2"]
   }}
   ]
   }}
@@ -182,10 +191,10 @@ IMPORTANT
   ],
   [
     "human",
-`User goal:
+    `User goal:
 {goal}
 
 Previous validation errors (if any):
-{previousErrors}`
-  ]
+{previousErrors}`,
+  ],
 ]);

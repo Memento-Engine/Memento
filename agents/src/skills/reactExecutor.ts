@@ -1,9 +1,9 @@
 import { AgentStateType } from "../agentState";
 import { executeSql, formatResultsAsJson } from "./sqlExecutor";
 import { getToolRegistry } from "../tools/registry";
-import { getLogger } from "../utils/logger";
+import { getLogger, logger } from "../utils/logger";
 import { getConfig } from "../config/config";
-import { invokeRoleLlm } from "../llm/routing";
+import { invokeRoleLlm, AuthHeaders } from "../llm/routing";
 import { getSkills, buildSkillContext } from "./loader";
 import { SafeJsonParser } from "../utils/parser";
 import { runWithSpan } from "../telemetry/tracing";
@@ -76,30 +76,16 @@ export interface ReActTurn {
 }
 
 /**
- * Collected chunk with identifiers for citation.
- */
-export interface CollectedChunk {
-  chunk_id: number;
-  frame_id?: number;
-  captured_at?: string;
-  app_name?: string;
-  window_title?: string;
-  text_content?: string;
-  relevance_score?: number;
-  source_action?: "sql" | "semantic" | "hybrid";
-}
-
-/**
  * Final result of ReAct execution.
- * Note: ReAct collects chunks with IDs - final LLM synthesizes answer with citations.
+ * Contains all turns with their summaries and raw data.
+ * The final LLM uses this context to synthesize the answer.
  */
 export interface ReActResult {
   success: boolean;
   /** Brief summary from ReAct (NOT the final answer) */
   summary?: string;
   confidence?: "high" | "medium" | "low";
-  /** All collected chunks with chunk_ids for citations */
-  collectedChunks: CollectedChunk[];
+  /** All turns with action thoughts and observation data */
   turns: ReActTurn[];
   totalTimeMs: number;
   error?: string;
@@ -110,7 +96,7 @@ export interface ReActResult {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Fuzzy concept indicators that suggest semantic search.
+ * Fuzzy concept indicators that suggest semantic .
  */
 const FUZZY_CONCEPTS = [
   "session",
@@ -670,6 +656,8 @@ async function executeSemanticAction(
       ? toolResult.data
       : [];
 
+  console.log({ results }, "Result from tool semantic");
+
   return {
     success: toolResult.success,
     data: results,
@@ -743,73 +731,6 @@ async function executeThinkAction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CHUNK EXTRACTION
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Extract all chunks from ReAct turn history for citation.
- * Deduplicates by chunk_id and preserves source action type.
- */
-function extractChunksFromHistory(history: ReActTurn[]): CollectedChunk[] {
-  const chunkMap = new Map<number, CollectedChunk>();
-
-  for (const turn of history) {
-    if (!turn.observation.success || !turn.observation.data) {
-      continue;
-    }
-
-    // Skip non-search actions
-    const actionType = turn.action.action;
-    if (actionType === "think" || actionType === "done") {
-      continue;
-    }
-
-    const sourceAction = actionType as "sql" | "semantic" | "hybrid";
-    const data = turn.observation.data;
-    if (!Array.isArray(data)) {
-      continue;
-    }
-
-    for (const row of data) {
-      // Handle different result formats
-      const chunkId = row.chunk_id ?? row.id ?? row.rowid;
-      if (typeof chunkId !== "number") {
-        continue;
-      }
-
-      // Deduplicate by chunk_id - keep first occurrence (earlier turns)
-      if (chunkMap.has(chunkId)) {
-        continue;
-      }
-
-      chunkMap.set(chunkId, {
-        chunk_id: chunkId,
-        frame_id: row.frame_id,
-        captured_at: row.captured_at,
-        app_name: row.app_name,
-        window_title: row.window_title,
-        text_content: row.text_content,
-        relevance_score: row.rank ?? row.score ?? row.similarity,
-        source_action: sourceAction,
-      });
-    }
-  }
-
-  // Return chunks sorted by relevance (if available) or capture time
-  return Array.from(chunkMap.values()).sort((a, b) => {
-    if (a.relevance_score !== undefined && b.relevance_score !== undefined) {
-      return b.relevance_score - a.relevance_score;
-    }
-    if (a.captured_at && b.captured_at) {
-      return (
-        new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime()
-      );
-    }
-    return 0;
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // MAIN REACT LOOP
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -828,6 +749,7 @@ export async function executeReActLoop(
   currentPlanStep: PlanStep,
   requestId: string,
   depContext: Record<string, any>,
+  authHeaders?: AuthHeaders,
 ): Promise<ReActResult> {
   const logger = await getLogger();
   const startTime = Date.now();
@@ -837,14 +759,36 @@ export async function executeReActLoop(
 
   const systemPrompt = await buildReActSystemPrompt();
 
+  if (currentPlanStep.kind === "search" && currentPlanStep.uiSearchQueries) {
+    emitStepEvent(requestId, {
+      stepType: "searching",
+      stepId: currentPlanStep.id,
+      title: "Searching for...",
+      queries: currentPlanStep.uiSearchQueries,
+      status: "running",
+    });
+  } else if (currentPlanStep.kind === "reason" && currentPlanStep.uiReason) {
+    emitStepEvent(requestId, {
+      stepType: "reasoning",
+      stepId: currentPlanStep.id,
+      title: currentPlanStep.uiReason,
+      status: "running",
+    });
+  } else {
+    emitStepEvent(requestId, {
+      stepType: "searching",
+      stepId: currentPlanStep.id,
+      title: '"Searching for information..."',
+      status: "running",
+    });
+  }
+
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     const turnPrompt = buildTurnPrompt(
       currentPlanStep.stepGoal,
       history,
       depContext,
     );
-
-    logger.info({ history }, `Turn history before LLM call. Turn :  ${turn}`);
 
     // Call LLM for next action
     const { response } = await invokeRoleLlm({
@@ -856,6 +800,7 @@ export async function executeReActLoop(
       requestId: requestId,
       spanName: "react.turn",
       spanAttributes: { turn_number: turn },
+      authHeaders,
     });
 
     const content = typeof response === "string" ? response : response.content;
@@ -884,31 +829,34 @@ export async function executeReActLoop(
       "ReAct action",
     );
 
-    // Check for done action (terminal) - collect all chunks and return
+    // Check for done action (terminal) - return turns with all collected data
     if (action.action === "done") {
-      // Complete source review
-
       history.push({
         turnNumber: turn,
         action,
         observation: { success: true, data: { summary: action.summary } },
       });
 
-      // Collect all chunks from history for citation
-      const collectedChunks = extractChunksFromHistory(history);
+      // Extract chunk_ids from all turns' observation data
+      const chunkIds: number[] = [];
+      for (const t of history) {
+        if (t.observation.success && Array.isArray(t.observation.data)) {
+          for (const row of t.observation.data) {
+            const chunkId = row?.chunk_id ?? row?.id;
+            if (typeof chunkId === "number" && !chunkIds.includes(chunkId)) {
+              chunkIds.push(chunkId);
+            }
+          }
+        }
+      }
 
-      logger.info({ collectedChunks }, "collectedChunks in reactExector");
-      logger.info({ turnHistory: history }, "turnHistory in reactExector");
+      console.log("ChunkIDs", chunkIds);
+      console.log("History Turn", history);
 
-      const chunkIds = collectedChunks.map((c) => c.chunk_id);
+      // Fetch full  results for sources panel
       const searchResults = await getSearchResultsByChunkIds(
         chunkIds,
         requestId,
-      );
-
-      logger.info(
-        { result: searchResults },
-        "Search Results for collected chunks in done action",
       );
 
       emitStepEvent(requestId, {
@@ -920,8 +868,7 @@ export async function executeReActLoop(
         status: "running",
       });
 
-      // for sources
-
+      // Emit sources for the UI sources panel
       emitSources(requestId, {
         includeImages: false,
         sources: searchResults.map((s) => ({
@@ -932,6 +879,7 @@ export async function executeReActLoop(
           browserUrl: s.browser_url,
           textContent: s.text_content,
           textJson: s.text_json,
+          imagePath : s.image_path
         })),
       });
 
@@ -939,7 +887,7 @@ export async function executeReActLoop(
         {
           turns: turn,
           confidence: action.confidence,
-          chunkCount: collectedChunks.length,
+          chunkCount: chunkIds.length,
         },
         "ReAct loop completed - data collected",
       );
@@ -948,7 +896,6 @@ export async function executeReActLoop(
         success: true,
         summary: action.summary,
         confidence: action.confidence,
-        collectedChunks,
         turns: history,
         totalTimeMs: Date.now() - startTime,
       };
@@ -958,19 +905,11 @@ export async function executeReActLoop(
     let observation: ReActTurn["observation"];
 
     // Let the user know what the agent is thinking
-    if (turn === 1) {
+    if (turn > 1) {
       emitStepEvent(requestId, {
         stepType: "searching",
         stepId: currentPlanStep.id,
-        title: "Thinking...",
-        message: action.thought,
-        status: "running",
-      });
-    } else {
-      emitStepEvent(requestId, {
-        stepType: "searching",
-        stepId: currentPlanStep.id,
-        title: "Still searching...",
+        title: "Analyzing...",
         message: action.thought,
         status: "running",
       });
@@ -979,18 +918,22 @@ export async function executeReActLoop(
     switch (action.action) {
       case "sql":
         observation = await executeSqlAction(action, requestId);
+        console.log({ observation }, "Observation from SQL action");
         break;
 
       case "semantic":
         observation = await executeSemanticAction(action, requestId);
+        console.log({ observation }, "Observation from Semantic action");
         break;
 
       case "hybrid":
         observation = await executeHybridAction(action, requestId);
+        console.log({ observation }, "Observation from Hybrid action");
         break;
 
       case "think":
         observation = await executeThinkAction(action);
+        console.log({ observation }, "Observation from Think action");
         break;
 
       default:
@@ -1016,55 +959,61 @@ export async function executeReActLoop(
     }
   }
 
-  // Max turns reached without done action - still collect what we have
+  // Max turns reached without done action - still return what we have
   logger.warn(
     { turns: MAX_TURNS },
-    "ReAct loop hit max turns - collecting available data",
+    "ReAct loop hit max turns - returning available data",
   );
 
-  const collectedChunks = extractChunksFromHistory(history);
+  // Check if any turn has results
+  const hasResults = history.some(
+    (t) =>
+      t.observation.success &&
+      Array.isArray(t.observation.data) &&
+      t.observation.data.length > 0,
+  );
 
   return {
-    success: collectedChunks.length > 0,
-    collectedChunks,
+    success: hasResults,
     turns: history,
     totalTimeMs: Date.now() - startTime,
-    error:
-      collectedChunks.length > 0
-        ? undefined
-        : `Max turns (${MAX_TURNS}) reached without finding data`,
+    error: hasResults
+      ? undefined
+      : `Max turns (${MAX_TURNS}) reached without finding data`,
   };
 }
 
 /**
  * Format ReAct results for the final answer generator.
- * Returns collected chunks with their IDs so final LLM can cite them.
+ * Returns each turn's summary and results for final LLM context.
  */
 export function formatReActResultsForAnswer(result: ReActResult): string {
-  if (!result.success || result.collectedChunks.length === 0) {
+  if (!result.success || result.turns.length === 0) {
     return JSON.stringify({
       summary: result.summary || "No data found",
-      chunks: [],
+      turns: [],
       error: result.error,
     });
   }
 
-  // Format chunks for final LLM - include chunk_id for citations
-  const formattedChunks = result.collectedChunks.map((chunk) => ({
-    chunk_id: chunk.chunk_id,
-    captured_at: chunk.captured_at,
-    app_name: chunk.app_name,
-    window_title: chunk.window_title,
-    text_content: chunk.text_content?.slice(0, 500), // Truncate for context window
-    relevance_score: chunk.relevance_score,
+  const filteredResults = result.turns.filter(
+    (t) =>
+      t.observation.success &&
+      Array.isArray(t.observation.data) &&
+      t.observation.data.length > 0,
+  );
+
+  // Format each turn with its action thought and observation data
+  const formattedTurns = filteredResults.map((turn) => ({
+    summary: turn.action.summary,
+    data: turn.observation.data,
   }));
 
   return JSON.stringify(
     {
       summary: result.summary,
       confidence: result.confidence,
-      totalChunks: result.collectedChunks.length,
-      chunks: formattedChunks,
+      turns: formattedTurns,
     },
     null,
     2,

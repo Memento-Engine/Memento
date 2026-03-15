@@ -28,6 +28,7 @@ export async function clarifyAndRewrittenNode(
         prompt,
         requestId: state.requestId,
         spanName: "clarifyAndRewriteNode",
+        authHeaders: state.authHeaders,
       });
 
       logger.info("Result", { llmResult });

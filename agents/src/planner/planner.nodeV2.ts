@@ -125,6 +125,7 @@ export async function plannerNodeV2(
                 node: "planner",
                 attempt: attempt + 1,
               },
+              authHeaders: state.authHeaders,
             });
 
             const parsed = await SafeJsonParser.parseContent(

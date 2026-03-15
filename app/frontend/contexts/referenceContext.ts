@@ -18,7 +18,7 @@ export interface ReferenceMeta {
   window_width: number;
   window_height: number;
 
-  chunk_id: string;
+  chunk_id: number;
 
   image_path: string;
   text_json?: string;

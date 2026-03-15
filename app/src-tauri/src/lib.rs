@@ -1,8 +1,14 @@
-use std::{ fs, path::PathBuf, process::Command, time::{ Duration, Instant }, thread };
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 pub mod disk_usage;
 pub mod get_app_icon;
-
-
+pub mod get_device_id;
+use tauri_plugin_stronghold::Builder;
 
 #[tauri::command]
 fn start_daemon(is_dev: bool) -> Result<String, String> {
@@ -90,22 +96,23 @@ fn read_port_file() -> Option<String> {
     let dir_path = path.join("memento");
     let file_path = dir_path.join("memento-daemon.port");
 
-    std::fs
-        ::read_to_string(file_path)
+    std::fs::read_to_string(file_path)
         .ok()
         .map(|p| p.trim().to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder
-        ::default()
+    tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_fs::init()) // add this
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_keyring::init())
         .invoke_handler(tauri::generate_handler![
             start_daemon,
             stop_daemon,
             get_app_icon::get_app_icon_ipc,
+            get_device_id::generate_auth_headers
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,7 +5,7 @@ import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser } from "../utils/parser";
 import { ExecutorError, ErrorCode } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
-import { invokeRoleLlm } from "../llm/routing";
+import { invokeRoleLlm, AuthHeaders } from "../llm/routing";
 import { formatLocalTimestamp } from "../utils/time";
 
 /*
@@ -37,6 +37,7 @@ export async function buildSearchQuery(
   userGoal: string,
   requestId: string,
   maxRetries: number = 2,
+  authHeaders?: AuthHeaders,
 ): Promise<{ query: ResolvedQuery; llmCallsUsed: number }> {
   const logger = await createContextLogger(requestId, {
     node: "query_builder",
@@ -94,6 +95,7 @@ export async function buildSearchQuery(
               step_id: step.id,
               attempt: attempt + 1,
             },
+            authHeaders,
           });
 
           const parsed = await SafeJsonParser.parseContent(

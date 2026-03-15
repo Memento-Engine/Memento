@@ -169,6 +169,9 @@ export function useAppIcon(
   src: string;
   loading: boolean;
 } {
+
+
+  console.log('APPNAME', appName);
   const key = appName ? getIconCacheKey(appName, browserUrl) : "";
 
   // Initialise synchronously from cache to avoid single-frame flicker

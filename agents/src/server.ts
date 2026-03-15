@@ -165,6 +165,12 @@ async function startServer() {
 
               const { goal } = validationResult.data;
 
+              // Extract auth headers for credit tracking
+              const authHeaders = {
+                authorization: req.headers.authorization,
+                deviceId: req.headers["x-device-id"] as string | undefined,
+              };
+
               // Set response headers for streaming
               res.setHeader(
                 "Content-Type",
@@ -209,6 +215,7 @@ async function startServer() {
                     (await graph).invoke({
                       goal: goal as any,
                       requestId: requestId as any,
+                      authHeaders: authHeaders as any,
                       planAttempts: 0 as any,
                       replanAttempts: 0 as any,
                       llmCalls: 0 as any,

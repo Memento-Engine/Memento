@@ -25,6 +25,7 @@ export async function intentRouterNode(
       requestId: state.requestId,
       spanName: "agent.node.intent_router.llm",
       spanAttributes: { node: "intent_router" },
+      authHeaders: state.authHeaders,
     });
 
     const parsedContent = await SafeJsonParser.parseContent(

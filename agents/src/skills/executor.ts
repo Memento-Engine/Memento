@@ -188,6 +188,7 @@ async function executeReasoningStep(
       requestId: state.requestId,
       spanName: "skill.reasoning_step",
       spanAttributes: { step_id: step.id },
+      authHeaders: state.authHeaders,
     });
 
     const content = typeof response === "string" ? response : response.content;
@@ -461,6 +462,7 @@ export async function generateSkillPlan(
     prompt,
     requestId: state.requestId,
     spanName: "skill.generate_plan",
+    authHeaders: state.authHeaders,
   });
 
   const content = typeof response === "string" ? response : response.content;

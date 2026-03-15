@@ -3,17 +3,13 @@
 import { Button } from "@/components/ui/button";
 import { useMemo } from "react";
 import { useAppIcon } from "@/hooks/useAppIcon";
-
-interface SourceItem {
-  chunkId: string;
-  title?: string;
-  appName?: string;
-}
+import { SourceRecord } from "./types";
+import { BowArrow } from "lucide-react";
 
 interface SourcesButtonProps {
-  sourceList: SourceItem[];
+  sourceList: SourceRecord[];
   setReferenceMeta: (value: any) => void;
-  setSourceList: (value: SourceItem[]) => void;
+  setSourceList: (value: SourceRecord[]) => void;
 }
 
 export default function SourcesButton({
@@ -26,14 +22,19 @@ export default function SourcesButton({
   // remove duplicate app names
   const uniqueApps = useMemo(() => {
     const seen = new Set<string>();
-    const result: string[] = [];
+    const result: { appName: string; browserUrl?: string }[] = [];
 
     for (const s of sourceList) {
       if (!s.appName) continue;
 
-      if (!seen.has(s.appName)) {
-        seen.add(s.appName);
-        result.push(s.appName);
+      const key = s.appName.toLowerCase() + (s.browserUrl?.toLowerCase() ?? "");
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          appName: s.appName,
+          browserUrl: s.browserUrl,
+        });
       }
     }
 
@@ -54,7 +55,11 @@ export default function SourcesButton({
     >
       <div className="flex -space-x-2">
         {uniqueApps.map((app) => (
-          <SourceIcon key={app} appName={app} />
+          <SourceIcon
+            key={app.appName + app.browserUrl}
+            appName={app.appName}
+            browserUrl={app.browserUrl}
+          />
         ))}
       </div>
 
@@ -63,13 +68,11 @@ export default function SourcesButton({
   );
 }
 
-function SourceIcon({ appName }: { appName?: string }) {
-  const { src: iconSrc, loading } = useAppIcon(appName);
+function SourceIcon({ appName, browserUrl }: { appName?: string; browserUrl?: string }) {
+  const { src: iconSrc, loading } = useAppIcon(appName, browserUrl);
 
   if (loading || !iconSrc) {
-    return (
-      <div className="w-5 h-5 rounded-full border bg-muted" />
-    );
+    return <div className="w-5 h-5 rounded-full border bg-muted" />;
   }
 
   return (

@@ -46,7 +46,7 @@ export const normalizedOcrLayoutSchema = z.object({
 });
 
 export const sourceSchema = z.object({
-  chunkId: z.string().min(1),
+  chunkId: z.number(),
   appName: z.string().default(""),
   windowTitle: z.string().default(""),
   capturedAt: z.string().default(""),
@@ -69,3 +69,12 @@ export const sourcesPayloadSchema = z.object({
 
 export type SourceRecord = z.infer<typeof sourceSchema>;
 export type SourcesPayload = z.infer<typeof sourcesPayloadSchema>;
+
+
+
+
+
+
+
+
+// ----------------- Front End Api ---------------------------

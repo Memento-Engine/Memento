@@ -5,15 +5,18 @@ import { ThemeProvider } from "next-themes";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import ReferenceProvider from "@/providers/ReferenceProvider";
 import RightSidebar from "@/components/layout/Rightbar";
-import useReferenceContext from "@/hooks/useReferenceContext";
 import KeyboardProvider from "@/providers/KeyboardProvider";
 import ChatProvider from "@/providers/ChatProvider";
 import LeftSidebar from "@/components/layout/Sidebar";
 import { Toaster } from "sonner";
-import DraggableCaptureAgent from "@/components/DraggableCaptureAgent";
 import SystemHealthProvider from "@/providers/SystemHealthProvider";
+import CreditsProvider from "@/providers/CreditsProvider";
 
 import { Inter } from "next/font/google";
+import React, { useEffect } from "react";
+import useOnboarding from "@/hooks/useOnboarding";
+import OnboardingProvider from "@/providers/OnBoardingProvider";
+import { useRouter } from "next/navigation";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -29,52 +32,67 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.className} ${inter.variable} antialiased`}
+      suppressHydrationWarning
     >
       <body className="bg-background text-foreground">
-        <Toaster
-          position="bottom-right"
-          toastOptions={{
-            className: "rounded-lg border border-border bg-card text-sm font-medium text-card-foreground shadow-md",
-          }}
-        />
-
-        <SystemHealthProvider>
-          <ChatProvider>
-            <ReferenceProvider>
-              <LayoutContent>{children}</LayoutContent>
-              <DraggableCaptureAgent />
-            </ReferenceProvider>
-          </ChatProvider>
-        </SystemHealthProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+        >
+          <Toaster position="bottom-right" />
+          <LayoutRoot>{children}</LayoutRoot>
+        </ThemeProvider>
       </body>
     </html>
   );
 }
 
-function LayoutContent({ children }: { children: React.ReactNode }) {
-  const { referenceMeta } = useReferenceContext();
+function LayoutRoot({ children }: { children: React.ReactNode }) {
+  return (
+    <OnboardingProvider>
+      <LayoutInner>{children}</LayoutInner>
+    </OnboardingProvider>
+  );
+}
+
+function LayoutInner({ children }: { children: React.ReactNode }) {
+  const { isOnboardingComplete } = useOnboarding();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isOnboardingComplete) {
+      router.push("/onboarding");
+    } else {
+      router.push("/");
+    }
+  }, [isOnboardingComplete, router]);
+
+  if (!isOnboardingComplete) {
+    return <>{children}</>;
+  }
 
   return (
-    <SidebarProvider>
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="light"
-        enableSystem={false}
-      >
-        <KeyboardProvider />
-        <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background">
-          <LeftSidebar />
+    <SystemHealthProvider>
+      <CreditsProvider>
+        <ChatProvider>
+          <ReferenceProvider>
+            <SidebarProvider>
+              <KeyboardProvider />
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-            <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
-          </main>
+              <div className="flex h-dvh w-full overflow-hidden bg-background">
+                <LeftSidebar />
 
-          {/* Right side */}
-          {/* {referenceMeta && <RightSidebar />}
-           */}
-           <RightSidebar />
-        </div>
-      </ThemeProvider>
-    </SidebarProvider>
+                <main className="flex flex-1 flex-col overflow-hidden">
+                  <div className="flex-1 overflow-y-auto">{children}</div>
+                </main>
+
+                <RightSidebar />
+              </div>
+            </SidebarProvider>
+          </ReferenceProvider>
+        </ChatProvider>
+      </CreditsProvider>
+    </SystemHealthProvider>
   );
 }

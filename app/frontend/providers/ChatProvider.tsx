@@ -9,6 +9,8 @@ import { useStreaming } from "@/hooks/useStreaming";
 import { createUserMessage, truncateBeforeMessage } from "@/lib/messageUtils";
 import { notify } from "@/lib/notify";
 import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
+import { USE_MOCK_DATA, getMockResponse, MOCK_THINKING_STEPS } from "@/mock";
+import useOnboarding from "@/hooks/useOnboarding";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -20,6 +22,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
   const [searchQueries, setSearchQueries] = useState<SearchQueryData[]>([]);
   const [sourceReview, setSourceReview] = useState<SourceReviewData | null>(null);
+  
+  const { setIsOnboardingComplete } = useOnboarding();
   
   // Use ref to avoid stale closure issue in callbacks
   const assistantStatusRef = useRef<AssistantStatus>(assistantStatus);
@@ -91,11 +95,82 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         setMessages((prev) => [...prev, createUserMessage(message)]);
       }
 
+      // ========== MOCK MODE ==========
+      if (USE_MOCK_DATA) {
+        console.log("[MOCK MODE] Simulating AI response...");
+        
+        // Get mock response based on user message
+        const mockResponse = getMockResponse(message);
+        if (!mockResponse) {
+          transitionStatus("Error");
+          return;
+        }
+
+        // Extract thinking steps from mock response
+        const thinkingParts = mockResponse.parts.filter(
+          (p) => p.type === "data-thinking"
+        );
+
+        // Simulate thinking phase - stream each thinking step with delay
+        transitionStatus("Thinking");
+        
+        for (let i = 0; i < thinkingParts.length; i++) {
+          if (abortController.signal.aborted) return;
+          
+          const part = thinkingParts[i];
+          if (part.type === "data-thinking") {
+            // Add thinking step progressively
+            setStepUpdates((prev) => [...prev, part.data as ThinkingStep]);
+            
+            // Wait based on the step's duration (scaled down for demo)
+            const duration = (part.data as ThinkingStep).duration ?? 500;
+            await new Promise((resolve) => setTimeout(resolve, Math.min(duration, 800)));
+          }
+        }
+
+        // Small pause before streaming text
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        
+        // Transition to streaming
+        transitionStatus("Streaming");
+        
+        // Add the complete message with all parts
+        setMessages((prev) => [...prev, mockResponse]);
+        
+        // Small delay to let UI render
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        
+        // Transition to finished
+        transitionStatus("Finished");
+        
+        console.log("[MOCK MODE] Response complete");
+        return;
+      }
+      // ========== END MOCK MODE ==========
+
       await streamMessage(message, abortController.signal);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
         console.log("Streaming aborted by user");
         return;
+      }
+
+      // Handle auth errors - redirect to onboarding
+      if (err instanceof Error) {
+        if (
+          err.message === "DEVICE_NOT_REGISTERED" ||
+          err.message === "AUTH_TOKEN_MISSING" ||
+          err.message === "AUTH_TOKEN_EXPIRED"
+        ) {
+          console.error("Auth error - redirecting to onboarding:", err.message);
+          notify.error("Please complete device registration");
+          // Clear local auth state and redirect
+          localStorage.removeItem("deviceId");
+          document.cookie = "accessToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          setIsOnboardingComplete(false);
+          router.push("/onboarding");
+          return;
+        }
       }
 
       console.error("Error while sending message:", err);
@@ -105,7 +180,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         activeRequestRef.current = null;
       }
     }
-  }, [abort, activeRequestRef, router, transitionStatus, streamMessage]);
+  }, [abort, activeRequestRef, router, transitionStatus, streamMessage, setIsOnboardingComplete]);
 
   const rewrite = useCallback(async (messageId: string): Promise<void> => {
     const assistantIndex = messages.findIndex(

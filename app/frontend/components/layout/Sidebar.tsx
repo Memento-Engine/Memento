@@ -36,6 +36,8 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Separator } from "../ui/separator";
+import { MementoLogo } from "../Logo";
+import { PremiumCredits } from "../PremiumCredits";
 
 const techTopics: string[] = [
   "What are microservices?",
@@ -73,13 +75,7 @@ function LeftSidebar(): React.ReactElement {
             onClick={toggleSidebar}
             className="cursor-pointer text-base flex shrink-0 items-center"
           >
-            <Image
-              src="/blackLogo.svg"
-              alt="logo"
-              className="dark:invert shrink-0 text-muted-foreground/80"
-              width={40}
-              height={40}
-            />
+            <MementoLogo size={30} className="text-zinc-600" />
           </span>
           {!isCollapsed && (
             <PanelLeft
@@ -99,7 +95,10 @@ function LeftSidebar(): React.ReactElement {
 
       <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4 group-data-[collapsible=icon]:px-2">
         <SidebarMenu>
-          <SidebarMenuItem onClick={goToHome} className="group/menuitem list-none">
+          <SidebarMenuItem
+            onClick={goToHome}
+            className="group/menuitem list-none"
+          >
             <SidebarMenuButton
               variant="default"
               className="
@@ -161,30 +160,44 @@ function LeftSidebar(): React.ReactElement {
                   group-data-[collapsible=icon]:px-0
                   "
                 >
-                  <span className="truncate group-data-[collapsible=icon]:hidden">{topic}</span>
+                  <span className="truncate group-data-[collapsible=icon]:hidden">
+                    {topic}
+                  </span>
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden" />
+                      <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden" />
                     </DropdownMenuTrigger>
 
                     <DropdownMenuContent
                       align="start"
                       className="w-48 p-2 rounded-2xl border shadow-lg"
                     >
-                      <DropdownMenuItem className={cn("flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition")}>
+                      <DropdownMenuItem
+                        className={cn(
+                          "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
+                        )}
+                      >
                         <Share className="h-4 w-4 shrink-0" />
                         <span className="text-sm">Share</span>
                       </DropdownMenuItem>
 
-                      <DropdownMenuItem className={cn("flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition")}>
+                      <DropdownMenuItem
+                        className={cn(
+                          "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
+                        )}
+                      >
                         <Edit className="h-4 w-4 shrink-0" />
                         <span className="text-sm">Rename</span>
                       </DropdownMenuItem>
 
                       <Separator className="my-2" />
 
-                      <DropdownMenuItem className={cn("flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition")}>
+                      <DropdownMenuItem
+                        className={cn(
+                          "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
+                        )}
+                      >
                         <Archive className="h-4 w-4 shrink-0" />
                         <span className="text-sm">Archive</span>
                       </DropdownMenuItem>
@@ -202,6 +215,11 @@ function LeftSidebar(): React.ReactElement {
         </div>
       </SidebarContent>
 
+      {/* Premium Credits Display */}
+      <div className={cn("px-3 pb-2", isCollapsed && "px-2")}>
+        <PremiumCredits collapsed={isCollapsed} />
+      </div>
+
       <SidebarFooter
         onClick={(): void => {
           setSettingsOpen(!isSettingsOpen);
@@ -209,7 +227,7 @@ function LeftSidebar(): React.ReactElement {
             setMobileOpen(!isMobileOpen);
           }
         }}
-        className={cn("p-3", isCollapsed && "px-2")}
+        className={cn("p-3 pt-0", isCollapsed && "px-2")}
       >
         <SidebarMenu>
           <SidebarMenuItem>

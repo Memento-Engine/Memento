@@ -1,7 +1,23 @@
 import { z } from "zod";
-import { Tool, ToolContext, ToolResult, toolSuccess, toolFailure } from "../types/tools";
-import { SqlExecuteInputSchema, SemanticSearchInputSchema, SqlExecuteInput, SemanticSearchInput } from "./types";
-import { executeSql, formatResultsAsJson, formatResultsAsMarkdown, validateSql } from "./sqlExecutor";
+import {
+  Tool,
+  ToolContext,
+  ToolResult,
+  toolSuccess,
+  toolFailure,
+} from "../types/tools";
+import {
+  SqlExecuteInputSchema,
+  SemanticSearchInputSchema,
+  SqlExecuteInput,
+  SemanticSearchInput,
+} from "./types";
+import {
+  executeSql,
+  formatResultsAsJson,
+  formatResultsAsMarkdown,
+  validateSql,
+} from "./sqlExecutor";
 import { getConfig } from "../config/config";
 import { getLogger } from "../utils/logger";
 import { runWithSpan } from "../telemetry/tracing";
@@ -14,10 +30,14 @@ import axios from "axios";
  */
 export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
   name = "sql_execute";
-  description = "Execute a read-only SQL query against the screen activity database. Only SELECT queries allowed.";
+  description =
+    "Execute a read-only SQL query against the screen activity database. Only SELECT queries allowed.";
   inputSchema = SqlExecuteInputSchema;
 
-  async execute(input: SqlExecuteInput, context: ToolContext): Promise<ToolResult<any>> {
+  async execute(
+    input: SqlExecuteInput,
+    context: ToolContext,
+  ): Promise<ToolResult<any>> {
     return runWithSpan(
       "agent.tool.sql_execute",
       {
@@ -26,7 +46,7 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
       },
       async () => {
         const logger = await getLogger();
-        
+
         // Pre-validate
         const validation = validateSql(input.sql);
         if (!validation.valid) {
@@ -34,7 +54,10 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
           return toolFailure(`Invalid SQL: ${validation.error}`);
         }
 
-        logger.info({ stepId: context.stepId, sqlPreview: input.sql.slice(0, 100) }, "Executing SQL query");
+        logger.info(
+          { stepId: context.stepId, sqlPreview: input.sql.slice(0, 100) },
+          "Executing SQL query",
+        );
 
         const result = await executeSql(input);
 
@@ -50,7 +73,7 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
           executionTimeMs: result.executionTimeMs,
           columns: result.columns,
         });
-      }
+      },
     );
   }
 }
@@ -61,10 +84,14 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
  */
 export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
   name = "semantic_search";
-  description = "Search screen activity by meaning using semantic embeddings. Good for conceptual queries.";
+  description =
+    "Search screen activity by meaning using semantic embeddings. Good for conceptual queries.";
   inputSchema = SemanticSearchInputSchema;
 
-  async execute(input: SemanticSearchInput, context: ToolContext): Promise<ToolResult<any>> {
+  async execute(
+    input: SemanticSearchInput,
+    context: ToolContext,
+  ): Promise<ToolResult<any>> {
     return runWithSpan(
       "agent.tool.semantic_search",
       {
@@ -76,7 +103,10 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
         const logger = await getLogger();
         const config = await getConfig();
 
-        logger.info({ stepId: context.stepId, query: input.query, limit: input.limit }, "Executing semantic search");
+        logger.info(
+          { stepId: context.stepId, query: input.query, limit: input.limit },
+          "Executing semantic search",
+        );
 
         try {
           // Extract base URL from searchToolUrl
@@ -96,36 +126,49 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
               headers: {
                 "Content-Type": "application/json",
               },
-            }
+            },
           );
 
           const data = response.data;
-          
+
+          logger.info({ data }, "Full response from execute semantic search");
+
           if (data.success === false) {
             return toolFailure(data.error || "Semantic search failed");
           }
 
-          const results = Array.isArray(data.results) ? data.results : (Array.isArray(data) ? data : []);
+          const results = Array.isArray(data.results)
+            ? data.results
+            : Array.isArray(data)
+              ? data
+              : [];
 
-          logger.info({ resultCount: results.length }, "Semantic search completed");
+          logger.info(
+            { resultCount: results.length },
+            "Semantic search completed",
+          );
 
-          return toolSuccess({
-            success: true,
-            data: results,
-            metadata: {
-              resultCount: results.length,
-              query: input.query,
+          return toolSuccess(
+            {
+              success: true,
+              data: results,
+              metadata: {
+                resultCount: results.length,
+                query: input.query,
+              },
             },
-          }, {
-            source: "semantic_search",
-            resultCount: results.length,
-          });
+            {
+              source: "semantic_search",
+              resultCount: results.length,
+            },
+          );
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           logger.error({ error: errorMessage }, "Semantic search failed");
           return toolFailure(`Semantic search error: ${errorMessage}`);
         }
-      }
+      },
     );
   }
 }
@@ -134,16 +177,22 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
  * Hybrid Search Tool
  * Combines FTS and semantic search for optimal results.
  */
-export class HybridSearchTool implements Tool<SemanticSearchInput & { keywords?: string[] }, any> {
+export class HybridSearchTool implements Tool<
+  SemanticSearchInput & { keywords?: string[] },
+  any
+> {
   name = "hybrid_search";
   description = "Combined keyword and semantic search. Best for most queries.";
   inputSchema = SemanticSearchInputSchema.extend({
-    keywords: z.array(z.string()).optional().describe("Keywords for FTS search"),
+    keywords: z
+      .array(z.string())
+      .optional()
+      .describe("Keywords for FTS search"),
   });
 
   async execute(
     input: SemanticSearchInput & { keywords?: string[] },
-    context: ToolContext
+    context: ToolContext,
   ): Promise<ToolResult<any>> {
     return runWithSpan(
       "agent.tool.hybrid_search",
@@ -155,7 +204,14 @@ export class HybridSearchTool implements Tool<SemanticSearchInput & { keywords?:
         const logger = await getLogger();
         const config = await getConfig();
 
-        logger.info({ stepId: context.stepId, query: input.query, keywords: input.keywords }, "Executing hybrid search");
+        logger.info(
+          {
+            stepId: context.stepId,
+            query: input.query,
+            keywords: input.keywords,
+          },
+          "Executing hybrid search",
+        );
 
         try {
           const searchToolUrl = config.backend.searchToolUrl;
@@ -175,7 +231,7 @@ export class HybridSearchTool implements Tool<SemanticSearchInput & { keywords?:
               headers: {
                 "Content-Type": "application/json",
               },
-            }
+            },
           );
 
           const data = response.data;
@@ -184,26 +240,34 @@ export class HybridSearchTool implements Tool<SemanticSearchInput & { keywords?:
             return toolFailure(data.error || "Hybrid search failed");
           }
 
-          const results = Array.isArray(data.results) ? data.results : (Array.isArray(data) ? data : []);
+          const results = Array.isArray(data.results)
+            ? data.results
+            : Array.isArray(data)
+              ? data
+              : [];
 
-          return toolSuccess({
-            success: true,
-            data: results,
-            metadata: {
-              resultCount: results.length,
-              query: input.query,
-              keywords: input.keywords,
+          return toolSuccess(
+            {
+              success: true,
+              data: results,
+              metadata: {
+                resultCount: results.length,
+                query: input.query,
+                keywords: input.keywords,
+              },
             },
-          }, {
-            source: "hybrid_search",
-            resultCount: results.length,
-          });
+            {
+              source: "hybrid_search",
+              resultCount: results.length,
+            },
+          );
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           logger.error({ error: errorMessage }, "Hybrid search failed");
           return toolFailure(`Hybrid search error: ${errorMessage}`);
         }
-      }
+      },
     );
   }
 }

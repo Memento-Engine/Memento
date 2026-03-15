@@ -156,6 +156,8 @@ async function executeSearchStep(
     deps,
     step.stepGoal ?? step.intent,
     state.requestId,
+    2, // maxRetries
+    state.authHeaders,
   );
 
   query.includeTextLayout = false; // default off, can be toggled
@@ -236,7 +238,7 @@ async function executeSearchStep(
 
   // 4. Extract expected output
   const { data: extracted, llmCallsUsed: extractorCalls } =
-    await extractStepOutput(step, dbResults, deps, state.requestId);
+    await extractStepOutput(step, dbResults, deps, state.requestId, state.authHeaders);
 
   return {
     result: extracted,
@@ -288,6 +290,7 @@ async function executeReasonStep(
         requestId: state.requestId,
         spanName: "agent.executor.reason_step.llm",
         spanAttributes: { step_id: step.id },
+        authHeaders: state.authHeaders,
       });
 
       const parsed = await SafeJsonParser.parseContent(
@@ -407,14 +410,12 @@ export async function executorNodeV2(
                 }
               }
 
-            
-
               try {
                 const stepResult = await reactExecutorNode(state, step);
 
                 logger.info("Got Result from Execution Node", {
                   stepGoal: step.stepGoal,
-                  resultSummary: stepResult.stepResults?.react_summary,
+                  stepResult: stepResult.stepResults,
                 });
 
                 // Store chunks and data - final LLM will synthesize answer

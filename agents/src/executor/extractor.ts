@@ -4,7 +4,7 @@ import { createContextLogger } from "../utils/logger";
 import { SafeJsonParser } from "../utils/parser";
 import { ExecutorError, ErrorCode } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
-import { invokeRoleLlm } from "../llm/routing";
+import { invokeRoleLlm, AuthHeaders } from "../llm/routing";
 import { DependencyData } from "./queryBuilder";
 
 /*
@@ -111,6 +111,7 @@ export async function extractStepOutput(
   rawResults: unknown,
   dependencies: DependencyData[],
   requestId: string,
+  authHeaders?: AuthHeaders,
 ): Promise<{ data: unknown; llmCallsUsed: number }> {
   const logger = await createContextLogger(requestId, {
     node: "extractor",
@@ -186,6 +187,7 @@ export async function extractStepOutput(
           step_id: step.id,
           output_type: expectedType,
         },
+        authHeaders,
       });
 
       const parsed = await SafeJsonParser.parseContent(

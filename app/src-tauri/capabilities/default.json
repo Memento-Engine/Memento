@@ -5,13 +5,15 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    {
-      "identifier": "fs:allow-read-text-file",
-      "allow": [
-        {
-          "path": "$LOCALDATA/memento/**"
-        }
-      ]
-    }
+    "os:default",
+    "os:allow-hostname",
+    
+    "keyring:default",
+    "keyring:allow-set-password",
+    "keyring:allow-get-password",
+    "keyring:allow-delete-password",
+
+    "fs:allow-localdata-read-recursive",
+    "fs:allow-localdata-write-recursive"
   ]
 }

@@ -53,15 +53,16 @@ function MessageItem({
       assistantStatus !== "Streaming");
 
   // Extract sources from message parts
-  const sourceMap = new Map<string, SourceRecord>();
+  const sourceMap = new Map<number, SourceRecord>();
   let includeImages = false;
   for (const part of message.parts) {
     if (part.type === "data-sources") {
       includeImages = !!part.data?.includeImages;
       const sources = part.data?.sources ?? [];
       for (const source of sources) {
-        if (!sourceMap.has(source.chunkId)) {
-          sourceMap.set(source.chunkId, source);
+        const chunkId = source.chunkId;
+        if (!sourceMap.has(chunkId)) {
+          sourceMap.set(chunkId, source);
         }
       }
     }

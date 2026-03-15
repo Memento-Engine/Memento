@@ -42,19 +42,13 @@ export async function reactExecutorNode(
       "Starting ReAct execution",
     );
 
-    emitStepEvent(state.requestId, {
-      stepType: "searching",
-      stepId: currentStep.id,
-      title: "Searching for information...",
-      status: "running",
-    });
-
     try {
       const depContext = {}; // all deps of current step
       const result = await executeReActLoop(
         currentStep,
         state.requestId,
         depContext,
+        state.authHeaders,
       );
 
       const executionTimeMs = Date.now() - startTime;
@@ -64,25 +58,21 @@ export async function reactExecutorNode(
           turns: result.turns.length,
           executionTimeMs,
           confidence: result.confidence,
-          chunksCollected: result.collectedChunks.length,
         },
         "ReAct execution complete",
       );
 
-      // Use collectedChunks from result (already deduplicated and sorted)
+      // Format results - each turn has summary and data
       const formattedData = formatReActResultsForAnswer(result);
 
-      if (result.success && result.collectedChunks.length > 0) {
+      console.log("FormattedData", formattedData);
+      if (result.success) {
         // ReAct collected data - pass to final LLM for synthesis
         return {
           stepResults: {
-            // No answer here - final LLM will synthesize
             react_summary: result.summary,
             react_data: formattedData,
-            react_turns: result.turns,
             react_confidence: result.confidence,
-            // Chunks with IDs for citation
-            react_chunks: result.collectedChunks,
           },
           llmCalls: (state.llmCalls ?? 0) + result.turns.length,
           shouldReplan: false,
@@ -96,7 +86,6 @@ export async function reactExecutorNode(
             react_data: formattedData,
             react_turns: result.turns,
             react_error: result.error,
-            react_chunks: [],
           },
           llmCalls: (state.llmCalls ?? 0) + result.turns.length,
           shouldReplan: false, // Don't replan, let finalAnswer handle it

@@ -47,3 +47,47 @@ export type UsageRecord = {
   total_tokens: number;
   timestamp: number;
 };
+
+import { StatusCodes } from "http-status-codes";
+
+// Unified Responses for entire gateway can be used for better error handling and extensibility in the future
+export type GatewayResponse<T> = {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: StatusCodes;
+    message: string;
+  };
+};
+
+// ------------- Shared Types Between Frontend and Backend --------------
+import { z } from "zod";
+
+export const deviceMetaDataSchema = z.object({
+  os: z.string(),
+  machineHostName: z.string(),
+  appVersion: z.string(),
+});
+export const registerDeviceSchema = z.object({
+  deviceMetaData: deviceMetaDataSchema,
+  deviceId: z.string().min(1),
+  timestamp: z.string().min(1),
+  signature: z.string().min(1),
+});
+
+
+export const registerDeviceResponseSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string(),
+});
+
+
+
+export type UserTier  = "free" | "premium";
+export type UserRole = "anonymous" | "logged";
+
+
+
+export type RegisterDeviceResponse = z.infer<typeof registerDeviceResponseSchema>;
+export type RegisterDeviceRequest = z.infer<typeof registerDeviceSchema>;
+export type DeviceMetaData = z.infer<typeof deviceMetaDataSchema>;

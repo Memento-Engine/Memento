@@ -4,12 +4,28 @@ import { runWithSpan } from "../telemetry/tracing";
 
 export type LlmRole =
   | "clarifyAndRewriter"
-  
   | "router"
   | "planner"
   | "executor"
   | "query_builder"
   | "final";
+
+// Roles that require premium credits (more reasoning power)
+const PREMIUM_ROLES: Set<LlmRole> = new Set(["planner", "executor", "final"]);
+
+// Roles that use smaller/free models (lightweight tasks)
+const FREE_ROLES: Set<LlmRole> = new Set([
+  "clarifyAndRewriter",
+  "router",
+  "query_builder",
+]);
+
+/**
+ * Check if a role should use premium credits
+ */
+export function shouldUsePremiumCredits(role: LlmRole): boolean {
+  return PREMIUM_ROLES.has(role);
+}
 
 type SpanAttributes = Record<string, string | number | boolean | undefined>;
 
@@ -18,12 +34,21 @@ type TokenUsage = {
   completionTokens?: number;
 };
 
+/**
+ * Auth headers to forward to AI gateway for credit tracking
+ */
+export type AuthHeaders = {
+  authorization?: string;
+  deviceId?: string;
+};
+
 type InvokeRoleParams = {
   role: LlmRole;
   prompt: any;
   requestId: string;
   spanName: string;
   spanAttributes?: SpanAttributes;
+  authHeaders?: AuthHeaders;
 };
 
 type InvokeStreamingParams = InvokeRoleParams & {
@@ -125,6 +150,7 @@ export async function invokeRoleLlm({
   requestId,
   spanName,
   spanAttributes = {},
+  authHeaders = {},
 }: InvokeRoleParams): Promise<{
   response: any;
   modelName: string;
@@ -132,6 +158,7 @@ export async function invokeRoleLlm({
 }> {
   const config = await getConfig();
   const messages = await toGatewayMessages(prompt);
+  const usePremiumCredits = shouldUsePremiumCredits(role);
 
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
@@ -141,6 +168,7 @@ export async function invokeRoleLlm({
     error_type: "none",
     prompt_tokens: undefined,
     completion_tokens: undefined,
+    use_premium_credits: usePremiumCredits,
   };
 
   try {
@@ -152,19 +180,29 @@ export async function invokeRoleLlm({
       );
 
       try {
+        // Build headers with auth info
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (authHeaders.authorization) {
+          headers["Authorization"] = authHeaders.authorization;
+        }
+        if (authHeaders.deviceId) {
+          headers["X-Device-ID"] = authHeaders.deviceId;
+        }
+
         const gatewayResponse = await fetch(
           `${config.aiGateway.baseUrl}/v1/chat`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers,
             body: JSON.stringify({
               messages,
               temperature: 0,
               max_tokens: 65536,
               user_id: config.aiGateway.userId,
               role,
+              use_premium_credits: usePremiumCredits,
             }),
             signal: controller.signal,
           },
@@ -185,6 +223,7 @@ export async function invokeRoleLlm({
           content: result.content,
           attempts: result.attempts,
           usage,
+          usePremiumCredits,
         });
         return result;
       } finally {
@@ -229,6 +268,7 @@ export async function invokeRoleLlmStreaming({
   spanName,
   spanAttributes = {},
   onChunk,
+  authHeaders = {},
 }: InvokeStreamingParams): Promise<{
   response: any;
   modelName: string;
@@ -236,6 +276,7 @@ export async function invokeRoleLlmStreaming({
 }> {
   const config = await getConfig();
   const messages = await toGatewayMessages(prompt);
+  const usePremiumCredits = shouldUsePremiumCredits(role);
 
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
@@ -244,6 +285,7 @@ export async function invokeRoleLlmStreaming({
     retry_count: 0,
     error_type: "none",
     streaming: true,
+    use_premium_credits: usePremiumCredits,
   };
 
   try {
@@ -255,19 +297,29 @@ export async function invokeRoleLlmStreaming({
       );
 
       try {
+        // Build headers with auth info
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (authHeaders.authorization) {
+          headers["Authorization"] = authHeaders.authorization;
+        }
+        if (authHeaders.deviceId) {
+          headers["X-Device-ID"] = authHeaders.deviceId;
+        }
+
         const gatewayResponse = await fetch(
           `${config.aiGateway.baseUrl}/v1/chat/stream`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers,
             body: JSON.stringify({
               messages,
               temperature: 0,
               max_tokens: 65536,
               user_id: config.aiGateway.userId,
               role,
+              use_premium_credits: usePremiumCredits,
             }),
             signal: controller.signal,
           },

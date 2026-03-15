@@ -1,11 +1,11 @@
 use chrono;
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::io;
-use std::path::{ Path, PathBuf };
-use sysinfo::{ DiskExt, System, SystemExt };
-use tracing::{ info };
+use std::path::{Path, PathBuf};
+use sysinfo::{DiskExt, System, SystemExt};
+use tracing::info;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DiskUsage {
@@ -67,7 +67,11 @@ pub fn get_disk_usage() {
     // Calculate database size (db.sqlite and related files)
     info!("Calculating database size");
     let mut database_size: u64 = 0;
-    for file_name in ["search_engine.sqlite", "search_engine.sqlite-wal", "search_engine.sqlite-shm"] {
+    for file_name in [
+        "search_engine.sqlite",
+        "search_engine.sqlite-wal",
+        "search_engine.sqlite-shm",
+    ] {
         let db_path = memento_dir.join(file_name);
         if db_path.exists() {
             if let Ok(metadata) = fs::metadata(&db_path) {

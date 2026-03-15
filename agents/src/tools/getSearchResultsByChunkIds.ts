@@ -14,11 +14,6 @@ export async function getSearchResultsByChunkIds(
     return [];
   }
 
-  logger.info(
-    { chunkCount: chunkIds.length, requestId },
-    "Fetching full search results for chunks",
-  );
-
   try {
     const response = await axios.post<StepSearchResult[]>(
       config.backend.searchResultsByChunkIdsUrl,

@@ -23,6 +23,37 @@ import {
 
 const BASE_URL = "http://localhost:4173/api/v1";
 
+// Helper to get auth headers from cookies and localStorage
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  // Get access token from cookie
+  if (typeof document !== "undefined") {
+    const cookies = document.cookie.split(";");
+    const accessTokenCookie = cookies.find((c) =>
+      c.trim().startsWith("accessToken=")
+    );
+    if (accessTokenCookie) {
+      const accessToken = accessTokenCookie.split("=")[1]?.trim();
+      if (accessToken) {
+        headers["Authorization"] = `Bearer ${accessToken}`;
+      }
+    }
+  }
+
+  // Get device ID from localStorage
+  if (typeof localStorage !== "undefined") {
+    const deviceId = localStorage.getItem("deviceId");
+    if (deviceId) {
+      headers["X-Device-ID"] = deviceId;
+    }
+  }
+
+  return headers;
+}
+
 interface StreamHandlerCallbacks {
   setMessages: React.Dispatch<React.SetStateAction<MementoUIMessage[]>>;
   setStepUpdates: React.Dispatch<React.SetStateAction<ThinkingStep[]>>;
@@ -270,14 +301,28 @@ export function useStreaming(
   // Main streaming function
   const streamMessage = useCallback(
     async (goal: string, signal: AbortSignal) => {
+      const headers = getAuthHeaders();
+      
+      // Validate required auth headers
+      if (!headers["X-Device-ID"]) {
+        throw new Error("DEVICE_NOT_REGISTERED");
+      }
+      if (!headers["Authorization"]) {
+        throw new Error("AUTH_TOKEN_MISSING");
+      }
+      
       const res = await fetch(`${BASE_URL}/agent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         signal,
         body: JSON.stringify({ goal }),
       });
 
       if (!res.ok) {
+        // Handle 401 specifically - may need to re-authenticate
+        if (res.status === 401) {
+          throw new Error("AUTH_TOKEN_EXPIRED");
+        }
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
 

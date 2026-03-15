@@ -240,9 +240,7 @@ export function StepThinking({ steps }: Props) {
                                           app_name: result.app_name,
                                           browser_url: result.browser_url,
                                           captured_at: result.captured_at,
-                                          chunk_id: String(
-                                            result.chunk_id ?? `chunk_${i}`,
-                                          ),
+                                          chunk_id: result.chunk_id,
                                           image_path: result.image_path,
                                           text_content: "",
                                           text_json: undefined,

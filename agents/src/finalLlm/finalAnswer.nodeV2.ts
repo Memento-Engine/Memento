@@ -83,11 +83,19 @@ function flattenSearchRows(
   for (const val of Object.values(stepResults)) {
     if (!val || typeof val !== "object") continue;
 
-    // Check for react_chunks (new format from ReAct executor)
-    if (Array.isArray(val.react_chunks)) {
-      for (const chunk of val.react_chunks) {
-        if (chunk && typeof chunk === "object" && "chunk_id" in chunk) {
-          rows.push(chunk);
+    // Check for react_turns (new format from ReAct executor)
+    // Each turn has observation.data containing the search results
+    if (Array.isArray(val.react_turns)) {
+      for (const turn of val.react_turns) {
+        if (
+          turn?.observation?.success &&
+          Array.isArray(turn.observation.data)
+        ) {
+          for (const row of turn.observation.data) {
+            if (row && typeof row === "object" && "chunk_id" in row) {
+              rows.push(row);
+            }
+          }
         }
       }
     }
@@ -154,7 +162,15 @@ export async function finalAnswerNodeV2(
 
       const { stepResults, goal, hasSearchResults } = state;
       const config = await getConfig();
+
+
+      console.log(JSON.stringify(stepResults, null, 2), "Step results in final answer node");
+
+
       const retrievedSources = buildRetrievedSources(stepResults); // We don't need this because llm dynamically calls sql what fields it wants. we simply passdown the stepresults to promp.
+
+      console.log("Retrieved Sources", retrievedSources);
+
 
       // ── Budget guard ───────────────────────────────────────
       if ((state.llmCalls ?? 0) >= config.agent.maxLlmCalls) {
@@ -208,7 +224,7 @@ export async function finalAnswerNodeV2(
 
         const prompt = await finalAnswerPrompt.invoke({
           goal: state.rewrittenQuery ?? state.goal,
-          retrievedContext: JSON.stringify(llmContext, null, 2),
+          retrievedContext: JSON.stringify(stepResults, null, 2),
           citationInstruction,
         });
 
@@ -232,6 +248,7 @@ export async function finalAnswerNodeV2(
             // Emit each chunk as it arrives for real-time streaming
             emitTextChunk(chunk, state.requestId);
           },
+          authHeaders: state.authHeaders,
         });
 
         // Extract plain text (already accumulated from streaming)
