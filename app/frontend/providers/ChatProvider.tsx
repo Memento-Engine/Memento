@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import * as Sentry from "@sentry/nextjs";
 
 import { MementoUIMessage, ThinkingStep } from "@/components/types";
 import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContext";
@@ -33,6 +34,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   }, [assistantStatus]);
   
   const router = useRouter();
+  const pathname = usePathname();
 
   // Status transition with validation (uses ref to get current status)
   const transitionStatus = useCallback((nextState: AssistantStatus): boolean => {
@@ -80,7 +82,9 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     const abortController = new AbortController();
     activeRequestRef.current = abortController;
 
-    router.push("/chat/123");
+    if (pathname !== "/chat/123") {
+      router.push("/chat/123", { scroll: false });
+    }
     console.log("Message from chat input", message);
 
     transitionStatus("LocalPending");
@@ -168,13 +172,23 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       }
 
       console.error("Error while sending message:", err);
+      if (process.env.NODE_ENV === "production") {
+        Sentry.withScope((scope) => {
+          scope.setTag("environment", "frontend");
+          scope.setTag("service", "ui");
+          scope.setTag("area", "chat-send-message");
+          scope.setExtra("isRewrite", isRewrite);
+          scope.setExtra("goalLength", message.length);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)));
+        });
+      }
       transitionStatus("Error");
     } finally {
       if (activeRequestRef.current === abortController) {
         activeRequestRef.current = null;
       }
     }
-  }, [abort, activeRequestRef, router, transitionStatus, streamMessage, setIsOnboardingComplete]);
+  }, [abort, activeRequestRef, pathname, router, transitionStatus, streamMessage, setIsOnboardingComplete]);
 
   const rewrite = useCallback(async (messageId: string): Promise<void> => {
     const assistantIndex = messages.findIndex(

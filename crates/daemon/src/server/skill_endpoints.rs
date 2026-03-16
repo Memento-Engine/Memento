@@ -96,7 +96,15 @@ pub async fn search_results_by_chunk_ids(
             (StatusCode::OK, Json(chunk_result)).into_response()
         }
         Err(e) => {
-            println!("Error retrieving search results: {:?}", e);
+            error!("Error retrieving search results: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "search_results_by_chunk_ids");
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("search_results_by_chunk_ids failed", sentry::Level::Error);
+            });
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve search results").into_response()
         }
     }
@@ -255,6 +263,14 @@ pub async fn sql_execute(
         }
         Err(e) => {
             error!("SQL execution failed: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "sql_execute");
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("sql_execute failed", sentry::Level::Error);
+            });
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 Json(SqlExecuteResponse {
@@ -329,6 +345,15 @@ pub async fn semantic_search(
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "semantic_search");
+                scope.set_extra("stage", "embedding".into());
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("semantic_search embedding failed", sentry::Level::Error);
+            });
 
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -433,6 +458,15 @@ pub async fn semantic_search(
         Ok(r) => r,
         Err(e) => {
             error!("Semantic search failed: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "semantic_search");
+                scope.set_extra("stage", "database".into());
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("semantic_search database failed", sentry::Level::Error);
+            });
 
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -528,6 +562,15 @@ pub async fn hybrid_search(
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "hybrid_search");
+                scope.set_extra("stage", "embedding".into());
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("hybrid_search embedding failed", sentry::Level::Error);
+            });
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 Json(HybridSearchResponse {
@@ -738,6 +781,15 @@ pub async fn hybrid_search(
         Ok(r) => r,
         Err(e) => {
             error!("Hybrid search failed: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "hybrid_search");
+                scope.set_extra("stage", "database".into());
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("hybrid_search database failed", sentry::Level::Error);
+            });
 
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,

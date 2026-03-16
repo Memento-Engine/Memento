@@ -7,6 +7,7 @@
     "latency:clear": "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force logs | Out-Null; Clear-Content logs/latency.log -ErrorAction SilentlyContinue\""
   },
   "dependencies": {
+    "@sentry/node": "^10.22.0",
     "@langchain/core": "^1.1.30",
     "@langchain/langgraph": "^1.2.0",
     "axios": "^1.13.6",

@@ -1,6 +1,7 @@
 import pino from "pino";
 import pinoHttp from "pino-http";
 import { getConfig } from "../config/config";
+import { captureAgentException, isSentryEnabled } from "../telemetry/sentry";
 import { formatLocalTimestamp, getLocalTimeZone } from "./time";
 
 let loggerInstance: pino.Logger | null = null;
@@ -126,6 +127,18 @@ export class ContextLogger {
 
   error(message: string, error?: Error | unknown, metadata?: Record<string, any>) {
     const context = this.mergeContext(metadata);
+
+    if (isSentryEnabled()) {
+      captureAgentException(error ?? new Error(message), {
+        message,
+        level: "error",
+        extra: context,
+        tags: {
+          source: "agents-logger",
+        },
+      });
+    }
+
     if (error instanceof Error) {
       this.logger.error(
         {

@@ -898,20 +898,20 @@ export async function executeReActLoop(
         status: "running",
       });
 
-      // Emit sources for the UI sources panel
-      emitSources(requestId, {
-        includeImages: false,
-        sources: searchResults.map((s) => ({
-          chunkId: s.chunk_id,
-          appName: s.app_name,
-          windowTitle: s.window_name,
-          capturedAt: s.captured_at,
-          browserUrl: s.browser_url,
-          textContent: s.text_content,
-          textJson: s.text_json,
-          imagePath : s.image_path
-        })),
-      });
+      // // Emit sources for the UI sources panel
+      // emitSources(requestId, {
+      //   includeImages: false,
+      //   sources: searchResults.map((s) => ({
+      //     chunkId: s.chunk_id,
+      //     appName: s.app_name,
+      //     windowTitle: s.window_name,
+      //     capturedAt: s.captured_at,
+      //     browserUrl: s.browser_url,
+      //     textContent: s.text_content,
+      //     textJson: s.text_json,
+      //     imagePath : s.image_path
+      //   })),
+      // });
 
       logger.info(
         {

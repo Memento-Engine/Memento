@@ -23,6 +23,11 @@ import {
   initializeTelemetry,
   registerTelemetryShutdownHooks,
 } from "./telemetry/setup";
+import {
+  initializeSentry,
+  captureAgentException,
+  shutdownSentry,
+} from "./telemetry/sentry";
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
 
@@ -45,6 +50,8 @@ async function startServer() {
 
     // Load and validate configuration
     const config = await loadConfig();
+
+    await initializeSentry();
 
     // Initialize logging
     const logger = await initializeLogger();
@@ -438,6 +445,16 @@ async function startServer() {
       );
     });
   } catch (error) {
+    captureAgentException(error, {
+      message: "Failed to start agents server",
+      level: "fatal",
+      tags: {
+        phase: "startup",
+      },
+    });
+
+    await shutdownSentry();
+
     const startupLogger = await initializeLogger().catch(() => null);
     if (startupLogger) {
       startupLogger.error({ error: String(error) }, "Failed to start server");
@@ -450,3 +467,11 @@ async function startServer() {
 
 // Start server
 startServer();
+
+process.on("SIGINT", async () => {
+  await shutdownSentry();
+});
+
+process.on("SIGTERM", async () => {
+  await shutdownSentry();
+});

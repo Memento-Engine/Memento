@@ -45,6 +45,7 @@ sysinfo = "=0.29.0"
 chrono = "0.4.39"
 
 tracing = "0.1.44"
+sentry = { version = "0.45.0", features = ["panic"] }
 image = "0.25.9"
 lazy_static = "1.5.0"
 winreg = "0.55.0"

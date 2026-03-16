@@ -130,6 +130,14 @@ pub async fn clear_storage(
         "all" => disk_usage::clear_all(),
         _ => {
             warn!("Unknown clear target: {}", target);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "storage-endpoints");
+                scope.set_extra("target", target.clone().into());
+            }, || {
+                sentry::capture_message("Unknown clear_storage target", sentry::Level::Warning);
+            });
             return Json(ApiResponse::err(format!(
                 "Unknown target: {}. Valid targets: cache, logs, media, database, all",
                 target
@@ -146,6 +154,15 @@ pub async fn clear_storage(
     if result.success {
         Json(ApiResponse::ok(result))
     } else {
+        sentry::with_scope(|scope| {
+            scope.set_tag("environment", "daemon");
+            scope.set_tag("service", "daemon");
+            scope.set_tag("area", "storage-endpoints");
+            scope.set_extra("target", target.into());
+            scope.set_extra("message", result.message.clone().into());
+        }, || {
+            sentry::capture_message("clear_storage operation failed", sentry::Level::Error);
+        });
         Json(ApiResponse::err(result.message.clone()))
     }
 }

@@ -236,6 +236,15 @@ pub async fn search_tool(
         Err(e) => {
             let message = format!("Embedding generation failed: {e}");
             tracing::error!("{message}");
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "search_tool");
+                scope.set_extra("stage", "embedding".into());
+                scope.set_extra("error", message.clone().into());
+            }, || {
+                sentry::capture_message("search_tool embedding failed", sentry::Level::Error);
+            });
             return error_response(
                 "EMBEDDING_GENERATION_FAILED",
                 "Embedding generation failed",
@@ -254,6 +263,15 @@ pub async fn search_tool(
         Ok(value) => value,
         Err(e) => {
             tracing::error!("Embedding serialization failed: {e}");
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "search_tool");
+                scope.set_extra("stage", "embedding-serialization".into());
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("search_tool embedding serialization failed", sentry::Level::Error);
+            });
             return error_response(
                 "EMBEDDING_SERIALIZATION_FAILED",
                 "Embedding serialization failed",
@@ -315,6 +333,15 @@ pub async fn search_tool(
         Ok(res) => res,
         Err(e) => {
             tracing::error!("Error From Database : {:#?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "search_tool");
+                scope.set_extra("stage", "database".into());
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("search_tool database operation failed", sentry::Level::Error);
+            });
             return error_response(
                 "DATABASE_OPERATION_FAILED",
                 "Database operation failed",
@@ -330,9 +357,22 @@ pub async fn search_tool(
     };
     tracing::info!("Database Results : {:#?}", db_results);
 
+    let elapsed_ms = start.elapsed().as_millis();
+    if elapsed_ms > 1500 {
+        sentry::with_scope(|scope| {
+            scope.set_tag("environment", "daemon");
+            scope.set_tag("service", "daemon");
+            scope.set_tag("area", "search_tool");
+            scope.set_extra("elapsed_ms", (elapsed_ms as u64).into());
+            scope.set_extra("query_limit", (query_limit as u64).into());
+        }, || {
+            sentry::capture_message("search_tool slow query", sentry::Level::Warning);
+        });
+    }
+
     ok_response(
         db_results,
-        start.elapsed().as_millis(),
+        elapsed_ms,
         query_limit,
         normalized_keywords.len(),
         sort_field_str,

@@ -1,4 +1,5 @@
 import { useRef, useCallback } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { MementoUIMessage, ThinkingStep } from "@/components/types";
 import {
   AssistantStatus,
@@ -305,6 +306,15 @@ export function useStreaming(
             }
           } catch (e) {
             console.warn("Failed to parse streaming event:", line, e);
+            if (process.env.NODE_ENV === "production") {
+              Sentry.withScope((scope) => {
+                scope.setTag("environment", "frontend");
+                scope.setTag("service", "ui");
+                scope.setTag("area", "streaming");
+                scope.setExtra("rawLine", line);
+                Sentry.captureException(e);
+              });
+            }
           }
         }
       }
@@ -342,6 +352,16 @@ export function useStreaming(
           } catch {
             throw new Error("AUTH_TOKEN_EXPIRED");
           }
+        }
+        if (process.env.NODE_ENV === "production") {
+          Sentry.withScope((scope) => {
+            scope.setTag("environment", "frontend");
+            scope.setTag("service", "ui");
+            scope.setTag("area", "streaming");
+            scope.setExtra("status", res.status);
+            scope.setExtra("statusText", res.statusText);
+            Sentry.captureMessage("Agent stream request failed", "error");
+          });
         }
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }

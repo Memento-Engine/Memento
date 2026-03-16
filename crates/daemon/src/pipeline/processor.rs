@@ -51,6 +51,10 @@ impl OcrProcessor {
                 Some(capture) = rx.recv() => {
                     if let Err(e) = self.process_capture(capture).await {
                         error!("Failed to process capture: {:?}", e);
+                        sentry::capture_message(
+                            &format!("process_capture failed: {}", e),
+                            sentry::Level::Error,
+                        );
                     }
                 }
                 _ = shutdown_rx.recv() => {
@@ -64,6 +68,10 @@ impl OcrProcessor {
         while let Ok(capture) = rx.try_recv() {
             if let Err(e) = self.process_capture(capture).await {
                 error!("Failed to process capture during shutdown: {:?}", e);
+                sentry::capture_message(
+                    &format!("process_capture during shutdown failed: {}", e),
+                    sentry::Level::Error,
+                );
             }
         }
         
@@ -226,6 +234,17 @@ impl OcrProcessor {
                 }
                 Err(e) => {
                     error!("DB insert failed: {:?}", e);
+                    sentry::with_scope(|scope| {
+                        scope.set_tag("environment", "daemon");
+                        scope.set_tag("service", "daemon");
+                        scope.set_tag("area", "db-insert");
+                        scope.set_extra("app_name", record.app_name.clone().into());
+                        scope.set_extra("window_name", record.window_name.clone().into());
+                        scope.set_extra("chunk_count", (record.text_blocks.len() as u64).into());
+                        scope.set_extra("image_path", file_path.to_string_lossy().to_string().into());
+                    }, || {
+                        sentry::capture_message("DB insert failed for OCR record", sentry::Level::Error);
+                    });
                     
                     // Rollback: remove the saved image
                     if file_path.exists() {

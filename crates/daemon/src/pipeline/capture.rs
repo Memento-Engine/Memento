@@ -1089,6 +1089,14 @@ pub async fn continuous_capture_v2(
         Some(m) => m,
         None => {
             error!("Monitor {} not found", monitor_id);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "capture");
+                scope.set_extra("monitor_id", monitor_id.into());
+            }, || {
+                sentry::capture_message("Capture monitor not found", sentry::Level::Error);
+            });
             return Err(ContinuousCaptureError::MonitorNotFound);
         }
     };
@@ -1168,6 +1176,16 @@ pub async fn continuous_capture_v2(
                             "Too many consecutive capture failures ({}), stopping",
                             consecutive_failures
                         );
+                        sentry::with_scope(|scope| {
+                            scope.set_tag("environment", "daemon");
+                            scope.set_tag("service", "daemon");
+                            scope.set_tag("area", "capture");
+                            scope.set_extra("monitor_id", monitor_id.into());
+                            scope.set_extra("consecutive_failures", consecutive_failures.into());
+                            scope.set_extra("error", err.to_string().into());
+                        }, || {
+                            sentry::capture_message("Capture loop failed repeatedly", sentry::Level::Error);
+                        });
                         return Err(ContinuousCaptureError::ErrorCapturingScreenshot(
                             err.to_string()
                         ));
@@ -1323,6 +1341,14 @@ pub async fn continuous_capture_v2(
                     break;
                 }
                 error!("Failed to send capture result: {}", e);
+                sentry::with_scope(|scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "capture");
+                    scope.set_extra("error", e.to_string().into());
+                }, || {
+                    sentry::capture_message("Failed to enqueue capture result", sentry::Level::Error);
+                });
             }
         } else {
             // No windows had OCR results - record as skip

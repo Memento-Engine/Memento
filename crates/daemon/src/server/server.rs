@@ -84,6 +84,14 @@ pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownContro
             Ok(l) => break l,
             Err(e) => {
                 error!("Failed to bind server: {:?}", e);
+                sentry::with_scope(|scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "server-bind");
+                    scope.set_extra("error", e.to_string().into());
+                }, || {
+                    sentry::capture_message("Daemon server bind failed", sentry::Level::Error);
+                });
                 warn!("Retrying in {:?}...", backoff);
                 tokio::time::sleep(backoff).await;
                 backoff = std::cmp::min(backoff * 2, max_backoff);
@@ -109,6 +117,14 @@ pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownContro
         .await
         .unwrap_or_else(|e| {
             error!("Server error: {:?}", e);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "server-runtime");
+                scope.set_extra("error", e.to_string().into());
+            }, || {
+                sentry::capture_message("Daemon server runtime error", sentry::Level::Error);
+            });
         });
     
     info!("Server stopped");
@@ -146,6 +162,15 @@ fn write_port_file(port: u16) {
             Err(e) => {
                 if attempt >= max_retries {
                     error!("Max retries reached. Fatal error writing port file: {}", e);
+                    sentry::with_scope(|scope| {
+                        scope.set_tag("environment", "daemon");
+                        scope.set_tag("service", "daemon");
+                        scope.set_tag("area", "port-file");
+                        scope.set_extra("error", e.clone().into());
+                        scope.set_extra("port", (port as u64).into());
+                    }, || {
+                        sentry::capture_message("Failed to write daemon port file", sentry::Level::Error);
+                    });
                     return;
                 }
                 

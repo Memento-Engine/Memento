@@ -10,8 +10,8 @@ export type ConversationProps = ComponentProps<typeof StickToBottom>
 export const Conversation = memo(({ className, ...props }: ConversationProps) => (
   <StickToBottom
     className={cn('relative flex-1 overflow-y-hidden', className)}
-    initial="smooth"
-    resize="smooth"
+    initial="auto"
+    resize="auto"
     role="log"
     {...props}
   />

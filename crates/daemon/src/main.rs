@@ -14,6 +14,7 @@ mod logging;
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::borrow::Cow;
 
 use crate::{
     core::{DaemonConfig, DaemonLifecycle, ShutdownController, set_process_priority},
@@ -30,8 +31,8 @@ use crate::{
 };
 
 use app_core::{config::database_dir, db::DatabaseManager};
-use tracing::{error, info, warn, debug};
-use tracing_subscriber::{self, EnvFilter};
+use tracing::{error, info, warn};
+use tracing_subscriber::{self, EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use tokio::sync::mpsc;
 
 use fs2::FileExt;
@@ -74,19 +75,59 @@ fn setup_logging(debug_mode: bool) {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     };
 
-    // Initialize the subscriber
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    let fmt_layer = fmt::layer()
         .with_writer(file_appender)
         .with_ansi(false)
         .with_thread_ids(true)
         .with_file(true)
         .with_line_number(true)
+        .with_filter(filter);
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(Some(sentry_tracing::layer()))
         .init();
+}
+
+fn is_production_runtime() -> bool {
+    match std::env::var("MEMENTO_ENV") {
+        Ok(value) => value.eq_ignore_ascii_case("production"),
+        Err(_) => !cfg!(debug_assertions),
+    }
+}
+
+fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
+    if !is_production_runtime() {
+        return None;
+    }
+
+    let dsn = std::env::var("DAEMON_SENTRY_DSN")
+        .or_else(|_| std::env::var("SENTRY_DSN"))
+        .ok()?;
+
+    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@1.2.0".to_string());
+
+    let guard = sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: Some(Cow::Owned(release)),
+            environment: Some("daemon".into()),
+            ..Default::default()
+        },
+    ));
+
+    sentry::configure_scope(|scope| {
+        scope.set_tag("environment", "daemon");
+        scope.set_tag("service", "daemon");
+    });
+
+    Some(guard)
 }
 
 #[tokio::main]
 async fn main() {
+    let _sentry_guard = initialize_sentry();
+
     // 1. Ensure single instance (keep lock file open for daemon lifetime)
     let _lock_file = ensure_single_instance();
     
@@ -225,7 +266,7 @@ async fn main() {
     let capture_privacy_cache = privacy_manager.cache();
     let capture_shutdown = Arc::clone(&shutdown);
     
-    let capture_handle = tokio::spawn(async move {
+    let _capture_handle = tokio::spawn(async move {
         continuous_capture_v2(
             capture_tx,
             capture_scheduler,
@@ -243,7 +284,7 @@ async fn main() {
     let processor_db = Arc::clone(&db);
     let processor_shutdown = Arc::clone(&shutdown);
     
-    let processor_handle = tokio::spawn(async move {
+    let _processor_handle = tokio::spawn(async move {
         let processor = OcrProcessor::new(processor_embedding, processor_db);
         processor.process_stream(capture_rx, processor_shutdown).await;
     });

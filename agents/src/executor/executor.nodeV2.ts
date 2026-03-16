@@ -11,6 +11,7 @@ import {
 } from "../types/errors";
 import { emitStepEvent, emitError } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
+import { captureAgentException } from "../telemetry/sentry";
 
 import { reactExecutorNode } from "./react.node";
 import { 
@@ -199,6 +200,20 @@ export async function executorNodeV2(
                 const errMsg = ErrorHandler.getSafeMessage(error);
                 stepErrors[step.id] = errMsg;
 
+                captureAgentException(error, {
+                  message: "Agent step execution failed",
+                  level: "error",
+                  tags: {
+                    area: "executor",
+                    stepId: step.id,
+                    stepKind: step.kind,
+                  },
+                  extra: {
+                    stepGoal: step.stepGoal,
+                    requestId: state.requestId,
+                  },
+                });
+
                 logger.error("Step failed", error, {
                   stepId: step.id,
                 });
@@ -299,6 +314,14 @@ export async function executorNodeV2(
         };
       } catch (error) {
         if (error instanceof ToolError) {
+          captureAgentException(error, {
+            message: "Tool error during executor run",
+            level: "error",
+            tags: {
+              area: "executor",
+              type: "tool",
+            },
+          });
           logger.error("Tool error during execution", error);
           throw error; // rethrow known tool errors for specific handling
         }
@@ -311,6 +334,20 @@ export async function executorNodeV2(
             totalSteps: plan.steps.length,
           },
         );
+
+        captureAgentException(error, {
+          message: "Executor node failed",
+          level: "fatal",
+          tags: {
+            area: "executor",
+            type: "unhandled",
+          },
+          extra: {
+            completedSteps: Object.keys(stepResults).length,
+            totalSteps: plan.steps.length,
+            requestId: state.requestId,
+          },
+        });
 
         logger.error("Executor node failed", agentError);
         throw agentError;
