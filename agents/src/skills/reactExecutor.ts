@@ -12,6 +12,14 @@ import { z } from "zod";
 import { PlanStep } from "../planner/plan.schema";
 import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
 import { buildCompactAppAliasSection, expandAppQuery, getAppNameVariants } from "../utils/appNameAliases";
+import {
+  getProvenanceRegistry,
+  ProvenanceRow,
+  ProvenanceSummary,
+  compressStepResults,
+  createCompressedOutput,
+  CompressedStepOutput,
+} from "../provenance";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -90,6 +98,11 @@ export interface ReActResult {
   turns: ReActTurn[];
   totalTimeMs: number;
   error?: string;
+  
+  /** Provenance tracking for context compression */
+  provenance_id?: string;
+  compressed_summary?: ProvenanceSummary;
+  all_chunk_ids?: number[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -767,7 +780,7 @@ export async function executeReActLoop(
     emitStepEvent(requestId, {
       stepType: "searching",
       stepId: currentPlanStep.id,
-      title: '"Searching for information..."',
+      title: 'Searching for information...',
       status: "running",
     });
   }
@@ -814,7 +827,7 @@ export async function executeReActLoop(
     }
 
     logger.info(
-      { turn, action: action.action, thought: action.thought },
+      { turn, action: action.action, analysis : action.analysis, thought: action.thought },
       "ReAct action",
     );
 
@@ -826,14 +839,23 @@ export async function executeReActLoop(
         observation: { success: true, data: { summary: action.summary } },
       });
 
-      // Extract chunk_ids from all turns' observation data
+      // Extract chunk_ids and raw data from all turns' observation data
       const chunkIds: number[] = [];
+      const allRawData: ProvenanceRow[] = [];
+      
       for (const t of history) {
         if (t.observation.success && Array.isArray(t.observation.data)) {
           for (const row of t.observation.data) {
             const chunkId = row?.chunk_id ?? row?.id;
-            if (typeof chunkId === "number" && !chunkIds.includes(chunkId)) {
-              chunkIds.push(chunkId);
+            if (typeof chunkId === "number") {
+              if (!chunkIds.includes(chunkId)) {
+                chunkIds.push(chunkId);
+              }
+              // Store raw data for provenance
+              allRawData.push({
+                chunk_id: chunkId,
+                ...row,
+              });
             }
           }
         }
@@ -842,7 +864,26 @@ export async function executeReActLoop(
       console.log("ChunkIDs", chunkIds);
       console.log("History Turn", history);
 
-      // Fetch full  results for sources panel
+      // Store in provenance registry
+      const registry = getProvenanceRegistry(requestId);
+      const provenanceId = registry.store({
+        stepId: currentPlanStep.id,
+        rawData: allRawData,
+        derivation: "source",
+        searchType: history.find(h => h.action.action !== "think" && h.action.action !== "done")?.action.action as "sql" | "semantic" | "hybrid" | undefined,
+        query: currentPlanStep.stepGoal,
+      });
+
+      // Create compressed summary
+      const compressedSummary = compressStepResults({
+        provenanceId,
+        stepId: currentPlanStep.id,
+        rawData: allRawData,
+        searchType: registry.get(provenanceId)?.search_type,
+        query: currentPlanStep.stepGoal,
+      });
+
+      // Fetch full results for sources panel (UI still needs this)
       const searchResults = await getSearchResultsByChunkIds(
         chunkIds,
         requestId,
@@ -877,8 +918,9 @@ export async function executeReActLoop(
           turns: turn,
           confidence: action.confidence,
           chunkCount: chunkIds.length,
+          provenanceId,
         },
-        "ReAct loop completed - data collected",
+        "ReAct loop completed - data stored in provenance registry",
       );
 
       return {
@@ -887,6 +929,10 @@ export async function executeReActLoop(
         confidence: action.confidence,
         turns: history,
         totalTimeMs: Date.now() - startTime,
+        // New provenance fields
+        provenance_id: provenanceId,
+        compressed_summary: compressedSummary,
+        all_chunk_ids: chunkIds,
       };
     }
 
@@ -954,13 +1000,50 @@ export async function executeReActLoop(
     "ReAct loop hit max turns - returning available data",
   );
 
+  // Extract chunk_ids and raw data from all turns
+  const chunkIds: number[] = [];
+  const allRawData: ProvenanceRow[] = [];
+  
+  for (const t of history) {
+    if (t.observation.success && Array.isArray(t.observation.data)) {
+      for (const row of t.observation.data) {
+        const chunkId = row?.chunk_id ?? row?.id;
+        if (typeof chunkId === "number") {
+          if (!chunkIds.includes(chunkId)) {
+            chunkIds.push(chunkId);
+          }
+          allRawData.push({
+            chunk_id: chunkId,
+            ...row,
+          });
+        }
+      }
+    }
+  }
+
   // Check if any turn has results
-  const hasResults = history.some(
-    (t) =>
-      t.observation.success &&
-      Array.isArray(t.observation.data) &&
-      t.observation.data.length > 0,
-  );
+  const hasResults = allRawData.length > 0;
+
+  // Store in provenance registry even if max turns reached
+  let provenanceId: string | undefined;
+  let compressedSummary: ProvenanceSummary | undefined;
+  
+  if (hasResults) {
+    const registry = getProvenanceRegistry(requestId);
+    provenanceId = registry.store({
+      stepId: currentPlanStep.id,
+      rawData: allRawData,
+      derivation: "source",
+      query: currentPlanStep.stepGoal,
+    });
+    
+    compressedSummary = compressStepResults({
+      provenanceId,
+      stepId: currentPlanStep.id,
+      rawData: allRawData,
+      query: currentPlanStep.stepGoal,
+    });
+  }
 
   return {
     success: hasResults,
@@ -969,6 +1052,10 @@ export async function executeReActLoop(
     error: hasResults
       ? undefined
       : `Max turns (${MAX_TURNS}) reached without finding data`,
+    // Provenance fields
+    provenance_id: provenanceId,
+    compressed_summary: compressedSummary,
+    all_chunk_ids: chunkIds.length > 0 ? chunkIds : undefined,
   };
 }
 

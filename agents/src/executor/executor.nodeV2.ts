@@ -13,6 +13,11 @@ import { emitStepEvent, emitError } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 
 import { reactExecutorNode } from "./react.node";
+import { 
+  getProvenanceRegistry,
+  ProvenanceSummary,
+  formatSummariesForContext,
+} from "../provenance";
 
 /*
 ============================================================
@@ -146,15 +151,46 @@ export async function executorNodeV2(
                 }
               }
 
+              // Build depContext from provenance summaries (not raw data!)
+              const depContext: Record<string, any> = {};
+              const registry = getProvenanceRegistry(state.requestId);
+              
+              for (const depId of step.dependsOn) {
+                const depResult = stepResults[depId] as Record<string, any> | undefined;
+                if (depResult && typeof depResult === 'object') {
+                  // Get compressed summary from step result
+                  const summary = depResult.compressed_summary as ProvenanceSummary | undefined;
+                  
+                  if (summary) {
+                    // Pass compressed summary, not raw data
+                    const chunkIds = depResult.chunk_ids as string[] | undefined;
+                    depContext[depId] = {
+                      provenance_id: depResult.provenance_id,
+                      summary: summary.summary,
+                      record_count: summary.record_count,
+                      by_app: summary.by_app,
+                      time_range: summary.time_range,
+                      topics: summary.topics,
+                      // Flag that raw data is available if needed
+                      chunk_ids_available: chunkIds && chunkIds.length > 0,
+                    };
+                  } else {
+                    // Fallback for backward compatibility
+                    depContext[depId] = depResult.react_summary ?? depResult;
+                  }
+                }
+              }
+
               try {
-                const stepResult = await reactExecutorNode(state, step);
+                const stepResult = await reactExecutorNode(state, step, depContext);
 
                 logger.info("Got Result from Execution Node", {
                   stepGoal: step.stepGoal,
-                  stepResult: stepResult.stepResults,
+                  provenanceId: stepResult.stepResults?.provenance_id,
+                  recordCount: stepResult.stepResults?.compressed_summary?.record_count,
                 });
 
-                // Store chunks and data - final LLM will synthesize answer
+                // Store compressed results - final LLM will synthesize answer
                 stepResults[step.id] = stepResult.stepResults ?? null;
                 llmCalls += stepResult.llmCalls ?? 0;
 

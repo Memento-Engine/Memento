@@ -1,9 +1,16 @@
 <svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
 	 width="100%" viewBox="0 0 1024 1024" enable-background="new 0 0 1024 1024" xml:space="preserve">
 
+  <defs>
+    <linearGradient id="monochromeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="1" /> <stop offset="35%"  stop-color="#a3a3a3" stop-opacity="1" /> <stop offset="70%"  stop-color="#262626" stop-opacity="1" /> <stop offset="100%" stop-color="#050505" stop-opacity="1" /> </linearGradient>
+    
+    <filter id="monoShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
 
-
-<path fill="#000" opacity="1.000000" stroke="none" 
+<path fill="url(#monochromeGradient)" filter="url(#monoShadow)" opacity="1.000000" stroke="none" 
 	d="
 M454.441559,818.792969 
 	C425.406982,815.589966 397.496582,809.546387 370.519104,799.451233 
@@ -262,7 +269,5 @@ M454.441559,818.792969
 	C664.495422,765.514404 666.011475,763.977661 669.329834,765.891052 
 	C603.398682,808.680664 531.874878,824.608276 454.441559,818.792969 
 z"/>
-
-
 
 </svg>

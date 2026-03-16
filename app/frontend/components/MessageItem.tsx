@@ -164,7 +164,7 @@ function MessageItem({
 
   const renderStepThinking = (): React.ReactElement => {
     // Only render thinking steps for assistant messages
-    if (message.role !== "assistant" || !isLastMessage) {
+    if (message.role !== "assistant") {
       return <></>;
     }
 

@@ -326,21 +326,7 @@ async function startServer() {
                 return res.end();
               }
 
-              if (
-                Array.isArray(result?.retrievedSources) &&
-                result.retrievedSources.length > 0
-              ) {
-                // Emit sources event using shared types
-                const sourcesEvent = {
-                  type: "sources",
-                  data: {
-                    includeImages: true, // Set as needed
-                    sources: result.retrievedSources,
-                  },
-                  timestamp: formatLocalTimestamp(),
-                };
-                res.write(JSON.stringify(sourcesEvent) + "\n");
-              }
+              // Sources are already emitted during streaming via emitSources() in finalAnswer
 
               res.write(
                 JSON.stringify({

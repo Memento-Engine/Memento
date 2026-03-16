@@ -14,16 +14,17 @@ export default function OnboardingProvider({
     try {
       // Check if device ID exists in localStorage
       const deviceId = localStorage.getItem("deviceId");
-      if (!deviceId) {
-        console.log("No device ID found in localStorage");
-        return false;
-      }
+      // if (!deviceId) {
+      //   console.log("No device ID found in localStorage");
+      //   return false;
+      // }
 
       // Check if refresh token exists in keyring
       const serviceName = "memento-ai";
       const accountName = "device-token";
 
       const savedPassword = await getPassword(serviceName, accountName);
+      console.log('savedPassword', savedPassword);
       return savedPassword !== null && savedPassword !== undefined;
     } catch (error) {
       // If the credential doesn't exist or permissions fail, it will throw an error

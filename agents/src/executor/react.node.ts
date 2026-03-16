@@ -8,6 +8,7 @@ import { getConfig } from "../config/config";
 import { runWithSpan } from "../telemetry/tracing";
 import { emitStepEvent } from "../utils/eventQueue";
 import { PlanStep } from "../planner/plan.schema";
+import { CompressedStepOutput } from "../provenance";
 
 /*
 ============================================================
@@ -21,7 +22,9 @@ The LLM iteratively:
   3. Observes the real result
   4. Repeats until it has an answer
 
-This replaces the upfront planning + execution flow.
+Now uses Provenance Registry to:
+- Store raw data for citation resolution
+- Return compressed summaries to reduce context size
 ============================================================
 */
 
@@ -31,6 +34,7 @@ This replaces the upfront planning + execution flow.
 export async function reactExecutorNode(
   state: AgentStateType,
   currentStep: PlanStep,
+  depContext: Record<string, any> = {},
 ): Promise<Partial<AgentStateType>> {
   const logger = await getLogger();
 
@@ -38,12 +42,11 @@ export async function reactExecutorNode(
     const startTime = Date.now();
 
     logger.info(
-      { goal: state.goal, requestId: state.requestId },
+      { goal: state.goal, requestId: state.requestId, depCount: Object.keys(depContext).length },
       "Starting ReAct execution",
     );
 
     try {
-      const depContext = {}; // all deps of current step
       const result = await executeReActLoop(
         currentStep,
         state.requestId,
@@ -58,21 +61,34 @@ export async function reactExecutorNode(
           turns: result.turns.length,
           executionTimeMs,
           confidence: result.confidence,
+          provenanceId: result.provenance_id,
         },
         "ReAct execution complete",
       );
 
-      // Format results - each turn has summary and data
-      const formattedData = formatReActResultsForAnswer(result);
-
-      console.log("FormattedData", formattedData);
       if (result.success) {
-        // ReAct collected data - pass to final LLM for synthesis
+        // ReAct collected data - pass compressed output to final LLM
+        // Raw data is in provenance registry, accessed by provenance_id
+        
+        const compressedOutput: CompressedStepOutput = {
+          provenance_id: result.provenance_id!,
+          summary: result.compressed_summary!,
+          chunk_ids_available: (result.all_chunk_ids?.length ?? 0) > 0,
+        };
+
         return {
           stepResults: {
+            // New compressed format
+            provenance_id: result.provenance_id,
+            compressed_summary: result.compressed_summary,
+            step_goal: currentStep.stepGoal,
+            
+            // Keep summary for backward compatibility
             react_summary: result.summary,
-            react_data: formattedData,
             react_confidence: result.confidence,
+            
+            // Store chunk_ids for final citation (small array)
+            chunk_ids: result.all_chunk_ids,
           },
           llmCalls: (state.llmCalls ?? 0) + result.turns.length,
           shouldReplan: false,
@@ -82,9 +98,10 @@ export async function reactExecutorNode(
         // ReAct didn't find any data
         return {
           stepResults: {
+            provenance_id: result.provenance_id,
+            compressed_summary: result.compressed_summary,
+            step_goal: currentStep.stepGoal,
             react_summary: result.summary,
-            react_data: formattedData,
-            react_turns: result.turns,
             react_error: result.error,
           },
           llmCalls: (state.llmCalls ?? 0) + result.turns.length,

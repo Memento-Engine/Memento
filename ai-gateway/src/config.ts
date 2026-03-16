@@ -247,7 +247,7 @@ export function loadConfig(): GatewayConfig {
           10,
         ),
         dailyTokenLimit: parseInt(
-          process.env.AI_GATEWAY_FREE_DAILY_TOKENS ?? "500000",
+          process.env.AI_GATEWAY_FREE_DAILY_TOKENS ?? "5000000",
           10,
         ),
       },

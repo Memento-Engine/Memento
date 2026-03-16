@@ -65,6 +65,8 @@ export function SourceBadge({
     browserUrl: "",
   };
 
+
+
   const normalizedAppName = normalizeAppName(currentSource.appName);
   let domain: string | null = null;
   try {
@@ -76,6 +78,9 @@ export function SourceBadge({
   }
 
   const priorityName = domain ? domain : normalizedAppName || "Unknown App";
+
+  const newLabel = sources && sources.length > 1 ? `${priorityName} +${sources.length - 1}` : priorityName;
+
 
   const { src: iconSrc, loading: iconLoading } = useAppIcon(
     currentSource.appName,
@@ -118,7 +123,7 @@ export function SourceBadge({
               }}
             />
           )}
-          <span className="font-medium">{label ?? id}</span>
+          <span className="font-medium">{newLabel ?? id}</span>
         </Badge>
       </HoverCardTrigger>
 

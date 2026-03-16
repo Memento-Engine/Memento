@@ -1,6 +1,5 @@
 import { AgentStateType } from "../agentState";
 import { createContextLogger } from "../utils/logger";
-import { finalAnswerPrompt } from "../prompts/finalResultPrompt";
 import { ErrorHandler } from "../utils/parser";
 import { getConfig } from "../config/config";
 import { ExecutorError, ErrorCode } from "../types/errors";
@@ -14,33 +13,32 @@ import {
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlmStreaming } from "../llm/routing";
 import { normalizeOcrLayout, NormalizedOcrLayout } from "../utils/ocrLayout";
-import { emit } from "cluster";
+import {
+  getProvenanceRegistry,
+  ProvenanceSummary,
+  cleanupProvenanceRegistry,
+} from "../provenance";
+import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
 
 /*
 ============================================================
-FINAL ANSWER NODE (v2)
+FINAL ANSWER NODE (v2) - Provenance-Based
 ============================================================
 
 Synthesises all step results into a human-readable answer.
-Works with the new Plan schema (no DatabaseQuery on steps).
+
+Key Changes for Context Compression:
+1. LLM receives COMPRESSED SUMMARIES, not raw data
+2. Provenance registry stores raw data for citation resolution
+3. Citations are resolved AFTER LLM generates answer
+4. Significant reduction in context size (10x or more)
 ============================================================
 */
 
-interface SearchRowLike {
-  chunk_id?: number | string;
-  text_content?: string;
-  text_json?: string;
-  app_name?: string;
-  window_title?: string;
-  browser_url?: string;
-  captured_at?: string;
-  image_path?: string;
-  frame_id?: number;
-  window_x?: number;
-  window_y?: number;
-  window_width?: number;
-  window_height?: number;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface RetrievedSource {
   chunk_id: string;
@@ -52,96 +50,263 @@ interface RetrievedSource {
   browser_url: string;
   captured_at: string;
   image_path: string;
-  frame_id?: number;
-  window_x?: number;
-  window_y?: number;
-  window_width?: number;
-  window_height?: number;
 }
 
-function normalizeChunkId(
-  rawId: number | string | undefined,
-): string | undefined {
-  if (rawId === null || rawId === undefined) return undefined;
-  const s = String(rawId).trim();
-  if (!s) return undefined;
-  return s.startsWith("chunk_") ? s : `chunk_${s}`;
+interface StepSummaryForLLM {
+  step_id: string;
+  step_goal: string;
+  provenance_id: string;
+  summary: string;
+  record_count: number;
+  by_app?: Record<string, { count: number; top_titles?: string[] }>;
+  time_range?: { start: string; end: string };
+  topics?: string[];
 }
 
-function trimText(value: string | undefined, maxChars: number): string {
-  const text = (value ?? "").trim();
-  return text.length <= maxChars ? text : `${text.slice(0, maxChars)}…`;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// PROMPT TEMPLATE
+// ═══════════════════════════════════════════════════════════════════════════
 
-function flattenSearchRows(
+const finalAnswerPromptWithProvenance = ChatPromptTemplate.fromTemplate(`
+You are the final response generator for a personal memory agent.
+
+Your task is to answer the user's question based on the SUMMARIZED search results from previous steps.
+
+CRITICAL: You are working with COMPRESSED SUMMARIES, not raw data.
+- Each step has a summary of what was found
+- Use the provenance_id for citations (format: [[prov_XXX]])
+- If you need more detail from a specific step, mention it in your answer
+
+User Goal:
+{goal}
+
+Step Summaries:
+{stepSummaries}
+
+Citation Policy:
+- Cite claims using provenance IDs: [[prov_001]], [[prov_002]], etc.
+- These will be resolved to specific chunk_ids after your response
+- Multiple sources: [[prov_001]][[prov_002]]
+- If a step has record_count: 0, don't cite it
+
+Response Guidelines:
+1. Synthesize information from the step summaries
+2. Be specific about what was found (apps, time ranges, topics)
+3. If data seems incomplete, say so
+4. Never fabricate information not in the summaries
+5. Keep response concise and directly useful
+
+Respond in natural language. Do not output JSON.
+`);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Extract step summaries from stepResults for LLM context
+ * This is the KEY function that provides compressed context
+ */
+function extractStepSummaries(
   stepResults: Record<string, any> | undefined,
-): SearchRowLike[] {
+): StepSummaryForLLM[] {
   if (!stepResults) return [];
 
-  const rows: SearchRowLike[] = [];
+  const summaries: StepSummaryForLLM[] = [];
 
-  for (const val of Object.values(stepResults)) {
-    if (!val || typeof val !== "object") continue;
+  for (const [stepId, result] of Object.entries(stepResults)) {
+    if (!result || typeof result !== "object") continue;
 
-    // Check for react_turns (new format from ReAct executor)
-    // Each turn has observation.data containing the search results
-    if (Array.isArray(val.react_turns)) {
-      for (const turn of val.react_turns) {
-        if (
-          turn?.observation?.success &&
-          Array.isArray(turn.observation.data)
-        ) {
-          for (const row of turn.observation.data) {
-            if (row && typeof row === "object" && "chunk_id" in row) {
-              rows.push(row);
-            }
-          }
-        }
-      }
+    const compressedSummary = result.compressed_summary as ProvenanceSummary | undefined;
+
+    if (compressedSummary) {
+      summaries.push({
+        step_id: stepId,
+        step_goal: result.step_goal ?? stepId,
+        provenance_id: result.provenance_id ?? compressedSummary.provenance_id,
+        summary: compressedSummary.summary,
+        record_count: compressedSummary.record_count,
+        by_app: compressedSummary.by_app,
+        time_range: compressedSummary.time_range,
+        topics: compressedSummary.topics,
+      });
+    } else if (result.react_summary) {
+      // Fallback for backward compatibility
+      summaries.push({
+        step_id: stepId,
+        step_goal: result.step_goal ?? stepId,
+        provenance_id: result.provenance_id ?? `legacy_${stepId}`,
+        summary: result.react_summary,
+        record_count: result.chunk_ids?.length ?? 0,
+      });
     }
-    // Also check for direct arrays (legacy format)
-    else if (Array.isArray(val)) {
-      for (const row of val) {
-        if (row && typeof row === "object" && "chunk_id" in row) {
-          rows.push(row);
+  }
+
+  return summaries;
+}
+
+/**
+ * Format step summaries for the LLM prompt
+ */
+function formatStepSummariesForPrompt(summaries: StepSummaryForLLM[]): string {
+  if (summaries.length === 0) {
+    return "No step results available.";
+  }
+
+  const parts: string[] = [];
+
+  for (const summary of summaries) {
+    parts.push(`### ${summary.step_id} (${summary.provenance_id})`);
+    parts.push(`**Goal:** ${summary.step_goal}`);
+    parts.push(`**Summary:** ${summary.summary}`);
+    parts.push(`**Records:** ${summary.record_count}`);
+
+    if (summary.by_app && Object.keys(summary.by_app).length > 0) {
+      const appBreakdown = Object.entries(summary.by_app)
+        .map(([app, data]) => `${app}: ${data.count}`)
+        .join(", ");
+      parts.push(`**Apps:** ${appBreakdown}`);
+    }
+
+    if (summary.time_range) {
+      parts.push(`**Time Range:** ${summary.time_range.start} to ${summary.time_range.end}`);
+    }
+
+    if (summary.topics && summary.topics.length > 0) {
+      parts.push(`**Topics:** ${summary.topics.join(", ")}`);
+    }
+
+    parts.push(""); // Empty line between steps
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Collect all chunk_ids from step results for final source resolution
+ */
+function collectAllChunkIds(stepResults: Record<string, any> | undefined): number[] {
+  if (!stepResults) return [];
+
+  const allIds = new Set<number>();
+
+  for (const result of Object.values(stepResults)) {
+    if (!result || typeof result !== "object") continue;
+
+    // Get chunk_ids from the result
+    const chunkIds = result.chunk_ids;
+    if (Array.isArray(chunkIds)) {
+      for (const id of chunkIds) {
+        if (typeof id === "number") {
+          allIds.add(id);
         }
       }
     }
   }
 
-  return rows;
+  return Array.from(allIds);
 }
 
-function buildRetrievedSources(
+/**
+ * Build a map from provenance_id → chunk_ids[] upfront from stepResults.
+ * This allows us to resolve citations during streaming.
+ */
+function buildProvenanceToCitationMap(
   stepResults: Record<string, any> | undefined,
-): RetrievedSource[] {
-  const byChunk = new Map<string, RetrievedSource>();
-  for (const row of flattenSearchRows(stepResults)) {
-    const chunkId = normalizeChunkId(row.chunk_id);
-    if (!chunkId || byChunk.has(chunkId)) continue;
-    byChunk.set(chunkId, {
-      chunk_id: chunkId,
-      text_content: row.text_content ?? "",
-      text_json: row.text_json,
-      normalized_text_layout: { version: 1, normalized_text: "", tokens: [] },
-      // normalized_text_layout: normalizeOcrLayout(
-      //   row.text_content ?? "",
-      //   row.text_json,
-      // ),
-      app_name: row.app_name ?? "",
-      window_title: row.window_title ?? "",
-      browser_url: row.browser_url ?? "",
-      captured_at: row.captured_at ?? "",
-      image_path: row.image_path ?? "",
-      frame_id: row.frame_id,
-      window_x: row.window_x,
-      window_y: row.window_y,
-      window_width: row.window_width,
-      window_height: row.window_height,
-    });
+): Map<string, number[]> {
+  const citationMap = new Map<string, number[]>();
+  if (!stepResults) return citationMap;
+
+  for (const result of Object.values(stepResults)) {
+    if (!result || typeof result !== "object") continue;
+    const provId = result.provenance_id as string | undefined;
+    const chunkIds = result.chunk_ids as number[] | undefined;
+    if (provId && chunkIds && chunkIds.length > 0) {
+      citationMap.set(provId, chunkIds);
+    }
   }
-  return Array.from(byChunk.values());
+
+  return citationMap;
 }
+
+/**
+ * Replace all [[prov_XXX]] citations in a text string using a pre-built map.
+ */
+function resolveProvenanceCitations(
+  text: string,
+  citationMap: Map<string, number[]>,
+): string {
+  return text.replace(/\[\[(prov_\d+)\]\]/g, (_match, provId: string) => {
+    const chunkIds = citationMap.get(provId);
+    if (!chunkIds || chunkIds.length === 0) return _match;
+    return `[[${chunkIds.slice(0, 5).map(id => `chunk_${id}`).join("][")}]]`;
+  });
+}
+
+/**
+ * Create a streaming citation resolver that buffers partial `[[prov_` tokens
+ * and emits resolved text as soon as a complete citation is found.
+ */
+function createStreamingCitationResolver(
+  citationMap: Map<string, number[]>,
+  emit: (text: string) => void,
+) {
+  let buffer = "";
+
+  return {
+    push(chunk: string) {
+      buffer += chunk;
+
+      // Keep flushing resolved segments from the front of the buffer
+      while (true) {
+        const openIdx = buffer.indexOf("[[");
+
+        // No opening bracket — flush everything
+        if (openIdx === -1) {
+          if (buffer.length > 0) {
+            emit(buffer);
+            buffer = "";
+          }
+          break;
+        }
+
+        // Flush text before the opening bracket
+        if (openIdx > 0) {
+          emit(buffer.slice(0, openIdx));
+          buffer = buffer.slice(openIdx);
+        }
+
+        // Look for the closing brackets
+        const closeIdx = buffer.indexOf("]]");
+        if (closeIdx === -1) {
+          // Incomplete citation — wait for more data
+          break;
+        }
+
+        // Extract the full citation token including brackets
+        const token = buffer.slice(0, closeIdx + 2);
+        buffer = buffer.slice(closeIdx + 2);
+
+        // Resolve and emit
+        const resolved = resolveProvenanceCitations(token, citationMap);
+        emit(resolved);
+      }
+    },
+
+    /** Flush any remaining buffered text at end of stream */
+    flush() {
+      if (buffer.length > 0) {
+        const resolved = resolveProvenanceCitations(buffer, citationMap);
+        emit(resolved);
+        buffer = "";
+      }
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN NODE
+// ═══════════════════════════════════════════════════════════════════════════
 
 export async function finalAnswerNodeV2(
   state: AgentStateType,
@@ -155,103 +320,80 @@ export async function finalAnswerNodeV2(
       });
 
       const startMs = Date.now();
-      logger.info("Final answer node started", {
+      logger.info("Final answer node started (provenance-based)", {
         stepCount: state.plan?.steps?.length ?? 0,
         resultCount: Object.keys(state.stepResults ?? {}).length,
       });
 
-      const { stepResults, goal, hasSearchResults } = state;
+      const { stepResults, goal } = state;
       const config = await getConfig();
 
+      // Extract compressed summaries from step results
+      const stepSummaries = extractStepSummaries(stepResults);
 
-      console.log(stepResults, "Step results in final answer node");
-
-
-      const retrievedSources = buildRetrievedSources(stepResults); // We don't need this because llm dynamically calls sql what fields it wants. we simply passdown the stepresults to promp.
-
-      console.log("Retrieved Sources", retrievedSources);
-
-
-      // ── Budget guard ───────────────────────────────────────
-      if ((state.llmCalls ?? 0) >= config.agent.maxLlmCalls) {
-        const partial = `Partial answer due to runtime safeguards. I found ${Object.keys(stepResults ?? {}).length} completed result sets for your request: "${goal}".`;
-        logger.warn("LLM call limit reached, partial answer");
-        // emitCompletion(partial, state.requestId);
-        // return {
-        //   ...state,
-        //   finalResult: partial,
-        //   retrievedSources,
-        //   endTime: Date.now(),
-        // };
-      }
+      logger.info("Step summaries extracted", {
+        summaryCount: stepSummaries.length,
+        totalRecords: stepSummaries.reduce((sum, s) => sum + s.record_count, 0),
+      });
 
       // ── No results ────────────────────────────────────────
-      if (
-        // !hasSearchResults ||
-        !stepResults ||
-        Object.keys(stepResults).length === 0
-      ) {
-        const noMsg = state.noResultsFound
-          ? `I was unable to find any relevant information for your request: "${goal}". The system performed multiple search attempts but did not return any matching results.`
-          : `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
+      if (stepSummaries.length === 0 || stepSummaries.every(s => s.record_count === 0)) {
+        const noMsg = `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
         emitCompletion(noMsg, state.requestId);
+
+        // Cleanup provenance registry
+        cleanupProvenanceRegistry(state.requestId);
+
         return {
           ...state,
           finalResult: noMsg,
-          retrievedSources,
+          retrievedSources: [],
           endTime: Date.now(),
         };
       }
 
-      // ── Build LLM context ─────────────────────────────────
-
+      // ── Build LLM context from compressed summaries ─────────
       try {
+        const formattedSummaries = formatStepSummariesForPrompt(stepSummaries);
 
-
-        // Build context with chunk_ids prominently for citation
-        const llmContext = retrievedSources.map((src) => ({
-          chunk_id: src.chunk_id, // Primary identifier for citations
-          text: src.text_content,
-          app_name: src.app_name,
-          window_title: src.window_title,
-          captured_at: src.captured_at,
-          browser_url: src.browser_url,
-          image_path: src.image_path,
-        }));
-
-        // Format context with clear chunk_id labeling for the LLM
-        const formattedContext = llmContext.length > 0
-          ? llmContext.map((chunk) => 
-              `=== ${chunk.chunk_id} ===\n` +
-              `App: ${chunk.app_name}\n` +
-              `Window: ${chunk.window_title}\n` +
-              `Time: ${chunk.captured_at}\n` +
-              `URL: ${chunk.browser_url || 'N/A'}\n` +
-              `Content:\n${chunk.text}\n`
-            ).join('\n---\n')
-          : "No chunks retrieved.";
-
-        const citationInstruction =
-          llmContext.length > 0
-            ? "MANDATORY: Cite EVERY factual claim using [[chunk_X]] format where X is the number from the chunk_id above. Never mention 'step1' or 'results' - only use the exact chunk_id values like [[chunk_42]] or [[chunk_15]]."
-            : "No chunks available - indicate that no relevant information was found.";
-
-        const prompt = await finalAnswerPrompt.invoke({
-          goal: state.rewrittenQuery ?? state.goal,
-          retrievedContext: stepResults,
-          citationInstruction,
+        // Log context size for monitoring
+        const contextSize = formattedSummaries.length;
+        logger.info("Context size for final LLM", {
+          summaryContextChars: contextSize,
+          estimatedTokens: Math.ceil(contextSize / 4),
         });
+
+
+        logger.info('Formatted summaries for LLM', { formattedSummaries });
+
+        const prompt = await finalAnswerPromptWithProvenance.invoke({
+          goal: state.rewrittenQuery ?? state.goal,
+          stepSummaries: formattedSummaries,
+        });
+
+
+
+        console.log("Final LLM prompt", JSON.stringify(prompt, null, 2));
+
+
 
         emitStepEvent(state.requestId, {
           stepId: "finalize_0",
           stepType: "completion",
           title: "Putting it all together...",
           status: "completed",
-          message:
-            "I'm compiling the information I found into a final answer for you.",
+          message: "I'm compiling the information I found into a final answer for you.",
         });
 
-        // Use streaming LLM call for final answer - emit text chunks as they arrive
+        // Build citation map BEFORE streaming so we can resolve inline
+        const citationMap = buildProvenanceToCitationMap(stepResults);
+
+        const streamResolver = createStreamingCitationResolver(
+          citationMap,
+          (resolved) => emitTextChunk(resolved, state.requestId),
+        );
+
+        // Use streaming LLM call for final answer
         const llmResult = await invokeRoleLlmStreaming({
           role: "final",
           prompt,
@@ -259,44 +401,93 @@ export async function finalAnswerNodeV2(
           spanName: "agent.node.final_answer.llm",
           spanAttributes: { node: "finalAnswer" },
           onChunk: (chunk: string) => {
-            // Emit each chunk as it arrives for real-time streaming
-            emitTextChunk(chunk, state.requestId);
+            streamResolver.push(chunk);
           },
           authHeaders: state.authHeaders,
         });
 
-        // Extract plain text (already accumulated from streaming)
-        let finalResult: string;
+        // Flush any remaining buffered citation text
+        streamResolver.flush();
+
+        // Extract plain text
+        let rawResponse: string;
         const content = llmResult.response.content;
 
         if (typeof content === "string") {
-          finalResult = content.trim();
+          rawResponse = content.trim();
         } else if (Array.isArray(content)) {
-          finalResult = content
-            .map((item: any) =>
-              typeof item === "string" ? item : (item?.text ?? ""),
-            )
+          rawResponse = content
+            .map((item: any) => typeof item === "string" ? item : (item?.text ?? ""))
             .join("")
             .trim();
         } else {
-          finalResult = String(content).trim();
+          rawResponse = String(content).trim();
         }
 
-        if (!finalResult) throw new Error("Final answer is empty");
+        if (!rawResponse) throw new Error("Final answer is empty");
+
+        // ── Resolve provenance citations to chunk_ids ────────
+        const resolvedResponse = resolveProvenanceCitations(rawResponse, citationMap);
+
+        // ── Fetch sources for UI panel ────────────────────────
+        const allChunkIds = collectAllChunkIds(stepResults);
+        let retrievedSources: RetrievedSource[] = [];
+
+        if (allChunkIds.length > 0) {
+          const searchResults = await getSearchResultsByChunkIds(
+            allChunkIds.slice(0, 50), // Limit to 50 for UI
+            state.requestId,
+          );
+
+          retrievedSources = searchResults.map(s => ({
+            chunk_id: `chunk_${s.chunk_id}`,
+            text_content: s.text_content ?? "",
+            app_name: s.app_name ?? "",
+            window_title: s.window_name ?? "",
+            browser_url: s.browser_url ?? "",
+            captured_at: s.captured_at ?? "",
+            image_path: s.image_path ?? "",
+            normalized_text_layout: { version: 1, normalized_text: "", tokens: [] },
+          }));
+
+
+          // Emit sources for the UI sources panel
+          emitSources(state.requestId, {
+            includeImages: false,
+            sources: searchResults.map((s) => ({
+              chunkId: s.chunk_id,
+              appName: s.app_name,
+              windowTitle: s.window_name,
+              capturedAt: s.captured_at,
+              browserUrl: s.browser_url,
+              textContent: s.text_content,
+              textJson: s.text_json,
+              imagePath: s.image_path
+            })),
+          });
+
+
+
+        }
 
         const durationMs = Date.now() - startMs;
 
-        logger.info("Final answer generated", {
-          resultLength: finalResult.length,
+        logger.info("Final answer generated (provenance-based)", {
+          resultLength: resolvedResponse.length,
           durationMs,
+          citationCount: citationMap.size,
+          sourceCount: retrievedSources.length,
         });
 
-        // Final completion event with the full content
-        emitCompletion(finalResult, state.requestId);
+        // Final completion event
+        emitCompletion(resolvedResponse, state.requestId);
+
+        // Cleanup provenance registry after answer is complete
+        cleanupProvenanceRegistry(state.requestId);
 
         return {
           ...state,
-          finalResult,
+          finalResult: resolvedResponse,
           retrievedSources,
           endTime: Date.now(),
           llmCalls: (state.llmCalls ?? 0) + 1,
@@ -305,21 +496,20 @@ export async function finalAnswerNodeV2(
         const agentError = ErrorHandler.toAgentError(
           error,
           ErrorCode.EXECUTOR_FAILED,
-          {
-            node: "finalAnswer",
-            goal,
-          },
+          { node: "finalAnswer", goal },
         );
 
         logger.error("Final answer node failed", error);
 
-        // Emit error event for the frontend
         emitError(
           "Failed to generate response",
           ErrorCode.EXECUTOR_FAILED,
           state.requestId,
           true,
         );
+
+        // Cleanup on error too
+        cleanupProvenanceRegistry(state.requestId);
 
         throw agentError;
       }

@@ -131,7 +131,6 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
 
           const data = response.data;
 
-          logger.info({ data }, "Full response from execute semantic search");
 
           if (data.success === false) {
             return toolFailure(data.error || "Semantic search failed");
