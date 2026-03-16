@@ -130,9 +130,34 @@ LIMIT 30;
   "query": "implementing user authentication login session management",
   "limit": 30,
   "filters": {
-    "app_names": ["VS Code", "Cursor", "Zed"]
+    "app_names": ["VS Code", "Visual Studio Code", "Cursor", "Zed"]
   }
 }
+```
+
+## APP NAME ALIASES - ALWAYS EXPAND!
+
+When filtering by app name, include ALL known variants:
+
+| User Says | Search For |
+|-----------|------------|
+| "VS Code" | VS Code, Visual Studio Code, Code, VSCode |
+| "Chrome" | Chrome, Google Chrome |
+| "Twitter" | Twitter, X, twitter.com, x.com |
+| "Terminal" | Terminal, iTerm, iTerm2, Warp, Alacritty |
+
+**Rebranded Apps (search BOTH names):**
+- Twitter → X (search both)
+- Facebook → Meta (search both)
+
+**Browser Category:**
+```sql
+WHERE app_name IN ('Chrome', 'Google Chrome', 'Firefox', 'Mozilla Firefox', 'Arc', 'Safari', 'Edge', 'Microsoft Edge', 'Brave')
+```
+
+**Code Editor Category:**
+```sql
+WHERE app_name IN ('VS Code', 'Visual Studio Code', 'Code', 'Cursor', 'Zed', 'IntelliJ IDEA', 'IntelliJ', 'WebStorm', 'PyCharm')
 ```
 
 ## Multi-Step Reasoning

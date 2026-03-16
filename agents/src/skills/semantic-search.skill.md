@@ -66,9 +66,38 @@ This skill uses the `semantic_search` tool, not raw SQL.
   "query": "authentication middleware implementation",
   "limit": 20,
   "filters": {
-    "app_names": ["VS Code", "Cursor", "Zed", "IntelliJ", "WebStorm"]
+    "app_names": ["VS Code", "Visual Studio Code", "Cursor", "Zed", "IntelliJ", "IntelliJ IDEA", "WebStorm"]
   }
 }
+```
+
+## APP NAME ALIASES - CRITICAL!
+
+Always include ALL variants of app names when filtering:
+
+**Code Editors:**
+- VS Code / Visual Studio Code / Code / VSCode
+- Cursor / Cursor AI
+- IntelliJ IDEA / IntelliJ / IDEA
+- Sublime Text / Sublime
+
+**Browsers:**
+- Chrome / Google Chrome
+- Firefox / Mozilla Firefox
+- Edge / Microsoft Edge
+
+**Terminals:**
+- Terminal / iTerm / iTerm2
+- Windows Terminal / wt
+- PowerShell / pwsh
+
+**Social Media (REBRANDED - search both!):**
+- X / Twitter (formerly Twitter)
+- Meta / Facebook
+
+Example: If user asks about "VS Code", include:
+```json
+"app_names": ["VS Code", "Visual Studio Code", "Code", "VSCode"]
 ```
 
 ### Time-bounded Search

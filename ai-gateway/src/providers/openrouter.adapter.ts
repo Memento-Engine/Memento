@@ -65,6 +65,14 @@ export class OpenRouterAdapter implements LlmProviderAdapter {
           total_tokens: data?.usage?.total_tokens ?? 0,
         },
       };
+    } catch (error) {
+      // Wrap AbortError (timeout) with a descriptive message so callers/fallbacks can identify it
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `OpenRouter chat request timed out after ${request.timeoutMs}ms for model ${request.model}`,
+        );
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -98,6 +106,7 @@ export class OpenRouterAdapter implements LlmProviderAdapter {
         const errorBody = await response.text();
         throw new Error(`OpenRouter stream request failed (${response.status}): ${errorBody}`);
       }
+
 
       if (!response.body) {
         throw new Error("OpenRouter stream response has no body");
@@ -154,6 +163,14 @@ export class OpenRouterAdapter implements LlmProviderAdapter {
           total_tokens: promptTokens + completionTokens,
         },
       };
+    } catch (error) {
+      // Wrap AbortError (timeout) with a descriptive message so callers can identify it
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `OpenRouter stream request timed out after ${request.timeoutMs}ms for model ${request.model}`,
+        );
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

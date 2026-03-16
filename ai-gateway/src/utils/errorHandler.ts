@@ -1,5 +1,8 @@
 import { NextFunction, Request, Response } from "express";
 import { type GatewayResponse } from "@memento/shared/types/gateway.ts";
+import { childLogger } from "./logger.js";
+
+const log = childLogger("errorHandler");
 
 export function errorHandler(
   err: any,
@@ -12,7 +15,7 @@ export function errorHandler(
   const message =
     err instanceof Error ? err.message : "An unexpected error occurred.";
 
-  console.log("Error occurred while processing request:", message);
+  log.error({ statusCode, err }, message);
 
   const errResponse: GatewayResponse<null> = {
     success: false,

@@ -2,6 +2,9 @@ import type { UsageRecord, UserRole, GatewayRole } from "./types.js";
 import { db } from "./db/index.js";
 import { usageLog, dailyUsage, premiumCredits, device } from "./db/schema.js";
 import { eq, and, sql, gte } from "drizzle-orm";
+import { childLogger } from "./utils/logger.js";
+
+const log = childLogger("usageTracker");
 
 // Credit constants
 export const ANONYMOUS_PREMIUM_CREDITS = 3;
@@ -60,6 +63,8 @@ export class UsageTracker {
       contextWindowSize = 0,
     } = params;
 
+    log.debug({ model, completionTokens, isPremiumRequest }, "Usage params");
+
     const dateKey = this.getDateKey();
 
     try {
@@ -104,11 +109,12 @@ export class UsageTracker {
 
       // 3. Deduct premium credits if used
       if (creditsCost > 0) {
+        log.debug({ deviceId, userId, creditsCost }, "Deducting premium credits");
         await this.deductCredits(deviceId, userId, creditsCost);
       }
 
     } catch (error) {
-      console.error("Failed to track usage in DB, falling back to in-memory:", error);
+      log.error({ error }, "Failed to track usage in DB, falling back to in-memory");
       // Fallback to in-memory tracking
       this.track({
         user_id: userId || deviceId,
@@ -147,7 +153,7 @@ export class UsageTracker {
         // User logged in - upgrade credits if needed
         const currentAvailable = existing[0].totalCredits - existing[0].usedCredits;
         const newCredits = Math.max(LOGGED_IN_PREMIUM_CREDITS, currentAvailable);
-        
+
         await db
           .update(premiumCredits)
           .set({
@@ -158,7 +164,7 @@ export class UsageTracker {
           .where(eq(premiumCredits.deviceId, deviceId));
       }
     } catch (error) {
-      console.error("Failed to initialize credits:", error);
+      log.error({ error }, "Failed to initialize credits");
     }
   }
 
@@ -171,7 +177,7 @@ export class UsageTracker {
         .select()
         .from(premiumCredits)
         .where(
-          userId 
+          userId
             ? eq(premiumCredits.userId, userId)
             : eq(premiumCredits.deviceId, deviceId)
         )
@@ -183,7 +189,7 @@ export class UsageTracker {
 
       return Math.max(0, result[0].totalCredits - result[0].usedCredits);
     } catch (error) {
-      console.error("Failed to get available credits:", error);
+      log.error({ error }, "Failed to get available credits");
       return 0;
     }
   }
@@ -193,7 +199,7 @@ export class UsageTracker {
    */
   async deductCredits(deviceId: string, userId?: string, amount: number = 1): Promise<boolean> {
     try {
-      const whereClause = userId 
+      const whereClause = userId
         ? eq(premiumCredits.userId, userId)
         : eq(premiumCredits.deviceId, deviceId);
 
@@ -208,7 +214,7 @@ export class UsageTracker {
 
       return result.length > 0;
     } catch (error) {
-      console.error("Failed to deduct credits:", error);
+      log.error({ error }, "Failed to deduct credits");
       return false;
     }
   }
@@ -252,7 +258,7 @@ export class UsageTracker {
         .select()
         .from(premiumCredits)
         .where(
-          userId 
+          userId
             ? eq(premiumCredits.userId, userId)
             : eq(premiumCredits.deviceId, deviceId)
         )
@@ -266,7 +272,7 @@ export class UsageTracker {
         usedCredits: credits[0]?.usedCredits || 0,
       };
     } catch (error) {
-      console.error("Failed to get usage stats:", error);
+      log.error({ error }, "Failed to get usage stats");
       // Fallback to in-memory
       return this.getInMemoryStats(userId || deviceId);
     }
@@ -294,7 +300,7 @@ export class UsageTracker {
       // Update or upgrade credits
       await this.initializeCredits(deviceId, userId, "logged");
     } catch (error) {
-      console.error("Failed to link device to user:", error);
+      log.error({ error }, "Failed to link device to user");
     }
   }
 
@@ -306,12 +312,12 @@ export class UsageTracker {
 
   track(record: UsageRecord): void {
     this.records.push(record);
-    
+
     // Update minute request cache
     const cacheKey = record.user_id;
     const now = Date.now();
     const cached = this.minuteRequestCache.get(cacheKey);
-    
+
     if (cached && now - cached.resetAt < 60_000) {
       cached.count++;
     } else {
@@ -337,7 +343,7 @@ export class UsageTracker {
     if (cached && now - cached.resetAt < 60_000) {
       return cached.count;
     }
-    
+
     const oneMinuteAgo = now - 60_000;
     return this.getUserUsageInWindow(userId, oneMinuteAgo).length;
   }
@@ -345,7 +351,7 @@ export class UsageTracker {
   private getInMemoryStats(userId: string): UsageStats {
     const now = Date.now();
     const dayStart = new Date().setUTCHours(0, 0, 0, 0);
-    
+
     return {
       dailyTokens: this.getUserDailyTokens(userId, dayStart),
       dailyRequests: this.getUserUsageInWindow(userId, dayStart).length,

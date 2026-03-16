@@ -28,35 +28,42 @@ description: Critical guide for choosing the right search strategy based on quer
 
 ## APP NAME MAPPINGS (Critical Knowledge)
 
+**⚠️ ALWAYS use ALL variants of an app name in filters!**
+
 **CODE EDITORS** (use for "coding", "programming", "development"):
-- VS Code, Visual Studio Code, Code, Code.exe
-- Cursor
-- Zed
-- IntelliJ IDEA, WebStorm, PyCharm, GoLand, RustRover
-- Sublime Text, Atom, Neovim, Vim
+- VS Code / Visual Studio Code / Code / VSCode
+- Cursor / Cursor AI
+- Zed / Zed Editor
+- IntelliJ IDEA / IntelliJ, WebStorm, PyCharm, GoLand, RustRover
+- Sublime Text / Sublime, Atom, Neovim / nvim, Vim
 - Android Studio, Xcode
 
 **BROWSERS** (use for "browsing", "searching", "learning", "reading"):
-- Chrome, Google Chrome, chromium
-- Firefox, Mozilla Firefox
-- Arc
-- Safari
-- Edge, Microsoft Edge
+- Chrome / Google Chrome
+- Firefox / Mozilla Firefox
+- Arc / Arc Browser
+- Safari / Apple Safari
+- Edge / Microsoft Edge
 - Brave, Opera, Vivaldi
 
 **COMMUNICATION** (use for "meetings", "chat", "talking"):
 - Slack
 - Discord
-- Microsoft Teams, Teams
-- Zoom
+- Microsoft Teams / Teams / MS Teams
+- Zoom / Zoom Meeting
 - Google Meet (in browser)
 
 **TERMINALS** (use for "terminal", "command line", "shell"):
-- Terminal, iTerm, iTerm2
-- Warp
+- Terminal / iTerm / iTerm2
+- Warp / Warp Terminal
 - Alacritty, Kitty
-- PowerShell, cmd, Command Prompt
-- Windows Terminal
+- PowerShell / pwsh, cmd / Command Prompt
+- Windows Terminal / wt
+
+**SOCIAL MEDIA (REBRANDS - search BOTH names!):**
+- X / Twitter (formerly Twitter) - ALWAYS search both!
+- Meta / Facebook (company rebranded)
+- Instagram / IG, LinkedIn, Reddit
 
 ## LANGUAGE / FRAMEWORK DETECTION
 

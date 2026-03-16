@@ -13,11 +13,11 @@ import unAuthorizedRouter from "./routes/unAuthorized.js";
 import { errorHandler } from "./utils/errorHandler.js";
 import { validateUserRequest } from "./middlewares/auth.ts";
 import { RequestContext } from "./types/request-context.ts";
-import { 
-  shrinkContextWindow, 
-  estimateConversationTokens, 
+import {
+  shrinkContextWindow,
+  estimateConversationTokens,
   needsShrinking,
-  getContextStats 
+  getContextStats
 } from "./utils/contextWindow.js";
 import {
   BadRequestError,
@@ -25,6 +25,9 @@ import {
   InternalServerError,
 } from "@memento/shared/errors.ts";
 import { runMigrations } from "./db/migrate.js";
+import { logger, childLogger } from "./utils/logger.js";
+
+const log = childLogger("server");
 
 const messageSchema = z.object({
   role: z.enum(["system", "user", "assistant"]),
@@ -76,7 +79,7 @@ async function startServer(): Promise<void> {
   try {
     await runMigrations();
   } catch (error) {
-    console.error("Failed to run migrations, continuing with existing schema:", error);
+    log.error({ error }, "Failed to run migrations, continuing with existing schema");
     // Don't exit - the schema might already exist from previous runs
   }
 
@@ -106,10 +109,10 @@ async function startServer(): Promise<void> {
       const deviceId = req.deviceId;
       const userId = req.user?.id;
       const userRole = req.userRole as UserRole;
-      const usePremiumModel = parsed.use_premium_model && req.availablePremiumCredits > 0;
+      const usePremiumModel = req.availablePremiumCredits > 0;
 
-      console.log("Received chat request", {
-        req: parsed.messages.map((m) => ({
+      log.info({
+        messages: parsed.messages.map((m) => ({
           role: m.role,
           contentLength: m.content.length,
         })),
@@ -117,18 +120,18 @@ async function startServer(): Promise<void> {
         userRole,
         availableCredits: req.availablePremiumCredits,
         usePremiumModel,
-      });
+      }, "Received chat request");
 
       // Select model config based on tier (premium if using premium model, else free)
       const accessTier = usePremiumModel ? "premium" : "free";
       const roleDefaults = parsed.role ? config.roles[parsed.role] : undefined;
       const subRole = roleDefaults?.[accessTier] ?? roleDefaults?.free;
-      
+
       const resolvedMaxTokens = subRole
         ? Math.min(
-            parsed.max_tokens ?? subRole.maxOutputTokens,
-            subRole.maxOutputTokens,
-          )
+          parsed.max_tokens ?? subRole.maxOutputTokens,
+          subRole.maxOutputTokens,
+        )
         : (parsed.max_tokens ?? config.defaults.maxTokens);
 
       // Estimate tokens for rate limiting
@@ -148,14 +151,14 @@ async function startServer(): Promise<void> {
         if (rateLimitResult.retryAfterMs) {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
-        
+
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
             type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
-              ? "daily_tokens" 
+              ? "daily_tokens"
               : "requests_per_minute",
             tier: rateLimitResult.tier,
             retryAfterMs: rateLimitResult.retryAfterMs,
@@ -178,12 +181,12 @@ async function startServer(): Promise<void> {
         processedMessages = shrinkResult.messages;
         contextShrinkApplied = true;
 
-        console.log("Context window shrunk", {
+        log.info({
           originalTokens: shrinkResult.originalTokens,
           shrunkTokens: shrinkResult.shrunkTokens,
           messagesRemoved: shrinkResult.messagesRemoved,
           strategy: shrinkResult.strategy,
-        });
+        }, "Context window shrunk");
       }
 
       const chatRequest: ChatRequest = {
@@ -202,10 +205,6 @@ async function startServer(): Promise<void> {
       const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
       const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
       const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
-      
-
-      console.log("chat Response", response.content);
-
 
       await usageTracker.trackUsage({
         deviceId,
@@ -256,28 +255,28 @@ async function startServer(): Promise<void> {
       const deviceId = req.deviceId;
       const userId = req.user?.id;
       const userRole = req.userRole as UserRole;
-      const usePremiumModel = parsed.use_premium_model && req.availablePremiumCredits > 0;
+      const usePremiumModel = req.availablePremiumCredits > 0;
 
-      console.log("Received streaming chat request", {
-        req: parsed.messages.map((m) => ({
+      log.info({
+        messages: parsed.messages.map((m) => ({
           role: m.role,
           contentLength: m.content.length,
         })),
         sysRole: parsed.role,
         userRole,
         usePremiumModel,
-      });
+      }, "Received streaming chat request");
 
       // Select model config based on tier
       const accessTier = usePremiumModel ? "premium" : "free";
       const roleDefaults = parsed.role ? config.roles[parsed.role] : undefined;
       const subRole = roleDefaults?.[accessTier] ?? roleDefaults?.free;
-      
+
       const resolvedMaxTokens = subRole
         ? Math.min(
-            parsed.max_tokens ?? subRole.maxOutputTokens,
-            subRole.maxOutputTokens,
-          )
+          parsed.max_tokens ?? subRole.maxOutputTokens,
+          subRole.maxOutputTokens,
+        )
         : (parsed.max_tokens ?? config.defaults.maxTokens);
 
       // Estimate tokens for rate limiting
@@ -297,14 +296,14 @@ async function startServer(): Promise<void> {
         if (rateLimitResult.retryAfterMs) {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
-        
+
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
             type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
-              ? "daily_tokens" 
+              ? "daily_tokens"
               : "requests_per_minute",
             tier: rateLimitResult.tier,
             retryAfterMs: rateLimitResult.retryAfterMs,
@@ -356,7 +355,7 @@ async function startServer(): Promise<void> {
       const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
       const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
       const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
-      
+
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -458,13 +457,11 @@ async function startServer(): Promise<void> {
   app.use(errorHandler);
 
   app.listen(config.server.port, config.server.host, () => {
-    console.log(
-      `menento-ai-gateway listening on http://${config.server.host}:${config.server.port}`,
-    );
+    log.info(`memento-ai-gateway listening on http://${config.server.host}:${config.server.port}`);
   });
 }
 
 startServer().catch((error) => {
-  console.error("Failed to start ai-gateway", error);
+  log.fatal({ error }, "Failed to start ai-gateway");
   process.exit(1);
 });

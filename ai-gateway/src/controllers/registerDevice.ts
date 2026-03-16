@@ -19,6 +19,9 @@ import { db } from "src/db/index.ts";
 import { device, premiumCredits } from "src/db/schema.ts";
 import { eq } from "drizzle-orm";
 import { ANONYMOUS_PREMIUM_CREDITS } from "src/usageTracker.ts";
+import { childLogger } from "src/utils/logger.js";
+
+const log = childLogger("registerDevice");
 
 function generateAccessTokenUsingJwt({
   deviceId,
@@ -34,7 +37,7 @@ function generateAccessTokenUsingJwt({
       type: "access",
     },
     process.env.JWT_ACCESS_SECRET as string,
-    { expiresIn: "30m" },
+    { expiresIn: "1d" },
   );
 }
 
@@ -76,7 +79,7 @@ export default async function registerDevice(
     const requestTime = parseInt(timestamp, 10);
 
     if (isNaN(requestTime) || Math.abs(currentTime - requestTime) > 120) {
-      console.error("Request rejected: Timestamp expired or invalid.");
+      log.warn({ requestTime, currentTime }, "Request rejected: Timestamp expired or invalid");
       throw new ForbiddenError(
         "Timestamp is invalid or request is too old. Please check your device time and try again.",
       );
@@ -88,7 +91,7 @@ export default async function registerDevice(
       process.env.TAURI_SECRET_KEY || "MY_SUPER_SECRET_TAURI_KEY";
     const messageToSign = `${deviceId}:${timestamp}`;
 
-    console.log("Received device registration", parsed);
+    log.info({ deviceId, os: deviceMetaData.os }, "Received device registration");
 
     const expectedSignature = crypto
       .createHmac("sha256", SECRET_KEY)
@@ -106,7 +109,7 @@ export default async function registerDevice(
       }
 
       if (!crypto.timingSafeEqual(clientBuffer, expectedBuffer)) {
-        console.error("Request rejected: Signature mismatch.");
+        log.warn({ deviceId }, "Request rejected: Signature mismatch");
         throw new UnauthorizedError(
           "Invalid signature. Please ensure you are using the latest version of Memento AI.",
         );
@@ -139,7 +142,7 @@ export default async function registerDevice(
       }
 
       catch (err: any) {
-        console.log("Database error while registering device", { error: err });
+        log.error({ err }, "Database error while registering device");
         throw new InternalServerError("Database error while registering device");
       }
     }
@@ -153,12 +156,9 @@ export default async function registerDevice(
           usedCredits: 0,
           lastRefillAt: new Date(),
         });
-        console.log("Initialized premium credits for new device", {
-          deviceId: serverGeneratedDeviceId,
-          credits: ANONYMOUS_PREMIUM_CREDITS,
-        });
+        log.info({ deviceId: serverGeneratedDeviceId, credits: ANONYMOUS_PREMIUM_CREDITS }, "Initialized premium credits for new device");
       } catch (err: any) {
-        console.error("Failed to initialize premium credits", { error: err });
+        log.error({ err }, "Failed to initialize premium credits");
         // Non-blocking: device registration should still succeed
       }
     }
@@ -180,17 +180,14 @@ export default async function registerDevice(
       },
     };
 
-    console.log("Device registered successfully", {
-      deviceId: serverGeneratedDeviceId,
-      os: deviceMetaData.os,
-    });
+    log.info({ deviceId: serverGeneratedDeviceId, os: deviceMetaData.os }, "Device registered successfully");
 
     return res.status(StatusCodes.OK).json(response);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown gateway error";
 
-    console.log("Error during device registration:", message);
+    log.error({ message }, "Error during device registration");
     throw error;
   }
 }

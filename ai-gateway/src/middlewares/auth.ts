@@ -11,6 +11,9 @@ import { RequestContext } from "src/types/request-context.ts";
 import jwt from "jsonwebtoken";
 import { AccessTokenPayload } from "src/controllers/registerDevice.ts";
 import { UsageTracker, ANONYMOUS_PREMIUM_CREDITS, LOGGED_IN_PREMIUM_CREDITS } from "src/usageTracker.ts";
+import { childLogger } from "src/utils/logger.js";
+
+const log = childLogger("auth");
 
 // Initialize usage tracker for credit management
 const usageTracker = new UsageTracker();
@@ -64,7 +67,7 @@ export const validateUserRequest = async (
           .where(eq(user.id, decoded.userId))
           .limit(1);
       } catch (err: any) {
-        console.error("Database error while validating user", { error: err });
+        log.error({ err }, "Database error while validating user");
         throw new InternalServerError("Database error while validating user");
       }
 
@@ -98,7 +101,7 @@ export const validateUserRequest = async (
           req.availablePremiumCredits = LOGGED_IN_PREMIUM_CREDITS;
         }
       } catch (err) {
-        console.error("Database error while fetching user credits", { error: err });
+        log.error({ err }, "Database error while fetching user credits");
         req.availablePremiumCredits = 0;
       }
 
@@ -112,7 +115,7 @@ export const validateUserRequest = async (
           .where(eq(device.id, deviceId))
           .limit(1);
       } catch (err: any) {
-        console.error("Database error while validating device", { error: err });
+        log.error({ err }, "Database error while validating device");
         throw new InternalServerError("Database error while validating device");
       }
 
@@ -142,7 +145,7 @@ export const validateUserRequest = async (
           req.availablePremiumCredits = ANONYMOUS_PREMIUM_CREDITS;
         }
       } catch (err) {
-        console.error("Database error while fetching device credits", { error: err });
+        log.error({ err }, "Database error while fetching device credits");
         req.availablePremiumCredits = 0;
       }
     }

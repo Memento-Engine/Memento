@@ -104,7 +104,7 @@ export default function OnboardingPage() {
           <SlideWrapper key="login">
             <LoginSlide
               onLogin={() => {}}
-              onSkip={() => setIsOnboardingComplete(true)}
+              onSkip={() => {}}
             />
           </SlideWrapper>
         )}

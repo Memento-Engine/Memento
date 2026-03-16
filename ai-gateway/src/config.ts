@@ -134,7 +134,7 @@ export function loadConfig(): GatewayConfig {
         apiKey,
         baseUrl,
         timeoutMs: parseInt(
-          process.env[`AI_GATEWAY_${upper}_TIMEOUT_MS`] ?? "30000",
+          process.env[`AI_GATEWAY_${upper}_TIMEOUT_MS`] ?? "120000",
           10,
         ),
       };

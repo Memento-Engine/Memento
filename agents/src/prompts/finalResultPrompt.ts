@@ -14,7 +14,7 @@ Critical rules:
 User Goal:
 {goal}
 
-Retrieved Context (chunk-grounded):
+Retrieved Context (organized by chunk_id):
 {retrievedContext}
 
 Citation policy:
@@ -22,15 +22,21 @@ Citation policy:
 
 CITATION REQUIREMENTS (MANDATORY):
 - You MUST cite EVERY factual statement with the corresponding chunk_id from Retrieved Context.
-- Use the exact citation format: [[chunk_id]] immediately after the claim.
-- For multiple sources supporting one claim, use: [[chunk_1][chunk_2]]
-- Do NOT make any factual claim without a citation.
-- Only cite chunk_ids that appear in the Retrieved Context above.
+- Use the EXACT chunk_id format shown above (e.g., chunk_42, chunk_15).
+- Citation format: [[chunk_42]] immediately after the claim.
+- For multiple sources: [[chunk_15][chunk_22]]
+- NEVER reference "step1", "results", "turn1", or any internal structure names.
+- ONLY use chunk_id values that appear in the "=== chunk_X ===" headers above.
 - If you cannot find supporting evidence for a claim, do not make that claim.
 
-Example of correct citation:
+Example of CORRECT citations:
 "You visited the Figma design file at 3:45 PM [[chunk_42]]."
 "The meeting notes mentioned project deadlines [[chunk_15][chunk_22]]."
+
+Example of WRONG citations (NEVER do this):
+"Based on step1.results..." ❌
+"According to the search results..." ❌
+"From turn 1..." ❌
 
 Instructions:
 Analyze the retrieved context and synthesize a direct answer to the user's goal.
@@ -39,6 +45,6 @@ Cite every factual statement with the appropriate chunk_id.
 Return the final answer in clear natural language.
 
 Do not output JSON.
-Do not mention steps or internal reasoning.
+Do not mention steps, turns, or internal reasoning.
 Respond as if you are answering the user directly.
 `);

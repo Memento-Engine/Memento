@@ -3,6 +3,9 @@ import type { GatewayConfig } from "./config.js";
 import { selectRoleModelConfig } from "./config.js";
 import type { ChatRequest, ChatResponse, ProviderName } from "./types.js";
 import type { LlmProviderAdapter, ProviderChatResult, StreamChunkCallback } from "./providers/provider.js";
+import { childLogger } from "./utils/logger.js";
+
+const log = childLogger("modelRouter");
 
 type ProviderRegistry = Map<ProviderName, LlmProviderAdapter>;
 
@@ -92,10 +95,18 @@ export class ModelRouter {
         };
       } catch (error) {
         lastError = error;
+        const reason = error instanceof Error ? error.message : String(error);
+        log.warn(
+          { role: request.role ?? "none", model: candidate.model, candidate: `${index + 1}/${candidates.length}`, reason },
+          "LLM candidate failed",
+        );
       }
     }
 
-    throw new Error(`All model candidates failed: ${String(lastError)}`);
+    throw new Error(
+      `All ${candidates.length} model candidate(s) failed for role "${request.role ?? "none"}"` +
+      ` — last error: ${String(lastError)}`,
+    );
   }
 
   async chatStream(request: ChatRequest, onChunk: StreamChunkCallback): Promise<ChatResponse> {
@@ -137,9 +148,17 @@ export class ModelRouter {
         };
       } catch (error) {
         lastError = error;
+        const reason = error instanceof Error ? error.message : String(error);
+        log.warn(
+          { role: request.role ?? "none", model: candidate.model, candidate: `${index + 1}/${candidates.length}`, reason },
+          "LLM stream candidate failed",
+        );
       }
     }
 
-    throw new Error(`All model candidates failed: ${String(lastError)}`);
+    throw new Error(
+      `All ${candidates.length} stream candidate(s) failed for role "${request.role ?? "none"}"` +
+      ` — last error: ${String(lastError)}`,
+    );
   }
 }

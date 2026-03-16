@@ -164,7 +164,7 @@ export async function finalAnswerNodeV2(
       const config = await getConfig();
 
 
-      console.log(JSON.stringify(stepResults, null, 2), "Step results in final answer node");
+      console.log(stepResults, "Step results in final answer node");
 
 
       const retrievedSources = buildRetrievedSources(stepResults); // We don't need this because llm dynamically calls sql what fields it wants. we simply passdown the stepresults to promp.
@@ -206,25 +206,39 @@ export async function finalAnswerNodeV2(
       // ── Build LLM context ─────────────────────────────────
 
       try {
+
+
+        // Build context with chunk_ids prominently for citation
         const llmContext = retrievedSources.map((src) => ({
-          chunk_id: src.chunk_id,
+          chunk_id: src.chunk_id, // Primary identifier for citations
           text: src.text_content,
           app_name: src.app_name,
           window_title: src.window_title,
           captured_at: src.captured_at,
           browser_url: src.browser_url,
           image_path: src.image_path,
-          normalized_text_layout: src.normalized_text_layout,
         }));
+
+        // Format context with clear chunk_id labeling for the LLM
+        const formattedContext = llmContext.length > 0
+          ? llmContext.map((chunk) => 
+              `=== ${chunk.chunk_id} ===\n` +
+              `App: ${chunk.app_name}\n` +
+              `Window: ${chunk.window_title}\n` +
+              `Time: ${chunk.captured_at}\n` +
+              `URL: ${chunk.browser_url || 'N/A'}\n` +
+              `Content:\n${chunk.text}\n`
+            ).join('\n---\n')
+          : "No chunks retrieved.";
 
         const citationInstruction =
           llmContext.length > 0
-            ? "If you make a factual claim backed by retrieved context, cite using exact syntax [[chunk_id]]. For multiple sources use [[chunk_1][chunk_2]]. Only cite IDs present in Retrieved Context."
-            : "Do not include citation markers in your response.";
+            ? "MANDATORY: Cite EVERY factual claim using [[chunk_X]] format where X is the number from the chunk_id above. Never mention 'step1' or 'results' - only use the exact chunk_id values like [[chunk_42]] or [[chunk_15]]."
+            : "No chunks available - indicate that no relevant information was found.";
 
         const prompt = await finalAnswerPrompt.invoke({
           goal: state.rewrittenQuery ?? state.goal,
-          retrievedContext: JSON.stringify(stepResults, null, 2),
+          retrievedContext: stepResults,
           citationInstruction,
         });
 

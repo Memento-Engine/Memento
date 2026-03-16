@@ -81,9 +81,9 @@ export const registerDeviceSchema = z.object({
 
 
 export const registerDeviceResponseSchema = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-  deviceId: z.string(), // Server-generated device ID to use in subsequent requests
+  accessToken: z.string().min(1),
+  refreshToken: z.string().min(1),
+  deviceId: z.string().min(1), // Server-generated device ID to use in subsequent requests
 });
 
 

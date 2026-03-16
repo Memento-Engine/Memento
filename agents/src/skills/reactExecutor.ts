@@ -11,6 +11,7 @@ import { emitSources, emitStepEvent } from "../utils/eventQueue";
 import { z } from "zod";
 import { PlanStep } from "../planner/plan.schema";
 import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
+import { buildCompactAppAliasSection, expandAppQuery, getAppNameVariants } from "../utils/appNameAliases";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -365,19 +366,7 @@ ${skillReferences}
 
 ✓ **RIGHT**: Use semantic search for conceptual queries, then SQL to refine
 
-## APP NAME MAPPINGS (Memorize This!)
-
-**CODE EDITORS** (for "coding", "programming", "development", "writing code"):
-VS Code, Visual Studio Code, Code, Cursor, Zed, IntelliJ IDEA, WebStorm, PyCharm, GoLand, RustRover, Sublime Text, Atom, Neovim, Vim, Android Studio, Xcode
-
-**BROWSERS** (for "browsing", "searching", "reading", "learning online"):
-Chrome, Google Chrome, Firefox, Mozilla Firefox, Arc, Safari, Edge, Microsoft Edge, Brave, Opera, Vivaldi
-
-**TERMINALS** (for "terminal", "command line", "shell", "running commands"):
-Terminal, iTerm, iTerm2, Warp, Alacritty, Kitty, PowerShell, cmd, Command Prompt, Windows Terminal
-
-**COMMUNICATION** (for "meetings", "chat", "talking", "discussing"):
-Slack, Discord, Microsoft Teams, Teams, Zoom
+${buildCompactAppAliasSection()}
 
 ## PROGRAMMING LANGUAGE DETECTION
 
@@ -987,7 +976,7 @@ export async function executeReActLoop(
  * Format ReAct results for the final answer generator.
  * Returns each turn's summary and results for final LLM context.
  */
-export function formatReActResultsForAnswer(result: ReActResult): string {
+export function   formatReActResultsForAnswer(result: ReActResult): string {
   if (!result.success || result.turns.length === 0) {
     return JSON.stringify({
       summary: result.summary || "No data found",
