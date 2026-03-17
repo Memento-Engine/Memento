@@ -27,9 +27,90 @@ env:
   RELEASE_REPO: ${{ github.repository }}
 
 jobs:
-  build:
+  validate-policy:
     runs-on: windows-latest
-    
+    outputs:
+      run_release_build: ${{ steps.policy.outputs.run_release_build }}
+      run_packaging: ${{ steps.policy.outputs.run_packaging }}
+      is_tag: ${{ steps.policy.outputs.is_tag }}
+      is_prerelease: ${{ steps.policy.outputs.is_prerelease }}
+      tag_source_branch: ${{ steps.policy.outputs.tag_source_branch }}
+      should_create_release: ${{ steps.policy.outputs.should_create_release }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate branch and tag policy
+        id: policy
+        shell: pwsh
+        run: |
+          $event = "${{ github.event_name }}"
+          $ref = "${{ github.ref }}"
+          $sha = "${{ github.sha }}"
+          $tagName = "${{ github.ref_name }}"
+
+          $runReleaseBuild = $false
+          $runPackaging = $false
+          $isTag = $false
+          $isPrerelease = $false
+          $tagSourceBranch = ""
+          $shouldCreateRelease = $false
+
+          if ($event -eq "workflow_dispatch") {
+            # Manual dispatch is allowed only from develop/main.
+            if ($ref -ne "refs/heads/develop" -and $ref -ne "refs/heads/main") {
+              Write-Error "workflow_dispatch is allowed only on develop or main."
+              exit 1
+            }
+            $runReleaseBuild = $true
+            $runPackaging = $true
+          } elseif ($ref -eq "refs/heads/develop" -or $ref -eq "refs/heads/main") {
+            # Heavy release builds run only on develop/main pushes.
+            $runReleaseBuild = $true
+          } elseif ($ref.StartsWith("refs/tags/v")) {
+            # Tags trigger packaging/release, but tag commit must belong to develop or main.
+            $runReleaseBuild = $true
+            $runPackaging = $true
+            $isTag = $true
+
+            if ($tagName -match '-(alpha|beta|rc)(\.|$)') {
+              $isPrerelease = $true
+            }
+
+            git fetch origin main develop --depth=1
+
+            $containsBranches = git branch -r --contains $sha
+            $onMain = $containsBranches | Select-String -SimpleMatch "origin/main"
+            $onDevelop = $containsBranches | Select-String -SimpleMatch "origin/develop"
+
+            if (-not $onMain -and -not $onDevelop) {
+              Write-Error "Tag '$tagName' is not on develop or main. Releases/tags are allowed only from develop/main."
+              exit 1
+            }
+
+            if ($onMain) {
+              $tagSourceBranch = "main"
+              $shouldCreateRelease = $true
+            } elseif ($onDevelop) {
+              $tagSourceBranch = "develop"
+            }
+          }
+
+          echo "run_release_build=$($runReleaseBuild.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          echo "run_packaging=$($runPackaging.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          echo "is_tag=$($isTag.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          echo "is_prerelease=$($isPrerelease.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          echo "tag_source_branch=$tagSourceBranch" >> $env:GITHUB_OUTPUT
+          echo "should_create_release=$($shouldCreateRelease.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+  build-frontend:
+    needs: validate-policy
+    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
+    runs-on: windows-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,24 +125,13 @@ jobs:
             app/frontend/package-lock.json
             shared/package-lock.json
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
         with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-
-      - name: Setup .NET (for Velopack CLI)
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install Velopack CLI
-        run: dotnet tool install -g vpk
+          path: app/frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('app/frontend/package-lock.json') }}-${{ hashFiles('app/frontend/**/*.[jt]s', 'app/frontend/**/*.[jt]sx', 'app/frontend/**/*.mjs', 'app/frontend/**/*.css', 'shared/types/**/*.ts') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('app/frontend/package-lock.json') }}-
 
       - name: Install app dependencies
         run: |
@@ -83,55 +153,173 @@ jobs:
           cd app/frontend
           npm run build
 
+  build-daemon:
+    needs: validate-policy
+    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+
       - name: Build daemon (Release)
         run: cargo build --release -p memento-daemon
 
+      - name: Collect daemon artifacts
+        run: |
+          New-Item -ItemType Directory -Force -Path out-daemon
+          Copy-Item "target/release/memento-daemon.exe" "out-daemon/"
+
+          # Include DirectML.dll if present for ONNX Runtime GPU support
+          $ortBinDir = Get-ChildItem -Path "$env:LOCALAPPDATA\ort.pyke.io\dfbin\x86_64-pc-windows-msvc" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($ortBinDir) {
+            $directMlDll = Join-Path $ortBinDir.FullName "DirectML.dll"
+            if (Test-Path $directMlDll) {
+              Copy-Item $directMlDll "out-daemon/"
+            }
+          }
+
+      - name: Upload daemon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-bin
+          path: out-daemon/*
+          retention-days: 5
+
+  build-service-helper:
+    needs: validate-policy
+    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+
       - name: Build service-helper (Release)
         run: cargo build --release -p service-helper
+
+      - name: Upload service-helper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-helper-bin
+          path: target/release/service-helper.exe
+          retention-days: 5
+
+  build-tauri:
+    needs: validate-policy
+    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
 
       - name: Build Tauri app (Release)
         run: |
           cd app/src-tauri
           cargo build --release
 
+      - name: Upload Tauri artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-bin
+          path: target/release/tauri-app.exe
+          retention-days: 5
+
+  package-release:
+    needs:
+      - validate-policy
+      - build-frontend
+      - build-daemon
+      - build-service-helper
+      - build-tauri
+    runs-on: windows-latest
+    if: ${{ needs.validate-policy.outputs.run_packaging == 'true' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (for Velopack CLI)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk
+
+      - name: Download daemon artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-bin
+          path: artifacts/daemon
+
+      - name: Download service-helper artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: service-helper-bin
+          path: artifacts/service-helper
+
+      - name: Download tauri artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tauri-bin
+          path: artifacts/tauri
+
       - name: Prepare release folder
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
         run: |
-          # Create release staging folder
           New-Item -ItemType Directory -Force -Path release-staging
-          
-          # Copy Tauri app
-          Copy-Item "target/release/tauri-app.exe" "release-staging/memento.exe"
-          
-          # Copy daemon
-          Copy-Item "target/release/memento-daemon.exe" "release-staging/"
-          
-          # Copy service helper
-          Copy-Item "target/release/service-helper.exe" "release-staging/"
-          
-          # Copy ONNX Runtime DirectML.dll
-          # The ort crate downloads prebuilt binaries during build
-          $ortBinDir = Get-ChildItem -Path "$env:LOCALAPPDATA\ort.pyke.io\dfbin\x86_64-pc-windows-msvc" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($ortBinDir) {
-            $directMlDll = Join-Path $ortBinDir.FullName "DirectML.dll"
-            if (Test-Path $directMlDll) {
-              Write-Host "Copying DirectML.dll for ONNX Runtime GPU support"
-              Copy-Item $directMlDll "release-staging/"
-            } else {
-              Write-Warning "DirectML.dll not found - GPU acceleration may not work"
-            }
+
+          Copy-Item "artifacts/tauri/tauri-app.exe" "release-staging/memento.exe"
+          Copy-Item "artifacts/daemon/memento-daemon.exe" "release-staging/"
+          Copy-Item "artifacts/service-helper/service-helper.exe" "release-staging/"
+
+          if (Test-Path "artifacts/daemon/DirectML.dll") {
+            Write-Host "Copying DirectML.dll for ONNX Runtime GPU support"
+            Copy-Item "artifacts/daemon/DirectML.dll" "release-staging/"
           } else {
-            Write-Warning "ort prebuilt directory not found"
+            Write-Warning "DirectML.dll not found - GPU acceleration may not work"
           }
-          
-          # Copy any required resources
+
           if (Test-Path "app/src-tauri/icons") {
             Copy-Item -Recurse "app/src-tauri/icons" "release-staging/"
           }
 
       - name: Get version
         id: version
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
         run: |
           if ("${{ github.event.inputs.version }}" -ne "") {
             $version = "${{ github.event.inputs.version }}"
@@ -141,10 +329,9 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
 
       - name: Download previous release (for delta patches)
-        if: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && github.event.inputs.create_delta != 'false' }}
+        if: ${{ github.event.inputs.create_delta != 'false' }}
         continue-on-error: true
         run: |
-          # Try to download the previous release for delta generation
           $prevRelease = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null
           if ($prevRelease) {
             New-Item -ItemType Directory -Force -Path previous-release
@@ -154,7 +341,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pack with Velopack
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
           $packArgs = @(
@@ -165,17 +351,15 @@ jobs:
             "--mainExe", "memento.exe",
             "--outputDir", "velopack-output"
           )
-          
-          # Add delta base if previous release exists
+
           if (Test-Path "previous-release/*.nupkg") {
             $prevPkg = Get-ChildItem "previous-release/*.nupkg" | Select-Object -First 1
             $packArgs += @("--delta", $prevPkg.FullName)
           }
-          
+
           vpk @packArgs
 
       - name: Upload Velopack artifacts
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v4
         with:
           name: velopack-release
@@ -183,18 +367,28 @@ jobs:
           retention-days: 5
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ needs.validate-policy.outputs.should_create_release == 'true' }}
         run: |
-          gh release create ${{ github.ref_name }} `
-            --title "Memento AI ${{ steps.version.outputs.VERSION }}" `
-            --generate-notes `
-            velopack-output/*
+          $isPreRelease = "${{ needs.validate-policy.outputs.is_prerelease }}"
+
+          if ($isPreRelease -eq "true") {
+            gh release create ${{ github.ref_name }} `
+              --title "Memento AI ${{ steps.version.outputs.VERSION }}" `
+              --generate-notes `
+              --prerelease `
+              velopack-output/*
+          } else {
+            gh release create ${{ github.ref_name }} `
+              --title "Memento AI ${{ steps.version.outputs.VERSION }}" `
+              --generate-notes `
+              velopack-output/*
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Optional: Separate job for testing the service installation
   test-service:
-    needs: build
+    needs: package-release
     runs-on: windows-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
     
