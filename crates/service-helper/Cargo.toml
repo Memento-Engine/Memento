@@ -1,0 +1,24 @@
+[package]
+name = "service-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Admin helper for Memento AI service management"
+
+[[bin]]
+name = "service-helper"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Services",
+]}
+
+[build-dependencies]
+embed-resource = "3"

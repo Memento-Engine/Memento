@@ -5,13 +5,33 @@ import { ThemeProvider } from "next-themes";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import ReferenceProvider from "@/providers/ReferenceProvider";
 import RightSidebar from "@/components/layout/Rightbar";
-import useReferenceContext from "@/hooks/useReferenceContext";
 import KeyboardProvider from "@/providers/KeyboardProvider";
 import ChatProvider from "@/providers/ChatProvider";
 import LeftSidebar from "@/components/layout/Sidebar";
-import { GeistSans } from "geist/font/sans";
 import { Toaster } from "sonner";
-import DraggableCaptureAgent from "@/components/DraggableCaptureAgent";
+import SystemHealthProvider from "@/providers/SystemHealthProvider";
+import CreditsProvider from "@/providers/CreditsProvider";
+import type { Metadata } from "next";
+
+import { Inter } from "next/font/google";
+import React, { useEffect } from "react";
+import useOnboarding from "@/hooks/useOnboarding";
+import OnboardingProvider from "@/providers/OnBoardingProvider";
+import { useRouter } from "next/navigation";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
+
+const metadata: Metadata = {
+  title: "Memento AI — Where memories become knowledge",
+  description: "A personal AI search engine that captures your screen activity, extracts text with OCR, and answers your questions using retrieval-augmented generation. Local-first, privacy-focused.",
+  keywords: ["AI", "personal search engine", "memory", "local-first", "privacy", "OCR", "RAG", "Windows"],
+  icons : {
+    icon: "/logo.png",
+  }
+};
 
 export default function RootLayout({
   children,
@@ -21,49 +41,68 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.className} ${GeistSans.variable} antialiased`}
+      className={`${inter.className} ${inter.variable} antialiased`}
+      suppressHydrationWarning
     >
       <body className="bg-background text-foreground">
-        <Toaster
-          position="bottom-right"
-          toastOptions={{
-            className: "rounded-xl border text-sm font-medium shadow-lg",
-          }}
-        />
-
-        <ChatProvider>
-          <ReferenceProvider>
-            <LayoutContent>{children}</LayoutContent>
-            <DraggableCaptureAgent />
-          </ReferenceProvider>
-        </ChatProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+        >
+          <Toaster position="bottom-right" />
+          <LayoutRoot>{children}</LayoutRoot>
+        </ThemeProvider>
       </body>
     </html>
   );
 }
 
-function LayoutContent({ children }: { children: React.ReactNode }) {
-  const { referenceMeta } = useReferenceContext();
+function LayoutRoot({ children }: { children: React.ReactNode }) {
+  return (
+    <OnboardingProvider>
+      <LayoutInner>{children}</LayoutInner>
+    </OnboardingProvider>
+  );
+}
+
+function LayoutInner({ children }: { children: React.ReactNode }) {
+  const { isOnboardingComplete } = useOnboarding();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isOnboardingComplete) {
+      router.push("/onboarding");
+    } else {
+      router.push("/");
+    }
+  }, [isOnboardingComplete, router]);
+
+  if (!isOnboardingComplete) {
+    return <>{children}</>;
+  }
 
   return (
-    <SidebarProvider>
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="light"
-        enableSystem={false}
-      >
-        <KeyboardProvider />
-        <div className="flex h-screen w-screen ">
-          <LeftSidebar />
+    <SystemHealthProvider>
+      <CreditsProvider>
+        <ChatProvider>
+          <ReferenceProvider>
+            <SidebarProvider>
+              <KeyboardProvider />
 
-          <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
-            <div className="flex-1 overflow-y-auto">{children}</div>
-          </main>
+              <div className="flex h-dvh w-full overflow-hidden bg-background">
+                <LeftSidebar />
 
-          {/* Right side */}
-          {referenceMeta && <RightSidebar />}
-        </div>
-      </ThemeProvider>
-    </SidebarProvider>
+                <main className="flex flex-1 flex-col overflow-hidden">
+                  <div className="flex-1 overflow-y-auto">{children}</div>
+                </main>
+
+                <RightSidebar />
+              </div>
+            </SidebarProvider>
+          </ReferenceProvider>
+        </ChatProvider>
+      </CreditsProvider>
+    </SystemHealthProvider>
   );
 }

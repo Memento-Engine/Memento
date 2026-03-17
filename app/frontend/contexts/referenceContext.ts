@@ -1,5 +1,8 @@
 "use client";
 import { createContext } from "react";
+import { SourceRecord } from "@/components/types";
+import { z } from "zod";
+import { normalizedOcrLayoutSchema } from "@/components/types";
 
 export interface ReferenceMeta {
   captured_at: string;
@@ -18,13 +21,17 @@ export interface ReferenceMeta {
   chunk_id: number;
 
   image_path: string;
+  text_json?: string;
+  normalized_text_layout?: z.infer<typeof normalizedOcrLayoutSchema>;
 }
 
 type ReferenceMetaContextType = {
   referenceMeta?: ReferenceMeta;
+  sourceList: SourceRecord[];
   setReferenceMeta: React.Dispatch<
     React.SetStateAction<ReferenceMeta | undefined>
   >;
+  setSourceList: React.Dispatch<React.SetStateAction<SourceRecord[]>>;
 };
 export const ReferenceContext = createContext<ReferenceMetaContextType | undefined>(
   undefined,

@@ -20,8 +20,46 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_derive = "1.0"
+serde_json = "1.0"
+
+# For fetching Windows hardware data
+wmi = "0.13"
+ 
+# For Cryptography (Hashing and HMAC)
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+
 tokio = { version = "1.49.0", features = ["full"] }
 tauri-plugin-fs = "2.4.5"
+dirs = "6.0.0"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
 
+# System information
+sysinfo = "=0.29.0"
+
+chrono = "0.4.39"
+
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+sentry = { version = "0.45.0", features = ["panic", "tracing"] }
+image = "0.25.9"
+lazy_static = "1.5.0"
+winreg = "0.55.0"
+windows-icons = { git = "https://github.com/tribhuwan-kumar/windows-icons.git" }
+tauri-plugin-stronghold = "2.3.1"
+tauri-plugin-os = "2"
+tauri-plugin-keyring = "0.1.0"
+
+# Velopack for auto-updates
+velopack = "0.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_System_Services",
+] }

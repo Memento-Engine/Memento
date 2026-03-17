@@ -1,4 +1,68 @@
-.fastembed_cache/
-target/
-logs/
+# Environment Variables
 .env
+.env.local
+.env.*.local
+.env.production.local
+
+# FastEmbed Cache
+.fastembed_cache/
+
+
+
+# Build outputs
+velopack-output
+release-staging
+target/
+dist/
+build/
+out/
+.next/
+.turbo/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Logs
+logs/
+*.log
+*.log.*
+.nyc_output/
+
+# IDE & Editor
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+*.iml
+
+.env
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage/
+coverage/
+*.lcov
+
+# Temporary files
+tmp/
+temp/
+*.bak
+*.backup
+
+# Lock files (except package-lock.json if tracking)
+yarn.lock
+pnpm-lock.yaml
+
+# IDE user-specific (but allow example configs)
+.vscode/
+.idea/
+
+# Local development
+.lefthook/local.conf

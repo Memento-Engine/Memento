@@ -10,10 +10,10 @@ pub enum SetupState {
 
 pub fn base_dir() -> PathBuf {
     // Example:
-    // Windows: C:\Users\name\.personal-ai
-    // Linux/Mac: ~/.personal-ai
+    // Windows: C:\Users\name\.memento
+    // Linux/Mac: ~/.memento
     let home = dirs::home_dir().expect("Cannot find home directory");
-    home.join(".personal-ai")
+    home.join(".memento")
 }
 
 

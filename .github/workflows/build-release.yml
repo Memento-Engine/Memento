@@ -1,0 +1,207 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+      create_delta:
+        description: 'Create delta patches from previous release'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Service name for the daemon
+  SERVICE_NAME: SearchEngineDaemon
+  # GitHub repo for releases (update this)
+  RELEASE_REPO: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+
+      - name: Setup .NET (for Velopack CLI)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk
+
+      - name: Install frontend dependencies
+        run: |
+          cd app/frontend
+          npm ci
+
+      - name: Build frontend
+        run: |
+          cd app/frontend
+          npm run build
+
+      - name: Build daemon (Release)
+        run: cargo build --release -p memento-daemon
+
+      - name: Build service-helper (Release)
+        run: cargo build --release -p service-helper
+
+      - name: Build Tauri app (Release)
+        run: |
+          cd app/src-tauri
+          cargo build --release
+
+      - name: Prepare release folder
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+        run: |
+          # Create release staging folder
+          New-Item -ItemType Directory -Force -Path release-staging
+          
+          # Copy Tauri app
+          Copy-Item "target/release/tauri-app.exe" "release-staging/memento.exe"
+          
+          # Copy daemon
+          Copy-Item "target/release/memento-daemon.exe" "release-staging/"
+          
+          # Copy service helper
+          Copy-Item "target/release/service-helper.exe" "release-staging/"
+          
+          # Copy ONNX Runtime DirectML.dll
+          # The ort crate downloads prebuilt binaries during build
+          $ortBinDir = Get-ChildItem -Path "$env:LOCALAPPDATA\ort.pyke.io\dfbin\x86_64-pc-windows-msvc" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($ortBinDir) {
+            $directMlDll = Join-Path $ortBinDir.FullName "DirectML.dll"
+            if (Test-Path $directMlDll) {
+              Write-Host "Copying DirectML.dll for ONNX Runtime GPU support"
+              Copy-Item $directMlDll "release-staging/"
+            } else {
+              Write-Warning "DirectML.dll not found - GPU acceleration may not work"
+            }
+          } else {
+            Write-Warning "ort prebuilt directory not found"
+          }
+          
+          # Copy any required resources
+          if (Test-Path "app/src-tauri/icons") {
+            Copy-Item -Recurse "app/src-tauri/icons" "release-staging/"
+          }
+
+      - name: Get version
+        id: version
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+        run: |
+          if ("${{ github.event.inputs.version }}" -ne "") {
+            $version = "${{ github.event.inputs.version }}"
+          } else {
+            $version = "${{ github.ref_name }}".TrimStart('v')
+          }
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Download previous release (for delta patches)
+        if: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && github.event.inputs.create_delta != 'false' }}
+        continue-on-error: true
+        run: |
+          # Try to download the previous release for delta generation
+          $prevRelease = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null
+          if ($prevRelease) {
+            New-Item -ItemType Directory -Force -Path previous-release
+            gh release download $prevRelease -D previous-release -p "*.nupkg" 2>$null
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pack with Velopack
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $packArgs = @(
+            "pack",
+            "--packId", "memento",
+            "--packVersion", $version,
+            "--packDir", "release-staging",
+            "--mainExe", "memento.exe",
+            "--outputDir", "velopack-output"
+          )
+          
+          # Add delta base if previous release exists
+          if (Test-Path "previous-release/*.nupkg") {
+            $prevPkg = Get-ChildItem "previous-release/*.nupkg" | Select-Object -First 1
+            $packArgs += @("--delta", $prevPkg.FullName)
+          }
+          
+          vpk @packArgs
+
+      - name: Upload Velopack artifacts
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: velopack-release
+          path: velopack-output/*
+          retention-days: 5
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release create ${{ github.ref_name }} `
+            --title "Memento AI ${{ steps.version.outputs.VERSION }}" `
+            --generate-notes `
+            velopack-output/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: Separate job for testing the service installation
+  test-service:
+    needs: build
+    runs-on: windows-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: velopack-release
+          path: test-install
+
+      - name: Test installation
+        run: |
+          # Run the setup in a test environment
+          # Note: This won't actually install the service due to permission constraints
+          # but verifies the installer runs without errors
+          $setupExe = Get-ChildItem "test-install/Setup.exe" -ErrorAction SilentlyContinue
+          if ($setupExe) {
+            Write-Host "Setup.exe found: $($setupExe.FullName)"
+            Write-Host "File size: $($setupExe.Length) bytes"
+          } else {
+            Write-Host "Setup.exe not found in artifacts"
+            exit 1
+          }

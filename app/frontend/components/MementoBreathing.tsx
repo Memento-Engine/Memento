@@ -14,9 +14,10 @@ export default function MementoBreathing(): React.ReactElement {
         viewBox="0 0 960 1024"
         enableBackground="new 0 0 960 1024"
         xmlSpace="preserve"
+				className="text-foreground"
       >
         <path
-          fill="#00000"
+					fill="currentColor"
           opacity="1.000000"
           stroke="none"
           d="

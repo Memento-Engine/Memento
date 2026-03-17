@@ -1,29 +1,26 @@
-import { app } from "@tauri-apps/api";
-import { InferUITools, UIMessage, tool } from "ai";
-import { string, z } from "zod";
+import { UIMessage } from "ai";
+import { z } from "zod";
+import {
+  normalizedOcrLayoutSchema,
+  normalizedOcrTokenSchema,
+  sourceSchema,
+  SourceRecord,
+  sourcesPayloadSchema,
+  SourcesPayload,
+  StepSearchResultsSchema,
+  thinkingSchema,
+  ThinkingStep,
+} from "@shared/types/frontend";
 
-// Thinking schema
-export const StepSearchResultsSchema = z.object({
-  app_name: z.string(),
-  window_name: z.string(),
-  image_path: z.string(),
-  captured_at: z.string(),
-});
-
-export const thinkingSchema = z.object({
-  title: z.string(),
-  status: z.enum([
-    "running", // currently executing
-    "completed", // finished step
-    "final", // pipeline finished
-  ]),
-
-  results: z.array(StepSearchResultsSchema).optional().nullable(),
-  message: z.string().optional().nullable(),
-  queries: z.array(z.string()).nullable().optional(),
-});
-
-export type ThinkingStep = z.infer<typeof thinkingSchema>;
+export {
+  normalizedOcrLayoutSchema,
+  normalizedOcrTokenSchema,
+  sourceSchema,
+  sourcesPayloadSchema,
+  StepSearchResultsSchema,
+  thinkingSchema,
+};
+export type { SourceRecord, SourcesPayload, ThinkingStep };
 
 // Citation schema
 export const citationSchema = z.object({
@@ -52,7 +49,8 @@ export type Citations = z.infer<typeof citationsSchema>;
 
 const dataSchemas = {
   thinking: thinkingSchema,
-  citations: citationsSchema,   // plural
+  citations: citationsSchema, // plural
+  sources: sourcesPayloadSchema,
 };
 
 export type MyDataPart = {

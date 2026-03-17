@@ -1,5 +1,15 @@
 use anyhow::Result;
 use fastembed::{ TextEmbedding, EmbeddingModel as FastEmbedModel, InitOptions };
+use std::path::PathBuf;
+
+/// Returns the models directory: %APPDATA%\Memento\models\
+/// This location persists across Velopack updates.
+fn get_models_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Memento")
+        .join("models")
+}
 
 pub struct EmbeddingModel {
     model: TextEmbedding,
@@ -7,8 +17,15 @@ pub struct EmbeddingModel {
 
 impl EmbeddingModel {
     pub fn new() -> Result<Self> {
-        // Using optimized ONNX model internally
-        let model = TextEmbedding::try_new(InitOptions::new(FastEmbedModel::AllMiniLML6V2))?;
+        let cache_dir = get_models_dir();
+        std::fs::create_dir_all(&cache_dir)?;
+        
+        // Downloads model on first run if not present
+        let model = TextEmbedding::try_new(
+            InitOptions::new(FastEmbedModel::AllMiniLML6V2)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(true)
+        )?;
 
         Ok(Self { model })
     }
@@ -34,9 +51,14 @@ pub struct CrossEncoder {
 
 impl CrossEncoder {
     pub fn new() -> Result<Self> {
-        println!("Loading reranker V2M3");
+        let cache_dir = get_models_dir();
+        std::fs::create_dir_all(&cache_dir)?;
+        
+        tracing::info!("Loading reranker JINARerankerV1TurboEn");
         let model = TextRerank::try_new(
             RerankInitOptions::new(RerankerModel::JINARerankerV1TurboEn)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(true)
         )?;
 
         Ok(Self { model })

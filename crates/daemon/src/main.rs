@@ -1,240 +1,228 @@
+// Memento Daemon - 24/7 background screen capture and OCR service
+// Optimized for minimal CPU usage and user activity prioritization
+// Supports running as Windows Service or standalone executable
+
 mod pipeline;
 mod cache;
 mod ocr;
 mod embedding;
 mod ui_events;
 mod server;
-mod llms;
 mod browser_utils;
+mod core;
+mod throttle;
+mod logging;
+
+#[cfg(windows)]
+mod service;
+
 use std::sync::Arc;
+use std::time::Duration;
+use std::borrow::Cow;
+
 use crate::{
-    embedding::engine::{ CrossEncoder, EmbeddingModel },
+    core::{DaemonConfig, DaemonLifecycle, ShutdownController, set_process_priority},
+    embedding::{AsyncEmbeddingModel, AsyncCrossEncoder},
     ocr::engine::WindowsOcrEngine,
     pipeline::{
-        capture::continuous_capture,
+        capture::continuous_capture_v2,
         monitor::get_primary_monitor_id,
-        processing_ocr_results::processing_ocr_results,
+        processor::OcrProcessor,
     },
-    server::{ app_state::AppState, server::start_server },
-    ui_events::start_listener,
+    server::{app_state::AppState, server::start_server, privacy::PrivacyManager},
+    throttle::AdaptiveScheduler,
+    cache::PersistentOcrCache,
 };
-use app_core::{ config::database_dir, db::{ DatabaseManager, SearchQuery } };
-use chrono::{ DateTime, Utc };
-use tracing_subscriber;
-use tokio::sync::{ Mutex, mpsc };
-use tracing::{ error, info, warn, debug };
-use tokio::time::{ sleep, self, Instant, Duration };
-use std::sync::atomic::{ AtomicBool, Ordering };
 
-// #[tokio::main]
-// async fn main() {
-//     let file_appender = tracing_appender::rolling::daily("logs", "daemon.log");
+use app_core::{config::database_dir, db::DatabaseManager};
+use tracing::{error, info, warn};
+use tracing_subscriber::{self, EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tokio::sync::mpsc;
 
-//     tracing_subscriber::fmt().with_writer(file_appender).with_ansi(false).init();
+use fs2::FileExt;
+use std::fs::OpenOptions;
 
-//     tracing::info!("Daemon Started.");
+fn ensure_single_instance() -> std::fs::File {
+    let lock_path = app_core::config::base_dir().join("memento-daemon.lock");
+    
+    // Ensure the directory exists
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    
+    let lock_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+        .expect("Failed to open lock file");
 
-//     let (capture_tx, mut capture_rx) = mpsc::channel::<CapturedWindow>(50);
-//     let (worker_tx, mut worker_rx) = mpsc::channel::<ScreenMemory>(50);
+    if lock_file.try_lock_exclusive().is_err() {
+        eprintln!("Another memento-daemon instance is already running");
+        std::process::exit(0);
+    }
+    
+    lock_file
+}
 
-//     // channel between listener and async worker
-//     let (event_listener_tx, mut event_listener_rx) = tokio::sync::mpsc::channel::<()>(100);
+fn setup_logging(debug_mode: bool) {
+    // Set up the file appender
+    let log_dir = app_core::config::base_dir().join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    
+    let file_appender = tracing_appender::rolling::daily(log_dir, "daemon.log");
 
-//     let frame_cache = Arc::new(Mutex::new(FramesCache::new(50, 9)));
-//     let chunk_cache = Arc::new(Mutex::new(ChunkCache::new(50, 9)));
+    // Create an environment filter
+    let filter = if debug_mode {
+        EnvFilter::new("debug")
+    } else {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+    };
 
-//     let ocr_engine = Arc::new(WindowsOcr::new());
-
-//     let embedding_engine: Arc<std::sync::Mutex<EmbeddingModel>> = Arc::new(
-//         std::sync::Mutex::new(match EmbeddingModel::new() {
-//             Ok(m) => m,
-//             Err(e) => {
-//                 error!("Failed to initialize the embedding Model : {:#?}", e);
-//                 return;
-//             }
-//         })
-//     );
-
-//     let cross_encoder: Arc<std::sync::Mutex<CrossEncoder>> = Arc::new(
-//         std::sync::Mutex::new(match CrossEncoder::new() {
-//             Ok(m) => m,
-//             Err(e) => {
-//                 error!("Failed to initialize the embedding Model : {:#?}", e);
-//                 return;
-//             }
-//         })
-//     );
-
-//     let db_path = database_dir();
-//     let db_path_str = match db_path.to_str() {
-//         Some(p) => p,
-//         None => {
-//             error!("Invalid database path (non-UTF8)");
-//             return;
-//         }
-//     };
-//     let db = Arc::new(
-//         DatabaseManager::new(&db_path_str).await.unwrap_or_else(|e| {
-//             error!("Failed to init database: {:#?}", e);
-//             panic!("Database init failed");
-//         })
-//     );
-
-//     let app_db_clone = db.clone();
-//     let app_state = Arc::new(AppState {
-//         db: app_db_clone,
-//         embeddingModel: embedding_engine.clone(),
-//         crossEncoder: cross_encoder.clone(),
-//     });
-
-//     let app_clone = app_state.clone();
-
-//     let embedding_clone = embedding_engine.clone();
-
-//     let query_db_clone = db.clone();
-//     let worker_db_clone = db.clone();
-
-//     println!("listening Keyboard events");
-
-//     // // Listen Keyboard and mouse
-//     // tokio::task::spawn_blocking(move || {
-//     //     // use std channel inside blocking thread
-//     //     let (std_tx, std_rx) = std::sync::mpsc::channel();
-
-//     //     // forward events to tokio channel
-//     //     std::thread::spawn(move || {
-//     //         start_listener(std_tx);
-//     //     });
-
-//     //     // bridge std channel -> tokio channel
-//     //     while std_rx.recv().is_ok() {
-//     //         event_listener_tx.blocking_send(()).ok();
-//     //     }
-//     // });
-
-//     // Shared flag: "Did something happen?"
-//     // let activity_flag = Arc::new(AtomicBool::new(false));
-//     // let activity_flag_clone = activity_flag.clone();
-
-//     println!("Channel listener Events");
-//     // 1. The Event Listener (Lightweight - Just sets a flag)
-//     // tokio::spawn(async move {
-//     //     while let Some(_) = event_listener_rx.recv().await {
-//     //         // "Hey, the user did something!"
-//     //         // This is extremely cheap (nanoseconds)
-//     //         activity_flag_clone.store(true, Ordering::Relaxed);
-//     //     }
-//     // });
-
-//     println!("continues_capture_windows tokio");
-//     // 2. The Capture Loop (The "Silent Background Process")
-//     // tokio::spawn(async move {
-//     //     let mut interval = time::interval(Duration::from_secs(2)); // Tick every 2s
-
-//     //     loop {
-//     //         // Wait for the next tick (This puts the thread to sleep = Cool CPU)
-//     //         interval.tick().await;
-
-//     //         // Check: Did we see activity since the last tick?
-//     //         if activity_flag.load(Ordering::Relaxed) {
-//     //             // Reset flag
-//     //             activity_flag.store(false, Ordering::Relaxed);
-
-//     //             // Run Heavy Logic
-//     //             if
-//     //                 let Err(e) = continues_capture_windows(
-//     //                     frame_cache.clone(),
-//     //                     capture_tx.clone()
-//     //                 ).await
-//     //             {
-//     //                 error!("Capture error {:?}", e);
-//     //             }
-
-//     //             info!("Capture cycle complete. Sleeping...");
-//     //         } else {
-//     //             // No activity? Do nothing. Go back to sleep.
-//     //             info!("Idle tick. No user activity.");
-//     //         }
-//     //     }
-//     // });
-
-//     // println!("Processing the OCR Thread");
-//     // // Processing OCR
-//     // tokio::spawn(async move {
-//     //     process_ocr(capture_rx, worker_tx, ocr_engine.clone()).await;
-//     // });
-
-//     // println!("Chunks the OCR Thread");
-//     // // Chunks Processing
-//     // tokio::spawn(async move {
-//     //     process_chunks(
-//     //         worker_rx,
-//     //         chunk_cache.clone(),
-//     //         embedding_engine.clone(),
-//     //         worker_db_clone
-//     //     ).await;
-//     // });
-
-//     // Ipc Server Listening
-
-//     // Prevent program from exiting
-
-//     start_server(app_clone).await;
-
-//     tokio::signal::ctrl_c().await.unwrap();
-// }
-
-#[tokio::main]
-async fn main() {
-    use tracing_subscriber::EnvFilter;
-    // 1. Initialize tracing in debug mode
-
-    // 1. Set up the file appender
-    let file_appender = tracing_appender::rolling::daily("logs", "daemon.log");
-
-    // 2. Create an environment filter defaulting to "debug"
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
-
-    // 3. Initialize the subscriber with the filter
-    tracing_subscriber
-        ::fmt()
-        .with_env_filter(filter) // <-- This enables debug mode
+    let fmt_layer = fmt::layer()
         .with_writer(file_appender)
-        .with_ansi(false) // Keep false for files so you don't get messy color codes
+        .with_ansi(false)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_filter(filter);
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(Some(sentry_tracing::layer()))
         .init();
+}
 
-    tracing::debug!("Debug mode is active!"); // This will now show up in your file
-    tracing::info!("Daemon Started.");
+fn is_production_runtime() -> bool {
+    match std::env::var("MEMENTO_ENV") {
+        Ok(value) => value.eq_ignore_ascii_case("production"),
+        Err(_) => !cfg!(debug_assertions),
+    }
+}
 
-    debug!("Tracing initialized in debug mode");
+fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
+    if !is_production_runtime() {
+        return None;
+    }
 
-    use tokio::sync::mpsc::channel;
+    let dsn = std::env::var("DAEMON_SENTRY_DSN")
+        .or_else(|_| std::env::var("SENTRY_DSN"))
+        .ok()?;
 
-    let interval = Duration::from_secs(1);
+    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@1.2.0".to_string());
 
-    // 2. Initialize the engine before spawning the task.
-    // If this fails, the program returns an error and exits cleanly.
+    let guard = sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: Some(Cow::Owned(release)),
+            environment: Some("daemon".into()),
+            ..Default::default()
+        },
+    ));
+
+    sentry::configure_scope(|scope| {
+        scope.set_tag("environment", "daemon");
+        scope.set_tag("service", "daemon");
+    });
+
+    Some(guard)
+}
+
+fn main() {
+    // Check if running as Windows Service
+    #[cfg(windows)]
+    {
+        if service::is_running_as_service() {
+            // Initialize sentry before service runs
+            let _sentry_guard = initialize_sentry();
+            
+            // Run as Windows Service - this blocks until service stops
+            if let Err(e) = service::run_as_service() {
+                eprintln!("Failed to run as Windows Service: {:?}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
+
+    // Run as standalone executable (for development)
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime");
+
+    runtime.block_on(run_standalone());
+}
+
+/// Run daemon in standalone mode (for development/debugging)
+async fn run_standalone() {
+    let _sentry_guard = initialize_sentry();
+
+    // 1. Ensure single instance (keep lock file open for daemon lifetime)
+    let _lock_file = ensure_single_instance();
+    
+    // 2. Load configuration
+    let config = DaemonConfig::load();
+    
+    // 3. Setup logging
+    setup_logging(config.debug_logging);
+    
+    info!("Memento Daemon starting (standalone mode)...");
+    info!("Configuration: {:?}", config);
+    
+    // 4. Set process priority to below normal for background operation
+    if set_process_priority() {
+        info!("Process priority set to background mode");
+    } else {
+        warn!("Failed to set process priority - daemon may compete with user apps");
+    }
+    
+    // 5. Setup graceful shutdown
+    let shutdown = Arc::new(ShutdownController::new());
+    Arc::clone(&shutdown).setup_signal_handlers();
+    
+    // 6. Initialize lifecycle manager
+    let lifecycle = Arc::new(DaemonLifecycle::new(config.clone(), Arc::clone(&shutdown)));
+    
+    // 7. Initialize adaptive scheduler for CPU-aware throttling
+    let scheduler = AdaptiveScheduler::new(config.clone());
+    
+    // 8. Initialize OCR engine
     let ocr_engine = match WindowsOcrEngine::new() {
-        Ok(e) => {
-            debug!("Successfully initialized WindowsOcrEngine");
-            e
+        Ok(engine) => {
+            info!("Windows OCR engine initialized");
+            Arc::new(engine)
         }
         Err(e) => {
-            error!("Failed to initialize WindowsOcrEngine: {:#?}", e);
+            error!("Failed to initialize OCR engine: {:?}", e);
             return;
         }
     };
-
-    let embedding_engine: Arc<std::sync::Mutex<EmbeddingModel>> = Arc::new(
-        std::sync::Mutex::new(match EmbeddingModel::new() {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to initialize the embedding Model : {:#?}", e);
-                return;
-            }
-        })
-    );
-
+    
+    // 9. Initialize embedding models (async-safe versions)
+    let embedding_model = match AsyncEmbeddingModel::new() {
+        Ok(model) => {
+            info!("Embedding model initialized");
+            Arc::new(model)
+        }
+        Err(e) => {
+            error!("Failed to initialize embedding model: {:?}", e);
+            return;
+        }
+    };
+    
+    let cross_encoder = match AsyncCrossEncoder::new() {
+        Ok(model) => {
+            info!("Cross-encoder initialized");
+            Arc::new(model)
+        }
+        Err(e) => {
+            error!("Failed to initialize cross-encoder: {:?}", e);
+            return;
+        }
+    };
+    
+    // 10. Initialize database
     let db_path = database_dir();
     let db_path_str = match db_path.to_str() {
         Some(p) => p,
@@ -243,71 +231,433 @@ async fn main() {
             return;
         }
     };
-    let db = Arc::new(
-        DatabaseManager::new(&db_path_str).await.unwrap_or_else(|e| {
-            error!("Failed to init database: {:#?}", e);
-            panic!("Database init failed");
-        })
-    );
-
-    let cross_encoder: Arc<std::sync::Mutex<CrossEncoder>> = Arc::new(
-        std::sync::Mutex::new(match CrossEncoder::new() {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to initialize the embedding Model : {:#?}", e);
-                return;
-            }
-        })
-    );
-
-    // App State
-    let app_db_clone = db.clone();
-    let app_state = Arc::new(AppState {
-        db: app_db_clone,
-        embeddingModel: embedding_engine.clone(),
-        crossEncoder: cross_encoder.clone(),
-    });
-
-    let app_clone = app_state.clone();
-
-    let windows_ocr_engine = Arc::new(ocr_engine);
-    let (result_sender, mut result_receiver) = channel(512);
-
-    let monitor_id = match get_primary_monitor_id().await {
-        Ok(m) => {
-            debug!("Primary monitor ID found: {:?}", m);
-            m
+    
+    let db = match DatabaseManager::new(db_path_str).await {
+        Ok(db) => {
+            info!("Database initialized at: {}", db_path_str);
+            Arc::new(db)
         }
         Err(e) => {
-            error!("Failed to get primary monitor ID: {:#?}", e);
+            error!("Failed to initialize database: {:?}", e);
             return;
         }
     };
-
-    info!("Starting continuous capture task...");
-
-    // 3. Spawn the task using an async block.
-    // The `move` keyword transfers ownership of `ocr_engine` into the task.
-    tokio::spawn(async move {
-        let _ = continuous_capture(
-            result_sender,
-            interval,
-            windows_ocr_engine.clone(),
-            monitor_id
-        ).await;
+    
+    // 11a. Initialize privacy manager
+    let privacy_manager = match PrivacyManager::new(db.pool.clone()).await {
+        Ok(pm) => {
+            info!("Privacy manager initialized");
+            Arc::new(pm)
+        }
+        Err(e) => {
+            error!("Failed to initialize privacy manager: {:?}", e);
+            return;
+        }
+    };
+    
+    // 11. Initialize persistent OCR cache
+    let ocr_cache = Arc::new(PersistentOcrCache::new(
+        config.ocr_cache_max_age_secs,
+        config.ocr_cache_max_entries,
+    ));
+    
+    // 12. Get primary monitor
+    let monitor_id = match get_primary_monitor_id().await {
+        Ok(id) => {
+            info!("Primary monitor ID: {}", id);
+            id
+        }
+        Err(e) => {
+            error!("Failed to get primary monitor: {:?}", e);
+            return;
+        }
+    };
+    
+    // 13. Create capture result channel
+    let (capture_tx, capture_rx) = mpsc::channel(256);
+    
+    // 14. Create app state for HTTP server
+    let app_state = Arc::new(AppState::new(
+        Arc::clone(&db),
+        Arc::clone(&embedding_model),
+        Arc::clone(&cross_encoder),
+        scheduler.clone(),
+        Arc::clone(&privacy_manager),
+    ));
+    
+    // 15. Mark lifecycle as running
+    lifecycle.start().await;
+    
+    // 16. Spawn the continuous capture task
+    let capture_lifecycle = Arc::clone(&lifecycle);
+    let capture_scheduler = scheduler.clone();
+    let capture_ocr_engine = Arc::clone(&ocr_engine);
+    let capture_ocr_cache = Arc::clone(&ocr_cache);
+    let capture_privacy_cache = privacy_manager.cache();
+    let capture_shutdown = Arc::clone(&shutdown);
+    
+    let _capture_handle = tokio::spawn(async move {
+        continuous_capture_v2(
+            capture_tx,
+            capture_scheduler,
+            capture_ocr_engine,
+            capture_ocr_cache,
+            capture_privacy_cache,
+            monitor_id,
+            capture_shutdown,
+            capture_lifecycle,
+        ).await
     });
-
-    // processing ocr results
-    tokio::spawn(async move {
-        processing_ocr_results(result_receiver, embedding_engine, db).await;
+    
+    // 17. Spawn the OCR result processor
+    let processor_embedding = Arc::clone(&embedding_model);
+    let processor_db = Arc::clone(&db);
+    let processor_shutdown = Arc::clone(&shutdown);
+    
+    let _processor_handle = tokio::spawn(async move {
+        let processor = OcrProcessor::new(processor_embedding, processor_db);
+        processor.process_stream(capture_rx, processor_shutdown).await;
     });
-
-    // Starting the server
-    start_server(app_clone).await;
-
-    info!("Watching Screen");
-    loop {
-        // Just makes daemon run continuesly
-        tokio::time::sleep(Duration::from_secs(2)).await;
+    
+    // 18. Spawn the HTTP server
+    let server_state = Arc::clone(&app_state);
+    let server_shutdown = Arc::clone(&shutdown);
+    
+    let server_handle = tokio::spawn(async move {
+        start_server(server_state, server_shutdown).await;
+    });
+    
+    // 19. Spawn cache persistence task (saves every 5 minutes)
+    let cache_persist = Arc::clone(&ocr_cache);
+    let cache_shutdown = shutdown.subscribe();
+    
+    tokio::spawn(async move {
+        let mut rx = cache_shutdown;
+        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    // Cleanup stale entries
+                    cache_persist.cleanup_stale().await;
+                    
+                    // Persist to disk
+                    if let Err(e) = cache_persist.persist().await {
+                        warn!("Failed to persist OCR cache: {}", e);
+                    }
+                }
+                _ = rx.recv() => {
+                    // Final persist on shutdown
+                    info!("Persisting OCR cache before shutdown...");
+                    let _ = cache_persist.persist().await;
+                    break;
+                }
+            }
+        }
+    });
+    
+    // 20. Spawn stats logging task
+    let stats_lifecycle = Arc::clone(&lifecycle);
+    let stats_shutdown = shutdown.subscribe();
+    
+    tokio::spawn(async move {
+        let mut rx = stats_shutdown;
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let stats = stats_lifecycle.stats().await;
+                    info!(
+                        "Daemon stats: {} captures, {} skipped, {} errors, uptime: {}s, CPU: {:.1}%",
+                        stats.frames_captured,
+                        stats.frames_skipped,
+                        stats.errors,
+                        stats.uptime_secs,
+                        stats.current_cpu_usage * 100.0
+                    );
+                }
+                _ = rx.recv() => {
+                    break;
+                }
+            }
+        }
+    });
+    
+    info!("Daemon fully initialized and running");
+    
+    // 21. Wait for shutdown signal
+    shutdown.wait_for_shutdown().await;
+    
+    info!("Shutdown signal received, stopping tasks...");
+    
+    // 22. Wait for tasks to complete (with timeout)
+    let shutdown_timeout = Duration::from_secs(10);
+    
+    tokio::select! {
+        _ = async {
+            // let _ = capture_handle.await;
+            // let _ = processor_handle.await;
+            let _ = server_handle.await;
+        } => {
+            info!("All tasks completed gracefully");
+        }
+        _ = tokio::time::sleep(shutdown_timeout) => {
+            warn!("Shutdown timeout reached, forcing exit");
+        }
     }
+    
+    // 23. Final cleanup
+    lifecycle.set_state(core::lifecycle::DaemonState::Stopped).await;
+    
+    info!("Memento Daemon stopped");
+}
+
+/// Core daemon logic that can be called by both service and standalone modes
+/// Takes a ShutdownController that will be triggered when shutdown is needed
+pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // 1. Ensure single instance (keep lock file open for daemon lifetime)
+    let _lock_file = ensure_single_instance();
+    
+    // 2. Load configuration
+    let config = DaemonConfig::load();
+    
+    // 3. Setup logging
+    setup_logging(config.debug_logging);
+    
+    info!("Memento Daemon starting (service mode)...");
+    info!("Configuration: {:?}", config);
+    
+    // 4. Set process priority to below normal for background operation
+    if set_process_priority() {
+        info!("Process priority set to background mode");
+    } else {
+        warn!("Failed to set process priority - daemon may compete with user apps");
+    }
+    
+    // 5. Initialize lifecycle manager
+    let lifecycle = Arc::new(DaemonLifecycle::new(config.clone(), Arc::clone(&shutdown)));
+    
+    // 6. Initialize adaptive scheduler for CPU-aware throttling
+    let scheduler = AdaptiveScheduler::new(config.clone());
+    
+    // 7. Initialize OCR engine
+    let ocr_engine = match WindowsOcrEngine::new() {
+        Ok(engine) => {
+            info!("Windows OCR engine initialized");
+            Arc::new(engine)
+        }
+        Err(e) => {
+            error!("Failed to initialize OCR engine: {:?}", e);
+            return Err(format!("OCR engine init failed: {:?}", e).into());
+        }
+    };
+    
+    // 8. Initialize embedding models (async-safe versions)
+    let embedding_model = match AsyncEmbeddingModel::new() {
+        Ok(model) => {
+            info!("Embedding model initialized");
+            Arc::new(model)
+        }
+        Err(e) => {
+            error!("Failed to initialize embedding model: {:?}", e);
+            return Err(format!("Embedding model init failed: {:?}", e).into());
+        }
+    };
+    
+    let cross_encoder = match AsyncCrossEncoder::new() {
+        Ok(model) => {
+            info!("Cross-encoder initialized");
+            Arc::new(model)
+        }
+        Err(e) => {
+            error!("Failed to initialize cross-encoder: {:?}", e);
+            return Err(format!("Cross-encoder init failed: {:?}", e).into());
+        }
+    };
+    
+    // 9. Initialize database
+    let db_path = database_dir();
+    let db_path_str = match db_path.to_str() {
+        Some(p) => p,
+        None => {
+            error!("Invalid database path (non-UTF8)");
+            return Err("Invalid database path".into());
+        }
+    };
+    
+    let db = match DatabaseManager::new(db_path_str).await {
+        Ok(db) => {
+            info!("Database initialized at: {}", db_path_str);
+            Arc::new(db)
+        }
+        Err(e) => {
+            error!("Failed to initialize database: {:?}", e);
+            return Err(format!("Database init failed: {:?}", e).into());
+        }
+    };
+    
+    // 10. Initialize privacy manager
+    let privacy_manager = match PrivacyManager::new(db.pool.clone()).await {
+        Ok(pm) => {
+            info!("Privacy manager initialized");
+            Arc::new(pm)
+        }
+        Err(e) => {
+            error!("Failed to initialize privacy manager: {:?}", e);
+            return Err(format!("Privacy manager init failed: {:?}", e).into());
+        }
+    };
+    
+    // 11. Initialize persistent OCR cache
+    let ocr_cache = Arc::new(PersistentOcrCache::new(
+        config.ocr_cache_max_age_secs,
+        config.ocr_cache_max_entries,
+    ));
+    
+    // 12. Get primary monitor
+    let monitor_id = match get_primary_monitor_id().await {
+        Ok(id) => {
+            info!("Primary monitor ID: {}", id);
+            id
+        }
+        Err(e) => {
+            error!("Failed to get primary monitor: {:?}", e);
+            return Err(format!("Monitor detection failed: {:?}", e).into());
+        }
+    };
+    
+    // 13. Create capture result channel
+    let (capture_tx, capture_rx) = mpsc::channel(256);
+    
+    // 14. Create app state for HTTP server
+    let app_state = Arc::new(AppState::new(
+        Arc::clone(&db),
+        Arc::clone(&embedding_model),
+        Arc::clone(&cross_encoder),
+        scheduler.clone(),
+        Arc::clone(&privacy_manager),
+    ));
+    
+    // 15. Mark lifecycle as running
+    lifecycle.start().await;
+    
+    // 16. Spawn the continuous capture task
+    let capture_lifecycle = Arc::clone(&lifecycle);
+    let capture_scheduler = scheduler.clone();
+    let capture_ocr_engine = Arc::clone(&ocr_engine);
+    let capture_ocr_cache = Arc::clone(&ocr_cache);
+    let capture_privacy_cache = privacy_manager.cache();
+    let capture_shutdown = Arc::clone(&shutdown);
+    
+    let _capture_handle = tokio::spawn(async move {
+        continuous_capture_v2(
+            capture_tx,
+            capture_scheduler,
+            capture_ocr_engine,
+            capture_ocr_cache,
+            capture_privacy_cache,
+            monitor_id,
+            capture_shutdown,
+            capture_lifecycle,
+        ).await
+    });
+    
+    // 17. Spawn the OCR result processor
+    let processor_embedding = Arc::clone(&embedding_model);
+    let processor_db = Arc::clone(&db);
+    let processor_shutdown = Arc::clone(&shutdown);
+    
+    let _processor_handle = tokio::spawn(async move {
+        let processor = OcrProcessor::new(processor_embedding, processor_db);
+        processor.process_stream(capture_rx, processor_shutdown).await;
+    });
+    
+    // 18. Spawn the HTTP server
+    let server_state = Arc::clone(&app_state);
+    let server_shutdown = Arc::clone(&shutdown);
+    
+    let server_handle = tokio::spawn(async move {
+        start_server(server_state, server_shutdown).await;
+    });
+    
+    // 19. Spawn cache persistence task (saves every 5 minutes)
+    let cache_persist = Arc::clone(&ocr_cache);
+    let cache_shutdown = shutdown.subscribe();
+    
+    tokio::spawn(async move {
+        let mut rx = cache_shutdown;
+        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    cache_persist.cleanup_stale().await;
+                    if let Err(e) = cache_persist.persist().await {
+                        warn!("Failed to persist OCR cache: {}", e);
+                    }
+                }
+                _ = rx.recv() => {
+                    info!("Persisting OCR cache before shutdown...");
+                    let _ = cache_persist.persist().await;
+                    break;
+                }
+            }
+        }
+    });
+    
+    // 20. Spawn stats logging task
+    let stats_lifecycle = Arc::clone(&lifecycle);
+    let stats_shutdown = shutdown.subscribe();
+    
+    tokio::spawn(async move {
+        let mut rx = stats_shutdown;
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let stats = stats_lifecycle.stats().await;
+                    info!(
+                        "Daemon stats: {} captures, {} skipped, {} errors, uptime: {}s, CPU: {:.1}%",
+                        stats.frames_captured,
+                        stats.frames_skipped,
+                        stats.errors,
+                        stats.uptime_secs,
+                        stats.current_cpu_usage * 100.0
+                    );
+                }
+                _ = rx.recv() => {
+                    break;
+                }
+            }
+        }
+    });
+    
+    info!("Daemon fully initialized and running");
+    
+    // 21. Wait for shutdown signal
+    shutdown.wait_for_shutdown().await;
+    
+    info!("Shutdown signal received, stopping tasks...");
+    
+    // 22. Wait for tasks to complete (with timeout)
+    let shutdown_timeout = Duration::from_secs(10);
+    
+    tokio::select! {
+        _ = async {
+            let _ = server_handle.await;
+        } => {
+            info!("All tasks completed gracefully");
+        }
+        _ = tokio::time::sleep(shutdown_timeout) => {
+            warn!("Shutdown timeout reached, forcing exit");
+        }
+    }
+    
+    // 23. Final cleanup
+    lifecycle.set_state(core::lifecycle::DaemonState::Stopped).await;
+    
+    info!("Memento Daemon stopped");
+    Ok(())
 }

@@ -1,5 +1,5 @@
 use std::{ collections::{ VecDeque } };
-use image::{ DynamicImage, imageops::FilterType };
+use image::DynamicImage;
 use image_hasher::{ HashAlg, Hasher, HasherConfig, ImageHash };
 use tracing::{ debug };
 
