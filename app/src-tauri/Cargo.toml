@@ -45,7 +45,9 @@ sysinfo = "=0.29.0"
 chrono = "0.4.39"
 
 tracing = "0.1.44"
-sentry = { version = "0.45.0", features = ["panic"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+sentry = { version = "0.45.0", features = ["panic", "tracing"] }
 image = "0.25.9"
 lazy_static = "1.5.0"
 winreg = "0.55.0"
@@ -53,3 +55,11 @@ windows-icons = { git = "https://github.com/tribhuwan-kumar/windows-icons.git" }
 tauri-plugin-stronghold = "2.3.1"
 tauri-plugin-os = "2"
 tauri-plugin-keyring = "0.1.0"
+
+# Velopack for auto-updates
+velopack = "0.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_System_Services",
+] }

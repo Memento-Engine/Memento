@@ -2,6 +2,7 @@
 members = [
     "crates/core",
     "crates/daemon",
+    "crates/service-helper",
     "app/src-tauri",
 ]
 resolver = "2"

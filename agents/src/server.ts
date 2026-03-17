@@ -2,6 +2,9 @@ import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 import { graph } from "./agent";
 import { getConfig, loadConfig } from "./config/config";
@@ -39,6 +42,54 @@ const AgentRequestSchema = z.object({
     .max(5000, "Goal exceeds maximum length")
     .trim(),
 });
+
+/**
+ * Get the local data directory path (cross-platform).
+ * Windows: %LOCALAPPDATA%
+ * macOS: ~/Library/Application Support
+ * Linux: ~/.local/share
+ */
+function getLocalDataDir(): string {
+  const platform = os.platform();
+  if (platform === "win32") {
+    return process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+  } else if (platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support");
+  } else {
+    return process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+  }
+}
+
+/**
+ * Write the server port to a file for the frontend to read.
+ */
+async function writePortFile(port: number, logger: any): Promise<void> {
+  const maxRetries = 8;
+  let backoff = 1000;
+  const maxBackoff = 64000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const dirPath = path.join(getLocalDataDir(), "memento");
+      const filePath = path.join(dirPath, "memento-agents.port");
+
+      fs.mkdirSync(dirPath, { recursive: true });
+      fs.writeFileSync(filePath, port.toString());
+
+      logger.info(`Successfully wrote port ${port} to ${filePath}`);
+      return;
+    } catch (error) {
+      if (attempt >= maxRetries) {
+        logger.error(`Max retries reached. Fatal error writing port file: ${error}`);
+        return;
+      }
+
+      logger.warn(`Attempt ${attempt} failed: ${error}. Retrying in ${backoff}ms...`);
+      await new Promise(resolve => setTimeout(resolve, backoff));
+      backoff = Math.min(backoff * 2, maxBackoff);
+    }
+  }
+}
 
 /**
  * Initialize and start the agent server.
@@ -438,10 +489,16 @@ async function startServer() {
       } as AgentResponse);
     });
 
-    // Start server
-    app.listen(config.server.port, config.server.host, () => {
+    // Start server with OS-assigned port (port 0)
+    const server = app.listen(0, config.server.host, async () => {
+      const address = server.address();
+      const actualPort = typeof address === "object" && address ? address.port : 0;
+      
+      // Write port to file for frontend to read
+      await writePortFile(actualPort, logger);
+      
       logger.info(
-        `Agent server started on http://${config.server.host}:${config.server.port}/api/v1`,
+        `Agent server started on http://${config.server.host}:${actualPort}/api/v1`,
       );
     });
   } catch (error) {

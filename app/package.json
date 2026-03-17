@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "concurrently -n agents,tauri -c blue,green \"npm run dev --prefix ../agents\" \"npm run tauri dev\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -24,6 +25,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "concurrently": "^9.2.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
   }

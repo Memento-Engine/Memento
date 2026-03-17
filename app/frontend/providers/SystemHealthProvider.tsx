@@ -1,8 +1,7 @@
 import { SystemHealthContext } from "@/contexts/SystemHealthContext";
 import React, { useEffect, useState } from "react";
 
-import axios from "axios";
-import { getBaseUrl } from "@/api/base";
+import { checkDaemonHealth, onDaemonStatusChange, DaemonStatus } from "@/api/base";
 import { invoke } from "@tauri-apps/api/core";
 
 interface SystemHealthProviderProps {
@@ -25,6 +24,8 @@ export default function SystemHealthProvider({
       const ans = await invoke("start_daemon", { isDev: true });
       setIsError(false);
       setError("");
+      // Check health after starting
+      setTimeout(() => checkDaemonHealth(), 1000);
     } catch (err) {
       console.log("Command hit got error", err);
       setIsError(true);
@@ -41,6 +42,7 @@ export default function SystemHealthProvider({
       const ans = await invoke("stop_daemon", { isDev: true });
       setIsError(false);
       setError("");
+      setIsRunning(false);
     } catch (err) {
       console.log("Command hit got error", err);
       setIsError(true);
@@ -51,37 +53,32 @@ export default function SystemHealthProvider({
   };
 
   const checkHealth = async (): Promise<boolean> => {
-    const baseUrl = await getBaseUrl();
-
-    if (!baseUrl) {
-      return false;
-    }
-
-    try {
-      const res = await axios.get(`${baseUrl}/healthz`);
-      return res.status === 200;
-    } catch {
-      return false;
-    }
+    // Use the non-blocking health check from base.ts
+    return checkDaemonHealth();
   };
 
   const reconnect = async (): Promise<void> => {
-    if (await checkHealth()) {
-      return;
-    }
+    await checkDaemonHealth();
   };
 
   useEffect(() => {
-    const runHealthCheck = async () => {
-      const status = await checkHealth();
-      setIsRunning(status);
+    // Subscribe to daemon status changes (non-blocking)
+    const unsubscribe = onDaemonStatusChange((status: DaemonStatus) => {
+      setIsRunning(status === "connected");
+    });
+
+    // Initial health check (non-blocking)
+    checkDaemonHealth();
+
+    // Periodic health check every 5 seconds
+    const interval = setInterval(() => {
+      checkDaemonHealth();
+    }, 5000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
     };
-
-    runHealthCheck();
-
-    const interval = setInterval(runHealthCheck, 2000);
-
-    return () => clearInterval(interval);
   }, []);
 
   return (

@@ -7,7 +7,11 @@
 # FastEmbed Cache
 .fastembed_cache/
 
+
+
 # Build outputs
+velopack-output
+release-staging
 target/
 dist/
 build/

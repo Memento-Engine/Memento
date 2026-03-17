@@ -139,10 +139,19 @@ fn write_port_file(port: u16) {
     
     for attempt in 1..=max_retries {
         let result = (|| -> Result<(), String> {
-            let p = dirs::data_local_dir()
-                .ok_or("Failed to determine user local data directory")?;
+            // Use ProgramData for Windows Service compatibility (runs as SYSTEM)
+            // This location is accessible by both the service and user apps
+            #[cfg(windows)]
+            let dir_path = std::env::var("ProgramData")
+                .or_else(|_| std::env::var("ALLUSERSPROFILE"))
+                .map(|p| std::path::PathBuf::from(p).join("Memento"))
+                .map_err(|_| "ProgramData environment variable not set")?;
             
-            let dir_path = p.join("memento");
+            #[cfg(not(windows))]
+            let dir_path = dirs::data_local_dir()
+                .ok_or("Failed to determine data directory")?
+                .join("memento");
+            
             let file_path = dir_path.join("memento-daemon.port");
             
             create_dir_all(&dir_path)

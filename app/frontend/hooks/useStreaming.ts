@@ -21,8 +21,7 @@ import {
   updateSources,
   ensureAssistantMessage,
 } from "@/lib/messageUtils";
-
-const BASE_URL = "http://localhost:4173/api/v1";
+import { getAgentBaseUrl } from "@/api/base";
 
 // Helper to get auth headers from cookies and localStorage
 function getAuthHeaders(): Record<string, string> {
@@ -335,7 +334,10 @@ export function useStreaming(
         throw new Error("AUTH_TOKEN_MISSING");
       }
       
-      const res = await fetch(`${BASE_URL}/agent`, {
+      // Get the agent server URL dynamically from port file
+      const baseUrl = await getAgentBaseUrl();
+      
+      const res = await fetch(`${baseUrl}/agent`, {
         method: "POST",
         headers,
         signal,
