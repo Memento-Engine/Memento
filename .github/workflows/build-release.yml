@@ -39,7 +39,10 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: app/frontend/package-lock.json
+          cache-dependency-path: |
+            app/package-lock.json
+            app/frontend/package-lock.json
+            shared/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,6 +62,16 @@ jobs:
 
       - name: Install Velopack CLI
         run: dotnet tool install -g vpk
+
+      - name: Install app dependencies
+        run: |
+          cd app
+          npm ci
+
+      - name: Install shared dependencies
+        run: |
+          cd shared
+          npm ci
 
       - name: Install frontend dependencies
         run: |
