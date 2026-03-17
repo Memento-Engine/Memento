@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use image::{ DynamicImage, GenericImageView };
-use tracing::{ info };
+use tracing::debug;
 
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -132,7 +132,7 @@ pub async fn perform_ocr_windows(image: &DynamicImage) -> Result<(String, String
 
     let json_output = serde_json::to_string(&ocr_results).unwrap_or_else(|_| "[]".to_string());
 
-    info!("JSON OUTPUT directly from windows native Code : {:#?}", json_output);
+    debug!(word_count = ocr_results.len(), "OCR completed");
 
     Ok((full_text, json_output, Some(1.0)))
 }

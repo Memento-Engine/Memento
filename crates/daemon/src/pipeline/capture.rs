@@ -3,7 +3,6 @@
 use base64::{ engine::general_purpose, Engine as _ };
 use chrono::{ DateTime, Utc };
 use serde::{ Deserialize, Deserializer, Serialize, Serializer };
-use windows::Win32::System::Diagnostics::Debug;
 #[cfg(not(target_os = "macos"))]
 use xcap::XCapError;
 use xcap::{ Monitor, Window };
@@ -426,12 +425,8 @@ pub async fn capture_all_visible_windows(
             };
 
             // Check if URL should be blocked for privacy (e.g., banking sites)
-            if let Some(ref url) = browser_url {
-                // if window_filters.is_url_blocked(url) {
-                //     tracing::info!("Privacy filter: Skipping window due to blocked URL: {}", url);
-                //     continue;
-                // }
-            }
+            // Browser URL privacy filtering is handled separately
+            // if let Some(ref url) = browser_url { ... }
 
             // Fallback: For unfocused browser windows where we can't get URL,
             // check if window title suggests it's a blocked site
@@ -1068,4 +1063,317 @@ pub struct WindowOcr {
     #[serde(serialize_with = "serialize_instant", deserialize_with = "deserialize_instant")]
     pub timestamp: Instant,
     pub browser_url: Option<String>,
+}
+
+/// Improved continuous capture with adaptive scheduling and shutdown support
+pub async fn continuous_capture_v2(
+    result_tx: Sender<CaptureResult>,
+    scheduler: crate::throttle::AdaptiveScheduler,
+    ocr_engine: Arc<WindowsOcrEngine>,
+    ocr_cache: Arc<crate::cache::PersistentOcrCache>,
+    privacy_cache: Arc<crate::server::privacy::PrivacyCache>,
+    monitor_id: u32,
+    shutdown: Arc<crate::core::ShutdownController>,
+    lifecycle: Arc<crate::core::DaemonLifecycle>,
+) -> Result<(), ContinuousCaptureError> {
+    use crate::throttle::ScheduleReason;
+    
+    let mut frame_counter: u64 = 0;
+    let mut frame_comparer = FrameComparer::new(100, 10);
+    let mut shutdown_rx = shutdown.subscribe();
+    
+    debug!("continuous_capture_v2: Starting with adaptive scheduling for monitor: {}", monitor_id);
+    
+    // Get monitor
+    let mut monitor = match get_monitor_by_id(monitor_id).await {
+        Some(m) => m,
+        None => {
+            error!("Monitor {} not found", monitor_id);
+            sentry::with_scope(|scope| {
+                scope.set_tag("environment", "daemon");
+                scope.set_tag("service", "daemon");
+                scope.set_tag("area", "capture");
+                scope.set_extra("monitor_id", monitor_id.into());
+            }, || {
+                sentry::capture_message("Capture monitor not found", sentry::Level::Error);
+            });
+            return Err(ContinuousCaptureError::MonitorNotFound);
+        }
+    };
+    
+    let mut consecutive_failures: u32 = 0;
+    const MAX_CONSECUTIVE_FAILURES: u32 = 30;
+    const MAX_RETRIES: u32 = 3;
+    
+    loop {
+        // Check for shutdown
+        if shutdown.is_shutdown_requested() {
+            info!("Shutdown requested, stopping capture");
+            break;
+        }
+        
+        // Get adaptive scheduling parameters
+        let schedule = scheduler.get_schedule_params().await;
+        
+        // Skip capture if scheduler says so
+        if !schedule.should_capture {
+            debug!(
+                "Capture paused due to {:?} (CPU: {:.1}%)",
+                schedule.reason,
+                schedule.cpu_usage * 100.0
+            );
+            
+            tokio::select! {
+                _ = tokio::time::sleep(schedule.interval) => {}
+                _ = shutdown_rx.recv() => break,
+            }
+            continue;
+        }
+        
+        // Log throttling state periodically
+        if frame_counter % 60 == 0 && schedule.reason != ScheduleReason::Normal {
+            info!(
+                "Capture throttled: {:?}, interval: {:?}, CPU: {:.1}%",
+                schedule.reason,
+                schedule.interval,
+                schedule.cpu_usage * 100.0
+            );
+        }
+        
+        // Capture monitor screenshot
+        let captured_at = chrono::Utc::now();
+        let capture_result = {
+            let mut last_err = None;
+            let mut captured = None;
+            
+            for attempt in 0..=MAX_RETRIES {
+                match capture_monitor_image(&monitor).await {
+                    Ok(result) => {
+                        consecutive_failures = 0;
+                        captured = Some(result);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        if attempt < MAX_RETRIES {
+                            if let Err(refresh_err) = monitor.refresh().await {
+                                debug!("Monitor refresh failed: {}", refresh_err);
+                            }
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    }
+                }
+            }
+            
+            match captured {
+                Some(result) => result,
+                None => {
+                    consecutive_failures += 1;
+                    let err = last_err.unwrap();
+                    
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        error!(
+                            "Too many consecutive capture failures ({}), stopping",
+                            consecutive_failures
+                        );
+                        sentry::with_scope(|scope| {
+                            scope.set_tag("environment", "daemon");
+                            scope.set_tag("service", "daemon");
+                            scope.set_tag("area", "capture");
+                            scope.set_extra("monitor_id", monitor_id.into());
+                            scope.set_extra("consecutive_failures", consecutive_failures.into());
+                            scope.set_extra("error", err.to_string().into());
+                        }, || {
+                            sentry::capture_message("Capture loop failed repeatedly", sentry::Level::Error);
+                        });
+                        return Err(ContinuousCaptureError::ErrorCapturingScreenshot(
+                            err.to_string()
+                        ));
+                    }
+                    
+                    tokio::select! {
+                        _ = tokio::time::sleep(schedule.interval) => {}
+                        _ = shutdown_rx.recv() => break,
+                    }
+                    continue;
+                }
+            }
+        };
+        
+        let (image, _capture_duration) = capture_result;
+        
+        // Frame comparison to skip unchanged frames
+        let current_diff = frame_comparer.compare(&image);
+        
+        if current_diff == 0.0 {
+            frame_counter += 1;
+            lifecycle.record_skip().await;
+            
+            tokio::select! {
+                _ = tokio::time::sleep(schedule.interval) => {}
+                _ = shutdown_rx.recv() => break,
+            }
+            continue;
+        }
+        
+        // Capture windows (only for changed frames)
+        let window_images = capture_windows(&monitor).await;
+        let monitor_bounds = Rect {
+            x: monitor.x(),
+            y: monitor.y(),
+            width: monitor.width(),
+            height: monitor.height(),
+        };
+        
+        // Process OCR for each window
+        let mut window_ocr_results = Vec::new();
+        let (screen_width, screen_height) = image.dimensions();
+        
+        for captured_window in window_images {
+            // Privacy check: skip masked apps/websites
+            if privacy_cache.should_mask_window(
+                &captured_window.app_name, 
+                captured_window.browser_url.as_deref()
+            ).await {
+                debug!(
+                    "Skipping masked window: app='{}' url={:?}",
+                    captured_window.app_name,
+                    captured_window.browser_url
+                );
+                continue;
+            }
+            
+            // Check OCR cache first
+            let window_hash = crate::cache::PersistentOcrCache::calculate_image_hash(
+                captured_window.image.as_bytes()
+            );
+            let window_id = crate::cache::PersistentOcrCache::make_window_id(
+                &captured_window.app_name,
+                &captured_window.window_name,
+            );
+            let cache_key = crate::cache::WindowCacheKey {
+                window_id: window_id.clone(),
+                image_hash: window_hash,
+            };
+            
+            // Try cache first
+            if let Some(cached) = ocr_cache.get(&cache_key).await {
+                let parsed_json = parse_json_output(&cached.text_json);
+                let transformed_json = transform_ocr_coordinates_to_screen(
+                    parsed_json,
+                    captured_window.window_x,
+                    captured_window.window_y,
+                    captured_window.window_width,
+                    captured_window.window_height,
+                    screen_width,
+                    screen_height,
+                );
+                
+                window_ocr_results.push(WindowOcrResult {
+                    image: captured_window.image,
+                    window_name: captured_window.window_name,
+                    app_name: captured_window.app_name,
+                    text: cached.text,
+                    text_json: transformed_json,
+                    focused: captured_window.is_focused,
+                    confidence: cached.confidence,
+                    browser_url: captured_window.browser_url,
+                    monitor_dimensions: captured_window.monitor_dimensions,
+                });
+                continue;
+            }
+            
+            // Cache miss - perform OCR
+            match ocr_engine.process(&captured_window.image).await {
+                Ok((text, json_output, confidence)) => {
+                    let conf = confidence.unwrap_or(0.0);
+                    let parsed_json = parse_json_output(&json_output);
+                    let transformed_json = transform_ocr_coordinates_to_screen(
+                        parsed_json,
+                        captured_window.window_x,
+                        captured_window.window_y,
+                        captured_window.window_width,
+                        captured_window.window_height,
+                        screen_width,
+                        screen_height,
+                    );
+                    
+                    // Cache the result
+                    ocr_cache.insert(
+                        cache_key,
+                        text.clone(),
+                        json_output,
+                        conf,
+                    ).await;
+                    
+                    window_ocr_results.push(WindowOcrResult {
+                        image: captured_window.image,
+                        window_name: captured_window.window_name,
+                        app_name: captured_window.app_name,
+                        text,
+                        text_json: transformed_json,
+                        focused: captured_window.is_focused,
+                        confidence: conf,
+                        browser_url: captured_window.browser_url,
+                        monitor_dimensions: captured_window.monitor_dimensions,
+                    });
+                }
+                Err(e) => {
+                    debug!("OCR failed for window {}: {}", window_id, e);
+                }
+            }
+        }
+        
+        // Send results
+        if !window_ocr_results.is_empty() {
+            let capture_result = CaptureResult {
+                image,
+                timestamp: Instant::now(),
+                captured_at,
+                window_ocr_results,
+            };
+            
+            // Record the capture in stats
+            lifecycle.record_capture().await;
+            
+            if let Err(e) = result_tx.send(capture_result).await {
+                if shutdown.is_shutdown_requested() {
+                    break;
+                }
+                error!("Failed to send capture result: {}", e);
+                sentry::with_scope(|scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "capture");
+                    scope.set_extra("error", e.to_string().into());
+                }, || {
+                    sentry::capture_message("Failed to enqueue capture result", sentry::Level::Error);
+                });
+            }
+        } else {
+            // No windows had OCR results - record as skip
+            lifecycle.record_skip().await;
+        }
+        
+        frame_counter += 1;
+        
+        // Log stats periodically
+        if frame_counter % 100 == 0 {
+            let stats = frame_comparer.stats();
+            debug!(
+                "Capture stats: frame={}, hash_hit_rate={:.1}%",
+                frame_counter,
+                stats.hash_hit_rate * 100.0
+            );
+        }
+        
+        // Wait with shutdown check
+        tokio::select! {
+            _ = tokio::time::sleep(schedule.interval) => {}
+            _ = shutdown_rx.recv() => break,
+        }
+    }
+    
+    info!("Continuous capture stopped after {} frames", frame_counter);
+    Ok(())
 }

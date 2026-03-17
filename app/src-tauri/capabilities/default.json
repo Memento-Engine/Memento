@@ -5,13 +5,15 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    {
-      "identifier": "fs:default",
-      "allow": [
-        {
-          "path": "C:/Users/pavan/Pictures/Screenshots/**"
-        }
-      ]
-    }
+    "os:default",
+    "os:allow-hostname",
+    
+    "keyring:default",
+    "keyring:allow-set-password",
+    "keyring:allow-get-password",
+    "keyring:allow-delete-password",
+
+    "fs:allow-localdata-read-recursive",
+    "fs:allow-localdata-write-recursive"
   ]
 }

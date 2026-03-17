@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "lib": ["ES2022"],
+
+    "rootDir": "../",
+    "outDir": "./dist-agents",
+
+    "strict": true,
+    "skipLibCheck": true,
+
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    "allowSyntheticDefaultImports": true,
+
+    "forceConsistentCasingInFileNames": true,
+
+    "types": ["node"],
+
+    "baseUrl": "../",
+    "paths": {
+      "@agents/*": ["agents/*"],
+      "@tools/*": ["agents/tools/*"],
+      "@planner/*": ["agents/planner/*"],
+      "@executor/*": ["agents/executor/*"]
+    }
+  },
+  "include": [
+    "./**/*.ts",
+    "../shared/types/agent.ts",
+    "../shared/types/tools.ts",
+    "../shared/types/streaming.ts"
+  ],
+  "exclude": ["node_modules"]
+}

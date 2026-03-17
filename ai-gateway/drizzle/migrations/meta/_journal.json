@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1710524400000,
+      "tag": "0000_init_base_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1710524401000,
+      "tag": "0001_create_usage_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1710524402000,
+      "tag": "0002_usage_tracking_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1710524403000,
+      "tag": "0003_add_daily_usage_constraint",
+      "breakpoints": true
+    }
+  ]
+}

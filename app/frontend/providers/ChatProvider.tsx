@@ -1,18 +1,18 @@
 "use client";
 
-import {
-  chatRequest,
-  Citation,
-  citationsSchema,
-  MementoUIMessage,
-  thinkingSchema,
-} from "@/components/types";
-import {
-  AssistantStatus,
-  ChatContext,
-  TRANSITIONS,
-} from "@/contexts/chatContext";
-import { useEffect, useState } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import * as Sentry from "@sentry/nextjs";
+
+import { MementoUIMessage, ThinkingStep } from "@/components/types";
+import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContext";
+import { useStreaming } from "@/hooks/useStreaming";
+import { createUserMessage, truncateBeforeMessage } from "@/lib/messageUtils";
+import { notify } from "@/lib/notify";
+import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
+import { USE_MOCK_DATA, getMockResponse, MOCK_THINKING_STEPS } from "@/mock";
+import useOnboarding from "@/hooks/useOnboarding";
+import { clearAuthState, isAuthError } from "@/lib/auth";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -20,383 +20,223 @@ interface ChatProviderProps {
 
 export default function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<MementoUIMessage[]>([]);
-  const [assistantStatus, setAssistantStatus] =
-    useState<AssistantStatus>("Idle");
+  const [assistantStatus, setAssistantStatus] = useState<AssistantStatus>("Idle");
+  const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
+  const [searchQueries, setSearchQueries] = useState<SearchQueryData[]>([]);
+  const [sourceReview, setSourceReview] = useState<SourceReviewData | null>(null);
+  
+  const { setIsOnboardingComplete } = useOnboarding();
+  
+  // Use ref to avoid stale closure issue in callbacks
+  const assistantStatusRef = useRef<AssistantStatus>(assistantStatus);
+  useEffect(() => {
+    assistantStatusRef.current = assistantStatus;
+  }, [assistantStatus]);
+  
+  const router = useRouter();
+  const pathname = usePathname();
 
-  const transitionStatus = (nextState: AssistantStatus): boolean => {
-    const allowedNextStates = TRANSITIONS[assistantStatus];
+  // Status transition with validation (uses ref to get current status)
+  const transitionStatus = useCallback((nextState: AssistantStatus): boolean => {
+    const currentStatus = assistantStatusRef.current;
+    const allowedNextStates = TRANSITIONS[currentStatus];
 
-    if (allowedNextStates.includes(nextState)) {
-      if (nextState === "Finished" || nextState === "Error") {
-        setAssistantStatus("Idle");
-      } else {
-        setAssistantStatus(nextState);
-      }
-      return true;
+    if (!allowedNextStates.includes(nextState)) {
+      console.warn(`Blocked transition from ${currentStatus} to ${nextState}`);
+      return false;
     }
 
-    console.warn(`Blocked transition from ${assistantStatus} to ${nextState}`);
-    return false;
-  };
+    // Set the requested state - don't auto-transition terminal states to Idle
+    setAssistantStatus(nextState);
+    return true;
+  }, []);
 
-  const BASE_URL = "http://localhost:9090/api/v1";
+  // Initialize streaming hook
+  const { activeRequestRef, streamMessage, abort } = useStreaming({
+    setMessages,
+    setStepUpdates,
+    setSearchQueries,
+    setSourceReview,
+    transitionStatus,
+  });
 
-  function parseSSEEvent(raw: string) {
-    const lines = raw.split("\n");
+  const isGenerating = 
+    assistantStatus === "LocalPending" ||
+    assistantStatus === "Thinking" ||
+    assistantStatus === "Streaming";
 
-    let eventType = "";
-    let data = "";
+  const stopMessage = useCallback((): void => {
+    abort();
+    setAssistantStatus("Idle");
+    notify.info("Generation stopped");
+  }, [abort]);
 
-    for (const line of lines) {
-      if (line.startsWith("event:")) {
-        eventType = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        data += line.slice(5).trim();
-      }
+  const sendMessage = useCallback(async (
+    message: string,
+    rewriteTargetId?: string,
+    isRewrite: boolean = false,
+  ): Promise<void> => {
+    // Abort any existing request
+    abort();
+
+    const abortController = new AbortController();
+    activeRequestRef.current = abortController;
+
+    if (pathname !== "/chat/123") {
+      router.push("/chat/123", { scroll: false });
     }
+    console.log("Message from chat input", message);
 
-    if (!data) return null;
+    transitionStatus("LocalPending");
+    setStepUpdates([]);
+    setSearchQueries([]);
+    setSourceReview(null);
 
     try {
-      return {
-        eventType,
-        data: JSON.parse(data),
-      };
-    } catch {
-      return null;
-    }
-  }
+      // Update messages based on rewrite or new message
+      if (isRewrite && rewriteTargetId) {
+        setMessages((prev) => truncateBeforeMessage(prev, rewriteTargetId));
+      } else {
+        setMessages((prev) => [...prev, createUserMessage(message)]);
+      }
 
-  function normalizeCitation(data: any): Citation {
-    return {
-      sourceId: data.source_id,
-      appName: data.app_name,
-      windowName: data.window_name,
-      capturedAt: data.captured_at,
-      url: data.url,
-
-      bbox: {
-        x: data.bbox.x,
-        y: data.bbox.y,
-        width: data.bbox.width,
-        height: data.bbox.height,
-        textStart: data.bbox.text_start,
-        textEnds: data.bbox.text_ends,
-      },
-
-      imagePath: data.image_path,
-    };
-  }
-
-  function getNormalizedCitations(rawCitations: any[]): Citation[] {
-    let cleanedCitations: Citation[] = [];
-    for (let rawCitation of rawCitations) {
-      cleanedCitations.push(normalizeCitation(rawCitation));
-    }
-
-    return cleanedCitations;
-  }
-
-  async function handleSseEvent(eventChunk: string) {
-    const parsedEvent = parseSSEEvent(eventChunk);
-    if (!parsedEvent) return;
-
-    const { eventType, data } = parsedEvent;
-
-    // Fallback in case eventType is undefined or empty
-    const type = (eventType || "message").trim();
-    console.log(`[SSE] Type: '${type}', Data:`, data);
-
-    switch (type) {
-      case "thinking": {
-        transitionStatus("Thinking");
-        const parsedThinking = thinkingSchema.safeParse(data);
-
-        if (!parsedThinking.success) {
-          console.log(
-            "Failed to parse the thinking schema",
-            parsedThinking.error,
-          );
+      // ========== MOCK MODE ==========
+      if (USE_MOCK_DATA) {
+        console.log("[MOCK MODE] Simulating AI response...");
+        
+        // Get mock response based on user message
+        const mockResponse = getMockResponse(message);
+        if (!mockResponse) {
           transitionStatus("Error");
           return;
         }
 
-        // This is a single object, e.g., { title: "...", status: "running", ... }
-        const thinkingSteps = parsedThinking.data;
-
-        console.log("Thinking Steps from Case Thinking", thinkingSteps);
-
-        setMessages((prev) => {
-          try {
-            const lastMessage = prev[prev.length - 1];
-
-            // 1. If no assistant message exists → create a new one
-            if (!lastMessage || lastMessage.role !== "assistant") {
-              const safeId =
-                typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
-
-              return [
-                ...prev,
-                {
-                  id: safeId,
-                  role: "assistant",
-                  parts: [
-                    {
-                      type: "data-thinking",
-                      data: thinkingSteps, // Pass the object directly, NOT an array
-                    },
-                  ],
-                },
-              ];
-            }
-
-            // 2. Update existing assistant message
-            const updatedMessages = [...prev];
-            const updatedMessage = { ...lastMessage };
-            const updatedParts = [...updatedMessage.parts];
-
-            // If the last part exists but isn't 'data-thinking', add it as a new part
-            updatedParts.push({
-              type: "data-thinking",
-              data: thinkingSteps, // Pass the object directly
-            });
-
-            updatedMessage.parts = updatedParts;
-            updatedMessages[updatedMessages.length - 1] = updatedMessage;
-
-            console.log("UpdatedMessages", updatedMessages);
-
-            return updatedMessages;
-          } catch (error) {
-            console.error("Error inside state updater:", error);
-            return prev;
-          }
-        });
-
-        break;
-      }
-      case "citations":
-        console.log("Clenaed Citations: ", getNormalizedCitations(data));
-
-        const parsedCitations = citationsSchema.safeParse(
-          getNormalizedCitations(data),
+        // Extract thinking steps from mock response
+        const thinkingParts = mockResponse.parts.filter(
+          (p) => p.type === "data-thinking"
         );
 
-        if (!parsedCitations.success) {
-          console.log(
-            "Failed to parse the Citations schema",
-            parsedCitations.error,
-          );
-          return;
-        }
-        setMessages((prev) => {
-          try {
-            const lastMessage = prev[prev.length - 1];
-
-            // 1. If no assistant message, create a brand new one
-            if (!lastMessage || lastMessage.role !== "assistant") {
-              // SAFE ID GENERATION FALLBACK
-              const safeId =
-                typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
-
-              return [
-                ...prev,
-                {
-                  id: safeId,
-                  role: "assistant",
-                  parts: [
-                    {
-                      type: "data-citations",
-                      data: parsedCitations.data,
-                    },
-                  ],
-                },
-              ];
-            }
-
-            // 2. If we are appending, clone and update
-            const updatedMessages = [...prev];
-            const updatedMessage = { ...lastMessage };
-            const updatedParts = [...updatedMessage.parts];
-
-            const lastPart = updatedParts[updatedParts.length - 1];
-
-            if (lastPart && lastPart.type === "data-citations") {
-              updatedParts[updatedParts.length - 1] = {
-                ...lastPart,
-                data: parsedCitations.data,
-              };
-            } else {
-              updatedParts.push({
-                type: "data-citations",
-                data: parsedCitations.data,
-              });
-            }
-
-            updatedMessage.parts = updatedParts;
-            updatedMessages[updatedMessages.length - 1] = updatedMessage;
-
-            return updatedMessages;
-          } catch (error) {
-            console.error("Error inside state updater:", error);
-            return prev; // Return previous state to avoid UI crashes
+        // Simulate thinking phase - stream each thinking step with delay
+        transitionStatus("Thinking");
+        
+        for (let i = 0; i < thinkingParts.length; i++) {
+          if (abortController.signal.aborted) return;
+          
+          const part = thinkingParts[i];
+          if (part.type === "data-thinking") {
+            // Add thinking step progressively
+            setStepUpdates((prev) => [...prev, part.data as ThinkingStep]);
+            
+            // Wait based on the step's duration (scaled down for demo)
+            const duration = (part.data as ThinkingStep).duration ?? 500;
+            await new Promise((resolve) => setTimeout(resolve, Math.min(duration, 800)));
           }
-        });
-        break;
+        }
 
-      case "token": {
-        const token: string = data?.text ?? "";
+        // Small pause before streaming text
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        
+        // Transition to streaming
         transitionStatus("Streaming");
-
-        setMessages((prev) => {
-          try {
-            const lastMessage = prev[prev.length - 1];
-
-            // 1. If no assistant message, create a brand new one
-            if (!lastMessage || lastMessage.role !== "assistant") {
-              // SAFE ID GENERATION FALLBACK
-              const safeId =
-                typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : Date.now().toString() +
-                    Math.random().toString(36).substring(2);
-
-              return [
-                ...prev,
-                {
-                  id: safeId,
-                  role: "assistant",
-                  parts: [{ type: "text", text: token }],
-                },
-              ];
-            }
-
-            // 2. If we are appending, clone and update
-            const updatedMessages = [...prev];
-            const updatedMessage = { ...lastMessage };
-            const updatedParts = [...updatedMessage.parts];
-
-            const lastPart = updatedParts[updatedParts.length - 1];
-
-            if (lastPart && lastPart.type === "text") {
-              updatedParts[updatedParts.length - 1] = {
-                ...lastPart,
-                text: lastPart.text + token,
-              };
-            } else {
-              updatedParts.push({ type: "text", text: token });
-            }
-
-            updatedMessage.parts = updatedParts;
-            updatedMessages[updatedMessages.length - 1] = updatedMessage;
-
-            return updatedMessages;
-          } catch (error) {
-            console.error("Error inside state updater:", error);
-            transitionStatus("Error");
-            return prev; // Return previous state to avoid UI crashes
-          }
-        });
-        break;
-      }
-
-      case "done":
-        console.log("Stream Done");
+        
+        // Add the complete message with all parts
+        setMessages((prev) => [...prev, mockResponse]);
+        
+        // Small delay to let UI render
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        
+        // Transition to finished
         transitionStatus("Finished");
-        break;
-
-      default:
-        console.warn(`Unhandled SSE Event Type: '${type}'`);
-        break;
-    }
-  }
-
-  const sendMessage = async (message: string): Promise<void> => {
-    console.log("Message from chat input", message);
-    transitionStatus("LocalPending");
-    try {
-      const currentChat: MementoUIMessage = {
-        id: "12",
-        parts: [
-          {
-            type: "text",
-            text: message,
-          },
-        ],
-        role: "user",
-      };
-
-      const filtered_messages = messages.map((m) => ({
-        ...m,
-        parts: m.parts.filter((p) => p.type === "text"),
-      }));
-      const chatRequest: chatRequest = {
-        chat_history: [...filtered_messages, currentChat],
-        message_id: "123",
-      };
-
-      setMessages((prev) => [...prev, currentChat]);
-
-      const res = await fetch(`${BASE_URL}/search_stream_handler`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(chatRequest),
-      });
-
-      if (!res.body) throw new Error("No response body");
-
-      console.log("Response body", res.body);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        const events = buffer.split(/\r?\n\r?\n/);
-
-        buffer = events.pop() || "";
-
-        for (const event of events) {
-          await handleSseEvent(event);
-        }
+        
+        console.log("[MOCK MODE] Response complete");
+        return;
       }
+      // ========== END MOCK MODE ==========
+
+      await streamMessage(message, abortController.signal);
     } catch (err: unknown) {
-      console.log("err while sending the message: ", err);
+      if (err instanceof Error && err.name === "AbortError") {
+        console.log("Streaming aborted by user");
+        return;
+      }
+
+      // Handle auth errors - redirect to onboarding
+      if (isAuthError(err)) {
+        console.error("Auth error - redirecting to onboarding:", err);
+        notify.error("Please complete device registration");
+        // Clear all auth state (localStorage, cookie, keyring)
+        await clearAuthState();
+        setIsOnboardingComplete(false);
+        router.push("/onboarding");
+        return;
+      }
+
+      console.error("Error while sending message:", err);
+      if (process.env.NODE_ENV === "production") {
+        Sentry.withScope((scope) => {
+          scope.setTag("environment", "frontend");
+          scope.setTag("service", "ui");
+          scope.setTag("area", "chat-send-message");
+          scope.setExtra("isRewrite", isRewrite);
+          scope.setExtra("goalLength", message.length);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)));
+        });
+      }
       transitionStatus("Error");
     } finally {
+      if (activeRequestRef.current === abortController) {
+        activeRequestRef.current = null;
+      }
     }
+  }, [abort, activeRequestRef, pathname, router, transitionStatus, streamMessage, setIsOnboardingComplete]);
+
+  const rewrite = useCallback(async (messageId: string): Promise<void> => {
+    const assistantIndex = messages.findIndex(
+      (msg) => msg.id === messageId && msg.role === "assistant"
+    );
+
+    if (assistantIndex < 0) {
+      notify.warning("Could not regenerate this message");
+      return;
+    }
+
+    // Find the user message before this assistant message
+    const userBeforeAssistant = [...messages]
+      .slice(0, assistantIndex)
+      .reverse()
+      .find((msg) => msg.role === "user");
+
+    const userPrompt = userBeforeAssistant?.parts
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join("\n")
+      .trim() ?? "";
+
+    if (!userPrompt) {
+      notify.warning("No user prompt found for regeneration");
+      return;
+    }
+
+    await sendMessage(userPrompt, messageId, true);
+  }, [messages, sendMessage]);
+
+  const contextValue = {
+    sendMessage,
+    chatId: "",
+    isMessagesLoaded: false,
+    messages,
+    rewrite,
+    stopMessage,
+    isGenerating,
+    assistantStatus,
+    makeTransition: transitionStatus,
+    stepUpdates,
+    searchQueries,
+    sourceReview,
   };
 
-  useEffect((): void => {
-    console.log("Ai Assistant status", assistantStatus);
-  }, [assistantStatus]);
-
   return (
-    <ChatContext.Provider
-      value={{
-        sendMessage,
-        chatId: "",
-        isMessagesLoaded: false,
-        messages,
-        rewrite: () => {},
-        assistantStatus,
-        makeTransition: transitionStatus,
-      }}
-    >
+    <ChatContext.Provider value={contextValue}>
       {children}
     </ChatContext.Provider>
   );

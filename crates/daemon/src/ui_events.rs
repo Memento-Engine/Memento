@@ -1,5 +1,5 @@
 use rdev::{ listen, Event, EventType };
-use tracing::{ info, error };
+use tracing::error;
 
 pub fn start_listener(tx: std::sync::mpsc::Sender<()>) {
     let callback = move |event: Event| {

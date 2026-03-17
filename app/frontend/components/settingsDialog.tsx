@@ -55,7 +55,7 @@ function ProfileTab(): React.ReactElement {
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-400 to-indigo-500 flex items-center justify-center text-white font-semibold text-xl shadow-sm">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted text-xl font-semibold text-foreground shadow-sm">
           A
         </div>
 
@@ -154,10 +154,10 @@ function AppearanceTab() {
                     className={cn(
                       "rounded-lg p-3 space-y-3",
                       t === "dark"
-                        ? "bg-slate-900"
+                        ? "bg-foreground/10"
                         : t === "light"
-                          ? "bg-gray-100"
-                          : "bg-gradient-to-br from-gray-100 to-slate-900",
+                          ? "bg-muted"
+                          : "bg-secondary",
                     )}
                   >
                     <div className="h-3 w-2/3 rounded bg-muted-foreground/30" />
@@ -181,40 +181,308 @@ function AppearanceTab() {
   );
 }
 
+import {
+  getDiskUsage,
+  clearStorage,
+  getCaptureStatus,
+  type DiskUsage,
+  type ClearTarget,
+} from "@/api/storage";
+import { Loader2, Trash2, Image, FileText, HardDrive, FolderOpen, AlertTriangle, RefreshCw } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+interface StorageItemProps {
+  icon: React.ReactNode;
+  label: string;
+  size: string;
+  detail?: string;
+  onClear?: () => void;
+  clearLabel?: string;
+  isClearing?: boolean;
+  isDangerous?: boolean;
+}
+
+function StorageItem({
+  icon,
+  label,
+  size,
+  detail,
+  onClear,
+  clearLabel = "Clear",
+  isClearing = false,
+  isDangerous = false,
+}: StorageItemProps) {
+  const ClearButton = isDangerous ? (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isClearing}
+          className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+        >
+          {isClearing ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <>
+              <Trash2 className="h-3 w-3 mr-1" />
+              {clearLabel}
+            </>
+          )}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            Clear {label}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This action cannot be undone. This will permanently delete all {label.toLowerCase()} data.
+            {label === "Database" && " The capture service will be paused during this operation."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onClear}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  ) : onClear ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onClear}
+      disabled={isClearing}
+      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+    >
+      {isClearing ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <>
+          <Trash2 className="h-3 w-3 mr-1" />
+          {clearLabel}
+        </>
+      )}
+    </Button>
+  ) : null;
+
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-border/50 last:border-0">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          {icon}
+        </div>
+        <div>
+          <p className="text-sm font-medium">{label}</p>
+          {detail && (
+            <p className="text-xs text-muted-foreground">{detail}</p>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium">{size}</span>
+        {ClearButton}
+      </div>
+    </div>
+  );
+}
+
 function DataTab() {
-  const used = 1.2;
-  const total = 5;
-  const pct = (used / total) * 100;
+  const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState<ClearTarget | null>(null);
+
+  const fetchDiskUsage = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const usage = await getDiskUsage();
+      setDiskUsage(usage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch disk usage");
+      console.error("Failed to fetch disk usage:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDiskUsage();
+  }, []);
+
+  const handleClear = async (target: ClearTarget) => {
+    try {
+      setClearing(target);
+      await clearStorage(target);
+      // Refresh disk usage after clearing
+      await fetchDiskUsage();
+    } catch (err) {
+      console.error(`Failed to clear ${target}:`, err);
+      setError(err instanceof Error ? err.message : `Failed to clear ${target}`);
+    } finally {
+      setClearing(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
+        <Button variant="outline" onClick={fetchDiskUsage}>
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (!diskUsage) return null;
+
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-base font-semibold tracking-tight">
-          Data & Storage
-        </h3>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Monitor your storage usage and manage cached data.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold tracking-tight">
+            Data & Storage
+          </h3>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Monitor your storage usage and manage data.
+          </p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={fetchDiskUsage}>
+          <RefreshCw className="h-4 w-4" />
+        </Button>
       </div>
-      <div className="rounded-xl border p-4 space-y-3">
+
+      {/* Total Storage Overview */}
+      <div className="rounded-xl border p-4 space-y-3 bg-muted/30">
         <div className="flex justify-between text-sm">
-          <span className="font-medium">Storage Used</span>
-          <span className="text-muted-foreground">
-            {used} GB / {total} GB
-          </span>
+          <span className="font-medium">Total Storage Used</span>
+          <span className="font-semibold">{diskUsage.total_size.formatted}</span>
         </div>
         <div className="h-2 rounded-full bg-muted overflow-hidden">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all"
-            style={{ width: `${pct}%` }}
+            className="h-full rounded-full bg-primary transition-all"
+            style={{
+              width: `${Math.min(
+                (diskUsage.total_size.bytes / (10 * 1024 * 1024 * 1024)) * 100,
+                100
+              )}%`,
+            }}
           />
         </div>
         <p className="text-xs text-muted-foreground">
-          {100 - pct}% free remaining
+          Data stored in: {diskUsage.base_dir}
         </p>
       </div>
-      <button className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted transition-colors text-muted-foreground">
-        Clear cache
-      </button>
+
+      {/* Storage Breakdown */}
+      <div className="rounded-xl border divide-y divide-border/50">
+        <div className="p-4">
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">Storage Breakdown</h4>
+        </div>
+        <div className="px-4">
+          <StorageItem
+            icon={<Image className="h-4 w-4" />}
+            label="Media"
+            size={diskUsage.media.images_size.formatted}
+            detail={`${diskUsage.media.images_count} screenshots`}
+            onClear={() => handleClear("media")}
+            isClearing={clearing === "media"}
+            isDangerous
+          />
+          <StorageItem
+            icon={<HardDrive className="h-4 w-4" />}
+            label="Database"
+            size={diskUsage.database.total_size.formatted}
+            detail="Search index and text data"
+            onClear={() => handleClear("database")}
+            isClearing={clearing === "database"}
+            isDangerous
+          />
+          <StorageItem
+            icon={<FileText className="h-4 w-4" />}
+            label="Logs"
+            size={diskUsage.logs.total_size.formatted}
+            detail={`${diskUsage.logs.files_count} log files`}
+            onClear={() => handleClear("logs")}
+            isClearing={clearing === "logs"}
+          />
+          <StorageItem
+            icon={<FolderOpen className="h-4 w-4" />}
+            label="Cache"
+            size={diskUsage.cache.total_size.formatted}
+            detail="Temporary files and OCR cache"
+            onClear={() => handleClear("cache")}
+            isClearing={clearing === "cache"}
+          />
+        </div>
+      </div>
+
+      {/* Clear All */}
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button
+            variant="destructive"
+            className="w-full"
+            disabled={clearing !== null}
+          >
+            {clearing === "all" ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4 mr-2" />
+            )}
+            Clear All Data
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Clear All Data?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete all your data including screenshots, search history, logs, and cache. The capture service will be paused during this operation.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => handleClear("all")}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete Everything
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -236,7 +504,7 @@ function SystemTab() {
       </div>
       <div className="rounded-xl border p-4 space-y-1">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <div className="h-2 w-2 rounded-full bg-primary" />
           <p className="text-sm font-medium">Service is running</p>
         </div>
         <p className="text-xs text-muted-foreground pl-4">
@@ -286,7 +554,7 @@ export function SettingsDialog({
         <aside className="w-64 shrink-0 bg-sidebar border-r flex flex-col">
           <div className="p-6">
             <h2 className="text-md font-medium tracking-tight">Settings</h2>
-            <p className="text-sm text-muted-foreground mt-1 font-medium">
+            <p className="text-sm text-muted-foreground/70 mt-1 font-medium">
               Account Management
             </p>
           </div>
@@ -302,7 +570,7 @@ export function SettingsDialog({
                   className={`w-full cursor-pointer  justify-start gap-3 px-3 h-10 transition-all ${
                     isActive
                       ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground/70 hover:text-foreground"
                   }`}
                 >
                   <span
