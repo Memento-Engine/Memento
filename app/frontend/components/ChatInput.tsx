@@ -1,12 +1,7 @@
 import {
   ArrowUp,
   Plus,
-  Globe,
-  Brain,
-  FileText,
-  GraduationCap,
-  Layers,
-  Mail,
+  Square,
 } from "lucide-react";
 import { AutosizeTextarea } from "./ChatHome"; // Ensure this path is correct
 import { Button } from "./ui/button";
@@ -15,22 +10,30 @@ import { cn } from "@/lib/utils";
 
 export interface ChatInputProps {
   handleSend: (query: string) => void;
+  isGenerating?: boolean;
+  onStop?: () => void;
 }
 
 function ChatInput({
   handleSend,
+  isGenerating = false,
+  onStop,
 }: ChatInputProps): React.ReactElement {
   const [query, setQuery] = useState<string>("");
 
   return (
-    <div className="border rounded-xl dark:bg-[#0a0a0a]">
+    <div className="rounded-xl border border-border bg-card">
       <div className="w-full p-2">
         <AutosizeTextarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask followup..."
-          className={cn("text-base py-2 dark:bg-[#0a0a0a]  px-3  max-h-60 ")}
+          className={cn("max-h-60 px-3 py-2 text-base")}
           onKeyDown={(e) => {
+            if (isGenerating) {
+              return;
+            }
+
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
 
@@ -40,12 +43,6 @@ function ChatInput({
               setQuery("");
             }
           }}
-          onClick={(e): void => {
-            e.preventDefault();
-            const message = query; // snapshot
-            handleSend(message);
-            setQuery("");
-          }}
         />
 
         <div className="flex items-center justify-between px-1 pt-2 pb-1">
@@ -54,24 +51,37 @@ function ChatInput({
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-slate-500 rounded-full hover:bg-slate-100"
+              className="h-8 w-8 rounded-full text-muted-foreground"
             >
               <Plus size={18} />
             </Button>
           </div>
 
           {/* Send Button */}
-          <Button
-            onClick={(): void => {
-              console.log("quer", query);
-              handleSend(query);
-            }}
-            disabled={!query.trim()}
-            size="icon"
-            className="h-8 w-8 rounded-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400 transition-all"
-          >
-            <ArrowUp size={18} />
-          </Button>
+          {isGenerating ? (
+            <Button
+              onClick={(): void => onStop?.()}
+              size="icon"
+              className="h-8 w-8 rounded-full"
+              variant="secondary"
+              title="Stop generation"
+            >
+              <Square size={14} />
+            </Button>
+          ) : (
+            <Button
+              onClick={(): void => {
+                handleSend(query);
+                setQuery("");
+              }}
+              disabled={!query.trim()}
+              size="icon"
+              className="h-8 w-8 rounded-full"
+              title="Send message"
+            >
+              <ArrowUp size={18} />
+            </Button>
+          )}
         </div>
       </div>
     </div>

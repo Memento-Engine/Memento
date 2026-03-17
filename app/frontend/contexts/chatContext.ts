@@ -1,5 +1,9 @@
-import { MementoUIMessage } from "@/components/types";
+import { MementoUIMessage, ThinkingStep } from "@/components/types";
+import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 import { createContext } from "react";
+
+// Re-export for convenience
+export type { SearchQueryData, SourceReviewData };
 
 export type AssistantStatus =
   | "Idle" // No Conversation
@@ -7,16 +11,18 @@ export type AssistantStatus =
   | "Thinking" // Server reasoning/searching
   | "Streaming" // Tokens arriving
   | "Finished" // Message complete (Terminal)
+  | "NoResults" // Search completed but found no results (Terminal, not an error)
   | "Error"; // Failure (Terminal)
 
 // Define the strict, forward-only transition rules
 export const TRANSITIONS: Record<AssistantStatus, AssistantStatus[]> = {
-  Idle: ["LocalPending", "Thinking", "Streaming", "Finished", "Error"],
-  LocalPending: ["Thinking", "Error"],
-  Thinking: ["Streaming", "Finished", "Error"], // Can jump to Finished if no stream
-  Streaming: ["Finished", "Error"],
-  Finished: ["Idle"], // Assuming you want to reset for the next message
-  Error: ["Idle"], // Assuming you want to allow recovery/reset
+  Idle: ["LocalPending", "Thinking", "Streaming", "Finished", "NoResults", "Error"],
+  LocalPending: ["Thinking", "Streaming", "Finished", "NoResults", "Error", "Idle"],
+  Thinking: ["Streaming", "Finished", "NoResults", "Error", "Idle"],
+  Streaming: ["Finished", "NoResults", "Error", "Idle"],
+  Finished: ["Idle", "LocalPending"], // Allow starting new conversation
+  NoResults: ["Idle", "LocalPending"], // Allow starting new conversation
+  Error: ["Idle", "LocalPending"], // Allow starting new conversation
 };
 
 type ChatContext = {
@@ -28,9 +34,14 @@ type ChatContext = {
     messageId?: string,
     rewrite?: boolean,
   ) => Promise<void>;
-  rewrite: (messageId: string) => void;
+  rewrite: (messageId: string) => Promise<void>;
+  stopMessage: () => void;
+  isGenerating: boolean;
   assistantStatus: AssistantStatus; // Use the raw string type here
   makeTransition: (nextState: AssistantStatus) => boolean;
+  stepUpdates: ThinkingStep[]; // Array of step thinking events
+  searchQueries: SearchQueryData[]; // Active search queries
+  sourceReview: SourceReviewData | null; // Current source review state
 };
 
 export function chatContextEmptyState(): ChatContext {
@@ -39,9 +50,14 @@ export function chatContextEmptyState(): ChatContext {
     isMessagesLoaded: false,
     messages: [],
     sendMessage: async () => {},
-    rewrite: () => {},
+    rewrite: async () => {},
+    stopMessage: () => {},
+    isGenerating: false,
     assistantStatus: "Idle",
     makeTransition: () => false,
+    stepUpdates: [],
+    searchQueries: [],
+    sourceReview: null,
   };
 }
 
