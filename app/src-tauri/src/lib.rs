@@ -78,7 +78,7 @@ fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
         .or_else(|_| std::env::var("SENTRY_DSN"))
         .ok()?;
 
-    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@1.2.0".to_string());
+    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@0.1.0".to_string());
 
     let guard = sentry::init((
         dsn,
