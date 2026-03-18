@@ -8,3 +8,4 @@ pub mod disk_usage;
 pub mod storage_endpoints;
 pub mod privacy;
 pub mod privacy_endpoints;
+pub mod model_endpoints;

@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:services": "concurrently -k -n frontend,agents -c cyan,magenta \"npm run dev --prefix frontend\" \"npm run dev --prefix agents\"",
     "build": "tsc && vite build",
+    "build:all": "npm run build:agents && npm run build:frontend",
+    "build:agents": "npm run build:exe --prefix agents",
+    "build:frontend": "npm run build --prefix frontend",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "concurrently -n agents,tauri -c blue,green \"npm run dev --prefix ../agents\" \"npm run tauri dev\""
+    "tauri:dev": "npm run tauri dev"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -2,6 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
+import { isDesktopProductionMode } from "../lib/runtimeMode";
 
 export default function GlobalError({
   error,
@@ -11,7 +12,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    if (process.env.NODE_ENV === "production") {
+    if (isDesktopProductionMode()) {
       Sentry.captureException(error);
     }
   }, [error]);

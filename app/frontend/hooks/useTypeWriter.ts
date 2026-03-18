@@ -22,7 +22,7 @@ export function useTypewriter(sequence: Sequence) {
 
     const timeout = setTimeout(() => {
 
-      // ✅ PHASE 1 — type full sentence
+      // PHASE 1 — type full sentence
       if (phase === "typingFull") {
 
         setText(fullText.slice(0, text.length + 1));
@@ -32,7 +32,7 @@ export function useTypewriter(sequence: Sequence) {
         }
       }
 
-      // ✅ PHASE 2 — delete back to base word
+      // PHASE 2 — delete back to base word
       else if (phase === "deletingToBase") {
 
         setText(text.slice(0, -1));
@@ -44,7 +44,7 @@ export function useTypewriter(sequence: Sequence) {
         }
       }
 
-      // ✅ PHASE 3 — type new ending
+      // PHASE 3 — type new ending
       else if (phase === "typingEnding") {
 
         const newFull = sequence.base + sequence.endings[endingIndex];

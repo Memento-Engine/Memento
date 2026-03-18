@@ -1,21 +1,103 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use fastembed::{TextEmbedding, EmbeddingModel as FastEmbedModel, InitOptions};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
+/// Get the models directory from config
+fn get_models_dir() -> std::path::PathBuf {
+    app_core::config::models_dir()
+}
+
+/// Return true if any subdirectory in `models_dir` starts with one of the provided prefixes.
+fn has_model_dir_with_prefix(models_dir: &std::path::Path, prefixes: &[&str]) -> bool {
+    let entries = match std::fs::read_dir(models_dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if embedding model files exist in the cache directory
+pub fn embedding_model_exists() -> bool {
+    let models_dir = get_models_dir();
+    // Current cache naming (observed): models--Qdrant--all-MiniLM-L6-v2-onnx
+    // Keep legacy prefix for backward compatibility.
+    has_model_dir_with_prefix(
+        &models_dir,
+        &[
+            "models--Qdrant--all-MiniLM-L6-v2-onnx",
+            "fast-all-MiniLM-L6-v2",
+        ],
+    )
+}
+
+/// Check if cross-encoder model files exist in the cache directory
+pub fn cross_encoder_model_exists() -> bool {
+    let models_dir = get_models_dir();
+    // Current cache naming (observed): models--jinaai--jina-reranker-v1-turbo-en
+    // Keep legacy prefix for backward compatibility.
+    has_model_dir_with_prefix(
+        &models_dir,
+        &[
+            "models--jinaai--jina-reranker-v1-turbo-en",
+            "fast-jina-reranker-v1-turbo-en",
+        ],
+    )
+}
+
+/// Check if all required models are downloaded
+pub fn all_models_exist() -> bool {
+    embedding_model_exists() && cross_encoder_model_exists()
+}
+
 /// Thread-safe embedding model wrapper optimized for async contexts
 /// Uses tokio::sync::Mutex to avoid blocking the async runtime
+/// 
+/// NOTE: Models must be pre-downloaded during onboarding. This will NOT download models.
 pub struct AsyncEmbeddingModel {
     model: Arc<Mutex<TextEmbedding>>,
 }
 
 impl AsyncEmbeddingModel {
-    /// Initialize the embedding model (does blocking I/O, call from spawn_blocking if needed)
+    /// Initialize the embedding model from the local cache.
+    /// Returns an error if the model hasn't been downloaded yet.
+    /// Models should be downloaded during onboarding, not at runtime.
     pub fn new() -> Result<Self> {
-        info!("Initializing embedding model (AllMiniLML6V2)...");
-        let model = TextEmbedding::try_new(InitOptions::new(FastEmbedModel::AllMiniLML6V2))?;
-        info!("Embedding model initialized successfully");
+        let cache_dir = get_models_dir();
+        
+        if !embedding_model_exists() {
+            return Err(anyhow!(
+                "Embedding model not found at {:?}. Please complete onboarding to download models.",
+                cache_dir
+            ));
+        }
+        
+        info!("Loading embedding model (AllMiniLML6V2) from {:?}...", cache_dir);
+        
+        let model = TextEmbedding::try_new(
+            InitOptions::new(FastEmbedModel::AllMiniLML6V2)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(false)
+        )?;
+        
+        info!("Embedding model loaded successfully");
         
         Ok(Self {
             model: Arc::new(Mutex::new(model)),
@@ -62,17 +144,35 @@ impl Clone for AsyncEmbeddingModel {
 }
 
 /// Cross-encoder for reranking search results
+/// 
+/// NOTE: Models must be pre-downloaded during onboarding. This will NOT download models.
 pub struct AsyncCrossEncoder {
     model: Arc<Mutex<fastembed::TextRerank>>,
 }
 
 impl AsyncCrossEncoder {
+    /// Initialize the cross-encoder model from the local cache.
+    /// Returns an error if the model hasn't been downloaded yet.
+    /// Models should be downloaded during onboarding, not at runtime.
     pub fn new() -> Result<Self> {
-        info!("Initializing cross-encoder (JINA Reranker V1 Turbo)...");
+        let cache_dir = get_models_dir();
+        
+        if !cross_encoder_model_exists() {
+            return Err(anyhow!(
+                "Cross-encoder model not found at {:?}. Please complete onboarding to download models.",
+                cache_dir
+            ));
+        }
+        
+        info!("Loading cross-encoder (JINA Reranker V1 Turbo) from {:?}...", cache_dir);
+        
         let model = fastembed::TextRerank::try_new(
             fastembed::RerankInitOptions::new(fastembed::RerankerModel::JINARerankerV1TurboEn)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(false)
         )?;
-        info!("Cross-encoder initialized successfully");
+        
+        info!("Cross-encoder loaded successfully");
         
         Ok(Self {
             model: Arc::new(Mutex::new(model)),

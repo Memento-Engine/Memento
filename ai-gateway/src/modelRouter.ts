@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
-import type { GatewayConfig } from "./config.js";
-import { selectRoleModelConfig } from "./config.js";
-import type { ChatRequest, ChatResponse, ProviderName } from "./types.js";
-import type { LlmProviderAdapter, ProviderChatResult, StreamChunkCallback } from "./providers/provider.js";
-import { childLogger } from "./utils/logger.js";
+import type { GatewayConfig } from "@/config.ts";
+import { selectRoleModelConfig } from "@/config.ts";
+import type { ChatRequest, ChatResponse, ProviderName } from "@/types.ts";
+import type { LlmProviderAdapter, ProviderChatResult, StreamChunkCallback } from "@/providers/provider.ts";
+import { childLogger } from "@/utils/logger.ts";
 
 const log = childLogger("modelRouter");
 

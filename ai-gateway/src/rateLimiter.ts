@@ -1,6 +1,6 @@
-import type { GatewayConfig } from "./config.js";
-import { UsageTracker, CREDIT_COSTS, ANONYMOUS_PREMIUM_CREDITS, LOGGED_IN_PREMIUM_CREDITS } from "./usageTracker.js";
-import type { UserRole, UserTier } from "./types.js";
+import type { GatewayConfig } from "@/config.ts";
+import { UsageTracker, CREDIT_COSTS, ANONYMOUS_PREMIUM_CREDITS, LOGGED_IN_PREMIUM_CREDITS } from "@/usageTracker.ts";
+import type { UserRole, UserTier } from "@/types.ts";
 
 export type { UserTier };
 

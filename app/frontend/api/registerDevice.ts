@@ -11,11 +11,7 @@ import { AI_GATEWAY_BASE_URL } from "./base";
 
 import { type, version, hostname } from "@tauri-apps/plugin-os";
 import { getVersion } from "@tauri-apps/api/app";
-import { 
-  getPassword, 
-  setPassword, 
-  deletePassword 
-} from "tauri-plugin-keyring-api";
+import { setAccessToken, setRefreshToken } from "./auth";
 async function getDeviceMetadata(): Promise<DeviceMetaData> {
   try {
     // 1. Get OS Info (Synchronous)
@@ -94,12 +90,13 @@ export const registerDevice = async () => {
     console.log("Received refresh token:", refreshToken);
     console.log("Received server device ID:", serverDeviceId);
 
-    // Save SERVER-GENERATED device ID to localStorage for future requests
-    // This must match the deviceId in the JWT token for auth to work
-    localStorage.setItem("deviceId", serverDeviceId);
+    // Note: This is a legacy device registration flow.
+    // The app now primarily uses Google OAuth for authentication.
+    // Device ID is no longer used - auth is tied to user account.
 
-    await setPassword("memento-ai", "device-token", refreshToken);
-    document.cookie = `accessToken=${accessToken}; path=/; secure; samesite=strict`;
+    // Store tokens securely in OS keyring
+    await setAccessToken(accessToken);
+    await setRefreshToken(refreshToken);
     notify.success("Device registered successfully!");
   } catch (error) {
     console.error("Error registering device:", error);

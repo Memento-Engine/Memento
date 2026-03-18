@@ -11,6 +11,7 @@ import LeftSidebar from "@/components/layout/Sidebar";
 import { Toaster } from "sonner";
 import SystemHealthProvider from "@/providers/SystemHealthProvider";
 import CreditsProvider from "@/providers/CreditsProvider";
+import AuthProvider from "@/providers/AuthProvider";
 import type { Metadata } from "next";
 
 import { Inter } from "next/font/google";
@@ -60,9 +61,11 @@ export default function RootLayout({
 
 function LayoutRoot({ children }: { children: React.ReactNode }) {
   return (
-    <OnboardingProvider>
-      <LayoutInner>{children}</LayoutInner>
-    </OnboardingProvider>
+    <AuthProvider>
+      <OnboardingProvider>
+        <LayoutInner>{children}</LayoutInner>
+      </OnboardingProvider>
+    </AuthProvider>
   );
 }
 

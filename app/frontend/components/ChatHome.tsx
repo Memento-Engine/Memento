@@ -70,8 +70,21 @@ export default function ChatHome({ handleSend }: ChatHomeProps): React.ReactElem
   const { isRunning } = useSystemHealth();
 
   const placeholder = useTypewriter({
-    base: "Hey, When did I search about ",
-    endings: ["quantum computers?", "GOAT Movie?", "linux securities?"],
+    base: "Hey, When did I last look at ",
+    endings: [
+      "that GitHub repo I forked?",
+      "the apartment I was comparing?",
+      "that guy's LinkedIn profile?",
+      "the course I was halfway through?",
+      "my old résumé draft?",
+      "that Figma design I was tweaking?",
+      "the flight I almost booked?",
+      "that Stack Overflow fix?",
+      "the startup I was researching?",
+      "that book I added to my list?",
+      "the doctor I was going to call?",
+      "my notes from that meeting?",
+    ],
   });
 
   return (

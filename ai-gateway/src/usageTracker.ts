@@ -1,8 +1,8 @@
-import type { UsageRecord, UserRole, GatewayRole } from "./types.js";
-import { db } from "./db/index.js";
-import { usageLog, dailyUsage, premiumCredits, device } from "./db/schema.js";
+import type { UsageRecord, UserRole, GatewayRole } from "@/types.ts";
+import { db } from "@/db/index.ts";
+import { usageLog, dailyUsage, premiumCredits, device } from "@/db/schema.ts";
 import { eq, and, sql, gte } from "drizzle-orm";
-import { childLogger } from "./utils/logger.js";
+import { childLogger } from "@/utils/logger.ts";
 
 const log = childLogger("usageTracker");
 
@@ -39,13 +39,36 @@ export interface UsageStats {
   usedCredits: number;
 }
 
+/**
+ * Check if an identifier looks like an IP address (for anonymous users)
+ */
+function isIpAddress(id: string): boolean {
+  // IPv4 pattern
+  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  // IPv6 pattern (simplified)
+  const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
+  // localhost
+  if (id === "::1" || id === "127.0.0.1" || id === "unknown") {
+    return true;
+  }
+  return ipv4Regex.test(id) || ipv6Regex.test(id) || id.includes(":");
+}
+
 export class UsageTracker {
-  // In-memory cache for fast rate limiting (fallback if DB fails)
+  // In-memory cache for fast rate limiting (for anonymous users and fallback)
   private readonly records: UsageRecord[] = [];
   private readonly minuteRequestCache = new Map<string, { count: number; resetAt: number }>();
+  private readonly dailyTokenCache = new Map<string, { tokens: number; dateKey: string }>();
 
   /**
-   * Track usage in the database
+   * Check if this is an anonymous request (using IP address)
+   */
+  isAnonymousRequest(deviceId: string, userId?: string): boolean {
+    return !userId && isIpAddress(deviceId);
+  }
+
+  /**
+   * Track usage - uses in-memory for anonymous, database for authenticated
    */
   async trackUsage(params: TrackUsageParams): Promise<void> {
     const {
@@ -63,15 +86,34 @@ export class UsageTracker {
       contextWindowSize = 0,
     } = params;
 
-    log.debug({ model, completionTokens, isPremiumRequest }, "Usage params");
+    log.debug({ model, completionTokens, isPremiumRequest, isAnonymous: this.isAnonymousRequest(deviceId, userId) }, "Usage params");
 
+    // For anonymous users, use in-memory tracking only (no DB writes)
+    if (this.isAnonymousRequest(deviceId, userId)) {
+      this.track({
+        user_id: deviceId,
+        model,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    if (!userId) {
+      log.warn({ deviceId }, "Skipping DB usage tracking because authenticated request has no userId");
+      return;
+    }
+
+    // For authenticated users, track in database
     const dateKey = this.getDateKey();
 
     try {
-      // 1. Insert usage log entry
+      // 1. Insert usage log entry (user_id is the primary key for authenticated users)
       await db.insert(usageLog).values({
-        deviceId,
         userId,
+        deviceId: undefined,
         modelUsed: model,
         fallbackUsed,
         promptTokens,
@@ -84,28 +126,42 @@ export class UsageTracker {
         contextWindowSize,
       });
 
-      // 2. Update or insert daily usage (composite unique constraint on device_id + date_key)
-      await db
-        .insert(dailyUsage)
-        .values({
-          deviceId,
+      // 2. Update or insert daily usage without relying on a DB-level unique constraint.
+      const [existingDailyUsage] = await db
+        .select({ id: dailyUsage.id })
+        .from(dailyUsage)
+        .where(
+          and(
+            eq(dailyUsage.userId, userId),
+            eq(dailyUsage.dateKey, dateKey),
+          )
+        )
+        .limit(1);
+
+      if (existingDailyUsage) {
+        await db
+          .update(dailyUsage)
+          .set({
+            requestCount: sql`${dailyUsage.requestCount} + 1`,
+            totalTokens: sql`${dailyUsage.totalTokens} + ${totalTokens}`,
+            premiumCreditsUsed: sql`${dailyUsage.premiumCreditsUsed} + ${creditsCost}`,
+            lastMinuteRequestCount: sql`${dailyUsage.lastMinuteRequestCount} + 1`,
+            lastMinuteResetAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(dailyUsage.id, existingDailyUsage.id));
+      } else {
+        await db.insert(dailyUsage).values({
           userId,
+          deviceId: undefined,
           dateKey,
           requestCount: 1,
           totalTokens,
           premiumCreditsUsed: creditsCost,
           lastMinuteRequestCount: 1,
           lastMinuteResetAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: [dailyUsage.deviceId, dailyUsage.dateKey],
-          set: {
-            requestCount: sql`${dailyUsage.requestCount} + 1`,
-            totalTokens: sql`${dailyUsage.totalTokens} + ${totalTokens}`,
-            premiumCreditsUsed: sql`${dailyUsage.premiumCreditsUsed} + ${creditsCost}`,
-            updatedAt: new Date(),
-          },
         });
+      }
 
       // 3. Deduct premium credits if used
       if (creditsCost > 0) {
@@ -221,31 +277,37 @@ export class UsageTracker {
 
   /**
    * Get usage stats for a device/user
+   * Uses in-memory for anonymous users, database for authenticated
    */
   async getUsageStats(deviceId: string, userId?: string): Promise<UsageStats> {
+    // For anonymous users, use in-memory stats only
+    if (this.isAnonymousRequest(deviceId, userId)) {
+      return this.getInMemoryStats(deviceId);
+    }
+
     const dateKey = this.getDateKey();
     const oneMinuteAgo = new Date(Date.now() - 60_000);
 
     try {
-      // Get daily usage
+      // Get daily usage (query by user_id for authenticated users))
       const daily = await db
         .select()
         .from(dailyUsage)
         .where(
           and(
-            eq(dailyUsage.deviceId, deviceId),
+            eq(dailyUsage.userId, userId || ''),
             eq(dailyUsage.dateKey, dateKey)
           )
         )
         .limit(1);
 
-      // Get minute request count from recent logs
+      // Get minute request count from recent logs (query by user_id)
       const minuteCount = await db
         .select({ count: sql<number>`count(*)` })
         .from(usageLog)
         .where(
           and(
-            eq(usageLog.deviceId, deviceId),
+            eq(usageLog.userId, userId || ''),
             gte(usageLog.createdAt, oneMinuteAgo)
           )
         );

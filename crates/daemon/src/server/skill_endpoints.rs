@@ -8,6 +8,7 @@ use std::time::Instant;
 use tracing::{ info, error, warn };
 
 use crate::server::app_state::AppState;
+use crate::embedding::ModelStateKind;
 
 /// Request payload for SQL execution
 #[derive(Debug, Deserialize)]
@@ -67,10 +68,36 @@ pub struct ChunkResult {
     pub text_json: Option<String>,
 }
 
+fn model_not_ready_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "success": false,
+            "error": "Models are not ready. Please complete model download first."
+        })),
+    ).into_response()
+}
+
+fn ensure_models_ready(state: &AppState) -> Result<(), Response> {
+    let model_state = state.model_state.get_state();
+    if model_state.status != ModelStateKind::Ready {
+        warn!(
+            "Rejecting DB-backed tool request because models are not ready: {:?}",
+            model_state.status
+        );
+        return Err(model_not_ready_response());
+    }
+    Ok(())
+}
+
 pub async fn search_results_by_chunk_ids(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ChunkRequest>
 ) -> Response {
+    if let Err(resp) = ensure_models_ready(&state) {
+        return resp;
+    }
+
     let start_time = Instant::now();
     info!("Received request for search results with chunk_ids: {:?}", payload.chunk_ids);
 
@@ -171,6 +198,10 @@ pub async fn sql_execute(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SqlExecuteRequest>
 ) -> Response {
+    if let Err(resp) = ensure_models_ready(&state) {
+        return resp;
+    }
+
     let start = Instant::now();
 
     info!("SQL Execute request: {}", &payload.sql[..payload.sql.len().min(100)]);
@@ -335,13 +366,35 @@ pub async fn semantic_search(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SemanticSearchRequest>
 ) -> Response {
+    if let Err(resp) = ensure_models_ready(&state) {
+        return resp;
+    }
+
     let start = Instant::now();
     let limit = payload.limit.unwrap_or(20).clamp(1, 100);
 
     info!("Semantic search request: query={}", payload.query);
 
+    // Check if embedding model is available
+    let embedding_model = match &state.embedding_model {
+        Some(m) => m,
+        None => {
+            warn!("Semantic search attempted without embedding model");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(SemanticSearchResponse {
+                    success: false,
+                    results: None,
+                    result_count: 0,
+                    error: Some("AI models are not downloaded. Please complete onboarding to enable search.".to_string()),
+                    execution_time_ms: start.elapsed().as_millis(),
+                }),
+            ).into_response();
+        }
+    };
+
     // Generate embedding
-    let embedding = match state.embedding_model.generate_embedding(&payload.query).await {
+    let embedding = match embedding_model.generate_embedding(&payload.query).await {
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);
@@ -549,6 +602,10 @@ pub async fn hybrid_search(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<HybridSearchRequest>
 ) -> Response {
+    if let Err(resp) = ensure_models_ready(&state) {
+        return resp;
+    }
+
     let start = Instant::now();
     let limit = payload.limit.unwrap_or(20).clamp(1, 100);
     let fetch_limit = limit * 3;
@@ -557,8 +614,26 @@ pub async fn hybrid_search(
 
     info!("Hybrid search request: query={}, keywords={:?}", payload.query, keywords);
 
+    // Check if embedding model is available
+    let embedding_model = match &state.embedding_model {
+        Some(m) => m,
+        None => {
+            warn!("Hybrid search attempted without embedding model");
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(HybridSearchResponse {
+                    success: false,
+                    results: None,
+                    result_count: 0,
+                    error: Some("AI models are not downloaded. Please complete onboarding to enable search.".to_string()),
+                    execution_time_ms: start.elapsed().as_millis(),
+                }),
+            ).into_response();
+        }
+    };
+
     // Generate embedding
-    let embedding = match state.embedding_model.generate_embedding(&payload.query).await {
+    let embedding = match embedding_model.generate_embedding(&payload.query).await {
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);

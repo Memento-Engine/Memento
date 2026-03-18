@@ -256,10 +256,10 @@ impl DatabaseManager {
 
         // create db if not exists
         if !sqlx::Sqlite::database_exists(&connection_string).await? {
-            let home_dir = dirs::home_dir().expect("Failed to get the homeDir");
-            let memento_dir = home_dir.join(".memento");
-            if !memento_dir.exists() {
-                fs::create_dir_all(memento_dir)?;
+            // Ensure the database directory exists using the standardized config
+            let db_dir = crate::config::database_dir();
+            if !db_dir.exists() {
+                fs::create_dir_all(&db_dir)?;
             }
             tracing::info!("connectionString : {:#?}", connection_string);
             sqlx::Sqlite::create_database(&connection_string).await?;
@@ -1106,22 +1106,24 @@ SELECT
                 .execute(&mut **tx.conn()).await?
                 .last_insert_rowid();
 
-            //  Insert Embedding — serialize Vec<f32> to raw bytes for sqlite-vec
-            let embedding_bytes: Vec<u8> = chunk.text_embeddings
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
+            // Only write vectors when non-empty; sqlite-vec rejects zero-length vectors.
+            if !chunk.text_embeddings.is_empty() {
+                let embedding_bytes: Vec<u8> = chunk.text_embeddings
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect();
 
-            sqlx
-                ::query(
-                    r#"
-            INSERT INTO vec_chunks (chunk_id, embedding)
-            VALUES (?, ?)
-            "#
-                )
-                .bind(chunk_id)
-                .bind(&embedding_bytes)
-                .execute(&mut **tx.conn()).await?;
+                sqlx
+                    ::query(
+                        r#"
+                INSERT INTO vec_chunks (chunk_id, embedding)
+                VALUES (?, ?)
+                "#
+                    )
+                    .bind(chunk_id)
+                    .bind(&embedding_bytes)
+                    .execute(&mut **tx.conn()).await?;
+            }
         }
 
         tx.commit().await?;

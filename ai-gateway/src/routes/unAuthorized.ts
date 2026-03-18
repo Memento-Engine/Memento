@@ -1,5 +1,5 @@
 import express from "express";
-import registerDevice from "../controllers/registerDevice.js";
+import registerDevice from "@/controllers/registerDevice.ts";
 
 const unAuthorizedRouter = express.Router();
 

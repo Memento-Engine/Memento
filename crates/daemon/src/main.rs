@@ -22,7 +22,7 @@ use std::borrow::Cow;
 
 use crate::{
     core::{DaemonConfig, DaemonLifecycle, ShutdownController, set_process_priority},
-    embedding::{AsyncEmbeddingModel, AsyncCrossEncoder},
+    embedding::{AsyncEmbeddingModel, AsyncCrossEncoder, ModelStateManager, start_model_watcher, start_periodic_validation},
     ocr::engine::WindowsOcrEngine,
     pipeline::{
         capture::continuous_capture_v2,
@@ -34,7 +34,7 @@ use crate::{
     cache::PersistentOcrCache,
 };
 
-use app_core::{config::database_dir, db::DatabaseManager};
+use app_core::{config::database_path, db::DatabaseManager};
 use tracing::{error, info, warn};
 use tracing_subscriber::{self, EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use tokio::sync::mpsc;
@@ -43,7 +43,7 @@ use fs2::FileExt;
 use std::fs::OpenOptions;
 
 fn ensure_single_instance() -> std::fs::File {
-    let lock_path = app_core::config::base_dir().join("memento-daemon.lock");
+    let lock_path = app_core::config::lock_file_path("daemon");
     
     // Ensure the directory exists
     if let Some(parent) = lock_path.parent() {
@@ -66,11 +66,11 @@ fn ensure_single_instance() -> std::fs::File {
 }
 
 fn setup_logging(debug_mode: bool) {
-    // Set up the file appender
-    let log_dir = app_core::config::base_dir().join("logs");
+    // Set up the file appender (logs to current_logs_dir based on dev/production mode)
+    let log_dir = app_core::config::current_logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
     
-    let file_appender = tracing_appender::rolling::daily(log_dir, "daemon.log");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "memento-daemon.log");
 
     // Create an environment filter
     let filter = if debug_mode {
@@ -93,28 +93,24 @@ fn setup_logging(debug_mode: bool) {
         .init();
 }
 
+/// Check if this is a production build.
+/// Uses compile-time cfg!(debug_assertions) - standard pattern for desktop apps.
 fn is_production_runtime() -> bool {
-    match std::env::var("MEMENTO_ENV") {
-        Ok(value) => value.eq_ignore_ascii_case("production"),
-        Err(_) => !cfg!(debug_assertions),
-    }
+    memento_daemon::build_info::is_production()
 }
 
 fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     if !is_production_runtime() {
+        info!("Sentry disabled in development mode");
         return None;
     }
 
-    let dsn = std::env::var("DAEMON_SENTRY_DSN")
-        .or_else(|_| std::env::var("SENTRY_DSN"))
-        .ok()?;
-
-    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@1.2.0".to_string());
+    info!("Initializing Sentry (release: {})", memento_daemon::build_info::SENTRY_RELEASE);
 
     let guard = sentry::init((
-        dsn,
+        memento_daemon::build_info::SENTRY_DSN,
         sentry::ClientOptions {
-            release: Some(Cow::Owned(release)),
+            release: Some(Cow::Borrowed(memento_daemon::build_info::SENTRY_RELEASE)),
             environment: Some("daemon".into()),
             ..Default::default()
         },
@@ -132,7 +128,7 @@ fn main() {
     // Check if running as Windows Service
     #[cfg(windows)]
     {
-        if service::is_running_as_service() {
+        if is_production_runtime() && service::is_running_as_service()  {
             // Initialize sentry before service runs
             let _sentry_guard = initialize_sentry();
             
@@ -200,30 +196,31 @@ async fn run_standalone() {
     };
     
     // 9. Initialize embedding models (async-safe versions)
+    // Models are Optional - daemon runs even without them (empty state)
     let embedding_model = match AsyncEmbeddingModel::new() {
         Ok(model) => {
             info!("Embedding model initialized");
-            Arc::new(model)
+            Some(Arc::new(model))
         }
         Err(e) => {
-            error!("Failed to initialize embedding model: {:?}", e);
-            return;
+            warn!("Embedding model not available: {:?}. Vector search will be disabled.", e);
+            None
         }
     };
     
     let cross_encoder = match AsyncCrossEncoder::new() {
         Ok(model) => {
             info!("Cross-encoder initialized");
-            Arc::new(model)
+            Some(Arc::new(model))
         }
         Err(e) => {
-            error!("Failed to initialize cross-encoder: {:?}", e);
-            return;
+            warn!("Cross-encoder not available: {:?}. Reranking will be disabled.", e);
+            None
         }
     };
     
     // 10. Initialize database
-    let db_path = database_dir();
+    let db_path = database_path();
     let db_path_str = match db_path.to_str() {
         Some(p) => p,
         None => {
@@ -276,13 +273,25 @@ async fn run_standalone() {
     // 13. Create capture result channel
     let (capture_tx, capture_rx) = mpsc::channel(256);
     
+    // 13a. Initialize model state manager and file watcher
+    let model_state = ModelStateManager::new();
+    let _model_watcher = start_model_watcher(Arc::clone(&model_state));
+    
+    // Start periodic model validation
+    let periodic_model_state = Arc::clone(&model_state);
+    let periodic_shutdown_rx = shutdown.subscribe();
+    tokio::spawn(async move {
+        start_periodic_validation(periodic_model_state, periodic_shutdown_rx).await;
+    });
+    
     // 14. Create app state for HTTP server
     let app_state = Arc::new(AppState::new(
         Arc::clone(&db),
-        Arc::clone(&embedding_model),
-        Arc::clone(&cross_encoder),
+        embedding_model.clone(),
+        cross_encoder.clone(),
         scheduler.clone(),
         Arc::clone(&privacy_manager),
+        model_state,
     ));
     
     // 15. Mark lifecycle as running
@@ -296,8 +305,9 @@ async fn run_standalone() {
     let capture_privacy_cache = privacy_manager.cache();
     let capture_shutdown = Arc::clone(&shutdown);
     
-    let _capture_handle = tokio::spawn(async move {
-        continuous_capture_v2(
+    info!("Spawning capture task");
+    let capture_handle = tokio::spawn(async move {
+        let result = continuous_capture_v2(
             capture_tx,
             capture_scheduler,
             capture_ocr_engine,
@@ -306,25 +316,37 @@ async fn run_standalone() {
             monitor_id,
             capture_shutdown,
             capture_lifecycle,
-        ).await
+        ).await;
+
+        if let Err(ref e) = result {
+            error!("Capture task exited with error: {:?}", e);
+        } else {
+            info!("Capture task exited gracefully");
+        }
+
+        result
     });
     
     // 17. Spawn the OCR result processor
-    let processor_embedding = Arc::clone(&embedding_model);
+    let processor_embedding = embedding_model.clone();
     let processor_db = Arc::clone(&db);
     let processor_shutdown = Arc::clone(&shutdown);
     
-    let _processor_handle = tokio::spawn(async move {
+    info!("Spawning OCR processor task");
+    let processor_handle = tokio::spawn(async move {
         let processor = OcrProcessor::new(processor_embedding, processor_db);
         processor.process_stream(capture_rx, processor_shutdown).await;
+        info!("OCR processor task exited");
     });
     
     // 18. Spawn the HTTP server
     let server_state = Arc::clone(&app_state);
     let server_shutdown = Arc::clone(&shutdown);
     
+    info!("Spawning HTTP server task");
     let server_handle = tokio::spawn(async move {
         start_server(server_state, server_shutdown).await;
+        info!("HTTP server task exited");
     });
     
     // 19. Spawn cache persistence task (saves every 5 minutes)
@@ -396,9 +418,21 @@ async fn run_standalone() {
     
     tokio::select! {
         _ = async {
-            // let _ = capture_handle.await;
-            // let _ = processor_handle.await;
-            let _ = server_handle.await;
+            match capture_handle.await {
+                Ok(Ok(())) => info!("Capture task joined"),
+                Ok(Err(e)) => error!("Capture task returned error: {:?}", e),
+                Err(e) => error!("Capture task join error: {:?}", e),
+            }
+
+            match processor_handle.await {
+                Ok(()) => info!("OCR processor task joined"),
+                Err(e) => error!("OCR processor task join error: {:?}", e),
+            }
+
+            match server_handle.await {
+                Ok(()) => info!("HTTP server task joined"),
+                Err(e) => error!("HTTP server task join error: {:?}", e),
+            }
         } => {
             info!("All tasks completed gracefully");
         }
@@ -454,30 +488,31 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     };
     
     // 8. Initialize embedding models (async-safe versions)
+    // Models are Optional - daemon runs even without them (empty state)
     let embedding_model = match AsyncEmbeddingModel::new() {
         Ok(model) => {
             info!("Embedding model initialized");
-            Arc::new(model)
+            Some(Arc::new(model))
         }
         Err(e) => {
-            error!("Failed to initialize embedding model: {:?}", e);
-            return Err(format!("Embedding model init failed: {:?}", e).into());
+            warn!("Embedding model not available: {:?}. Vector search will be disabled.", e);
+            None
         }
     };
     
     let cross_encoder = match AsyncCrossEncoder::new() {
         Ok(model) => {
             info!("Cross-encoder initialized");
-            Arc::new(model)
+            Some(Arc::new(model))
         }
         Err(e) => {
-            error!("Failed to initialize cross-encoder: {:?}", e);
-            return Err(format!("Cross-encoder init failed: {:?}", e).into());
+            warn!("Cross-encoder not available: {:?}. Reranking will be disabled.", e);
+            None
         }
     };
     
     // 9. Initialize database
-    let db_path = database_dir();
+    let db_path = database_path();
     let db_path_str = match db_path.to_str() {
         Some(p) => p,
         None => {
@@ -530,13 +565,25 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     // 13. Create capture result channel
     let (capture_tx, capture_rx) = mpsc::channel(256);
     
+    // 13a. Initialize model state manager and file watcher
+    let model_state = ModelStateManager::new();
+    let _model_watcher = start_model_watcher(Arc::clone(&model_state));
+    
+    // Start periodic model validation
+    let periodic_model_state = Arc::clone(&model_state);
+    let periodic_shutdown_rx = shutdown.subscribe();
+    tokio::spawn(async move {
+        start_periodic_validation(periodic_model_state, periodic_shutdown_rx).await;
+    });
+    
     // 14. Create app state for HTTP server
     let app_state = Arc::new(AppState::new(
         Arc::clone(&db),
-        Arc::clone(&embedding_model),
-        Arc::clone(&cross_encoder),
+        embedding_model.clone(),
+        cross_encoder.clone(),
         scheduler.clone(),
         Arc::clone(&privacy_manager),
+        model_state,
     ));
     
     // 15. Mark lifecycle as running
@@ -550,8 +597,9 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     let capture_privacy_cache = privacy_manager.cache();
     let capture_shutdown = Arc::clone(&shutdown);
     
-    let _capture_handle = tokio::spawn(async move {
-        continuous_capture_v2(
+    info!("Spawning capture task");
+    let capture_handle = tokio::spawn(async move {
+        let result = continuous_capture_v2(
             capture_tx,
             capture_scheduler,
             capture_ocr_engine,
@@ -560,25 +608,37 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
             monitor_id,
             capture_shutdown,
             capture_lifecycle,
-        ).await
+        ).await;
+
+        if let Err(ref e) = result {
+            error!("Capture task exited with error: {:?}", e);
+        } else {
+            info!("Capture task exited gracefully");
+        }
+
+        result
     });
     
     // 17. Spawn the OCR result processor
-    let processor_embedding = Arc::clone(&embedding_model);
+    let processor_embedding = embedding_model.clone();
     let processor_db = Arc::clone(&db);
     let processor_shutdown = Arc::clone(&shutdown);
     
-    let _processor_handle = tokio::spawn(async move {
+    info!("Spawning OCR processor task");
+    let processor_handle = tokio::spawn(async move {
         let processor = OcrProcessor::new(processor_embedding, processor_db);
         processor.process_stream(capture_rx, processor_shutdown).await;
+        info!("OCR processor task exited");
     });
     
     // 18. Spawn the HTTP server
     let server_state = Arc::clone(&app_state);
     let server_shutdown = Arc::clone(&shutdown);
     
+    info!("Spawning HTTP server task");
     let server_handle = tokio::spawn(async move {
         start_server(server_state, server_shutdown).await;
+        info!("HTTP server task exited");
     });
     
     // 19. Spawn cache persistence task (saves every 5 minutes)
@@ -646,7 +706,21 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     
     tokio::select! {
         _ = async {
-            let _ = server_handle.await;
+            match capture_handle.await {
+                Ok(Ok(())) => info!("Capture task joined"),
+                Ok(Err(e)) => error!("Capture task returned error: {:?}", e),
+                Err(e) => error!("Capture task join error: {:?}", e),
+            }
+
+            match processor_handle.await {
+                Ok(()) => info!("OCR processor task joined"),
+                Err(e) => error!("OCR processor task join error: {:?}", e),
+            }
+
+            match server_handle.await {
+                Ok(()) => info!("HTTP server task joined"),
+                Err(e) => error!("HTTP server task join error: {:?}", e),
+            }
         } => {
             info!("All tasks completed gracefully");
         }

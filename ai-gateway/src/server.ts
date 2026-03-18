@@ -2,30 +2,32 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import { z } from "zod";
 import { StatusCodes } from "http-status-codes";
-import { loadConfig, selectRoleModelConfig } from "./config.js";
-import { ModelRouter } from "./modelRouter.js";
-import { OpenRouterAdapter } from "./providers/openrouter.adapter.js";
-import type { LlmProviderAdapter } from "./providers/provider.js";
-import { RateLimiter, RateLimitError } from "./rateLimiter.js";
-import type { ChatRequest, ProviderName, UserRole, GatewayResponse } from "./types.js";
-import { UsageTracker, CREDIT_COSTS } from "./usageTracker.js";
-import unAuthorizedRouter from "./routes/unAuthorized.js";
-import { errorHandler } from "./utils/errorHandler.js";
-import { validateUserRequest } from "./middlewares/auth.ts";
-import { RequestContext } from "./types/request-context.ts";
+import { loadConfig, selectRoleModelConfig } from "@/config.ts";
+import { ModelRouter } from "@/modelRouter.ts";
+import { OpenRouterAdapter } from "@/providers/openrouter.adapter.ts";
+import type { LlmProviderAdapter } from "@/providers/provider.ts";
+import { RateLimiter, RateLimitError } from "@/rateLimiter.ts";
+import type { ChatRequest, ProviderName, UserRole, GatewayResponse } from "@/types.ts";
+import { UsageTracker, CREDIT_COSTS } from "@/usageTracker.ts";
+import unAuthorizedRouter from "@/routes/unAuthorized.ts";
+import authRouter from "@/routes/auth.ts";
+import { errorHandler } from "@/utils/errorHandler.ts";
+import { validateUserRequest } from "@/middlewares/auth.ts";
+import { RequestContext } from "@/types/request-context.ts";
 import {
   shrinkContextWindow,
   estimateConversationTokens,
   needsShrinking,
   getContextStats
-} from "./utils/contextWindow.js";
+} from "@/utils/contextWindow.ts";
 import {
   BadRequestError,
   ForbiddenError,
   InternalServerError,
 } from "@memento/shared/errors.ts";
-import { runMigrations } from "./db/migrate.js";
-import { logger, childLogger } from "./utils/logger.js";
+import { runMigrations } from "@/db/migrate.ts";
+import { logger, childLogger } from "@/utils/logger.ts";
+import { httpLogger } from "@/middlewares/httpLogger.ts";
 
 const log = childLogger("server");
 
@@ -92,6 +94,7 @@ async function startServer(): Promise<void> {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
+  app.use(httpLogger);
 
   app.get("/health", (_req: Request, res: Response) => {
     const response: GatewayResponse<{ ok: boolean; service: string }> = {
@@ -101,7 +104,9 @@ async function startServer(): Promise<void> {
     res.json(response);
   });
 
+  // Public routes (no auth required)
   app.use(unAuthorizedRouter);
+  app.use(authRouter);
 
   app.post("/v1/chat", validateUserRequest, async (req: RequestContext, res: Response) => {
     try {

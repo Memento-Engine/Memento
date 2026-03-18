@@ -1,10 +1,10 @@
-import Thread from "@/components/Thread";
+"use client";
 
-// Server component that wraps the client Thread component
-// For static export with optional catch-all routes
-export async function generateStaticParams() {
-  return [{ id: [] }]; // Generates /chat route
-}
+import dynamic from "next/dynamic";
+
+const Thread = dynamic(() => import("@/components/Thread"), {
+  ssr: false,
+});
 
 export default function ChatPage(): React.ReactElement {
   return <Thread />;

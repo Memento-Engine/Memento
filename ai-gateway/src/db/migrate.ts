@@ -2,7 +2,7 @@ import "dotenv/config";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@/config.ts";
 import path from "path";
 import { fileURLToPath } from "url";
 

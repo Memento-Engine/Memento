@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../types.js";
+import type { ChatMessage } from "@/types.ts";
 
 /**
  * Model context window limits (in tokens)

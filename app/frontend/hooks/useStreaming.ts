@@ -1,5 +1,6 @@
 import { useRef, useCallback } from "react";
 import * as Sentry from "@sentry/nextjs";
+import { isDesktopProductionMode } from "../lib/runtimeMode";
 import { MementoUIMessage, ThinkingStep } from "@/components/types";
 import {
   AssistantStatus,
@@ -22,37 +23,7 @@ import {
   ensureAssistantMessage,
 } from "@/lib/messageUtils";
 import { getAgentBaseUrl } from "@/api/base";
-
-// Helper to get auth headers from cookies and localStorage
-function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  // Get access token from cookie
-  if (typeof document !== "undefined") {
-    const cookies = document.cookie.split(";");
-    const accessTokenCookie = cookies.find((c) =>
-      c.trim().startsWith("accessToken=")
-    );
-    if (accessTokenCookie) {
-      const accessToken = accessTokenCookie.split("=")[1]?.trim();
-      if (accessToken) {
-        headers["Authorization"] = `Bearer ${accessToken}`;
-      }
-    }
-  }
-
-  // Get device ID from localStorage
-  if (typeof localStorage !== "undefined") {
-    const deviceId = localStorage.getItem("deviceId");
-    if (deviceId) {
-      headers["X-Device-ID"] = deviceId;
-    }
-  }
-
-  return headers;
-}
+import { getAuthHeaders } from "@/api/auth";
 
 interface StreamHandlerCallbacks {
   setMessages: React.Dispatch<React.SetStateAction<MementoUIMessage[]>>;
@@ -305,7 +276,7 @@ export function useStreaming(
             }
           } catch (e) {
             console.warn("Failed to parse streaming event:", line, e);
-            if (process.env.NODE_ENV === "production") {
+            if (isDesktopProductionMode()) {
               Sentry.withScope((scope) => {
                 scope.setTag("environment", "frontend");
                 scope.setTag("service", "ui");
@@ -324,15 +295,12 @@ export function useStreaming(
   // Main streaming function
   const streamMessage = useCallback(
     async (goal: string, signal: AbortSignal) => {
-      const headers = getAuthHeaders();
+      // Get auth headers from OS keyring (async)
+      const headers = await getAuthHeaders();
       
-      // Validate required auth headers
-      if (!headers["X-Device-ID"]) {
-        throw new Error("DEVICE_NOT_REGISTERED");
-      }
-      if (!headers["Authorization"]) {
-        throw new Error("AUTH_TOKEN_MISSING");
-      }
+      // Anonymous users can use the API without auth headers
+      // The backend will handle rate limiting by IP address
+      // Only authenticated users need Authorization header
       
       // Get the agent server URL dynamically from port file
       const baseUrl = await getAgentBaseUrl();
@@ -355,7 +323,7 @@ export function useStreaming(
             throw new Error("AUTH_TOKEN_EXPIRED");
           }
         }
-        if (process.env.NODE_ENV === "production") {
+        if (isDesktopProductionMode()) {
           Sentry.withScope((scope) => {
             scope.setTag("environment", "frontend");
             scope.setTag("service", "ui");

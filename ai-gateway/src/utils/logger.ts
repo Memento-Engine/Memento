@@ -26,13 +26,14 @@ export const logger = pino(
           colorize: true,
           colorizeObjects: true,
           translateTime: "HH:MM:ss.l",
-          ignore: "pid,hostname,service",
+          // hide pino-http's raw req/res/responseTime objects – they're
+          // already baked into the colored message by httpLogger.ts
+          ignore: "pid,hostname,service,req,res,responseTime",
           levelFirst: true,
           // Custom level colors
           customColors:
             "fatal:bgRed,error:red,warn:yellow,info:cyan,debug:blue,trace:gray",
-          messageFormat:
-            "{msg}",
+          messageFormat: "{if module}[{module}] {end}{msg}",
           singleLine: false,
         },
       })

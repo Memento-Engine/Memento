@@ -148,11 +148,9 @@ fn run_service(_arguments: Vec<OsString>) -> Result<(), windows_service::Error> 
     Ok(())
 }
 
-/// Check if the process is running as a Windows Service
-/// Services are started with no console attached and specific environment
+/// Check if the process is running as a Windows Service.
+/// Services are started with the --service flag by the service control manager.
 pub fn is_running_as_service() -> bool {
-    // When run as a service, there's typically no console window
-    // We can check for the --service flag or environment
+    // Primary detection: --service flag passed by Windows Service Manager
     std::env::args().any(|arg| arg == "--service")
-        || std::env::var("RUNNING_AS_SERVICE").is_ok()
 }

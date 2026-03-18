@@ -197,8 +197,26 @@ pub async fn search_tool(
     Json(payload): Json<DatabaseQuery>
 ) -> Response {
     let start = Instant::now();
-    // call search logic here
-    let model = state.embedding_model.clone();
+    
+    // Check if embedding model is available
+    let model = match &state.embedding_model {
+        Some(m) => m.clone(),
+        None => {
+            tracing::warn!("Search attempted without embedding model");
+            return error_response(
+                "MODELS_NOT_AVAILABLE",
+                "AI models are not downloaded",
+                "initialization",
+                Some("Please complete onboarding to download AI models for search functionality.".to_string()),
+                start.elapsed().as_millis(),
+                payload.limit.unwrap_or(40).max(1).min(100),
+                0,
+                "timestamp",
+                "desc"
+            );
+        }
+    };
+    
     tracing::info!("Database Query Information : {:#?}", payload);
 
     let DatabaseQuery {

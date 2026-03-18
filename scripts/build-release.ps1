@@ -77,11 +77,12 @@ if (Test-Path "app/src-tauri/icons") {
 Write-Host "Packing with Velopack..." -ForegroundColor Yellow
 $packArgs = @(
     "pack",
-    "--packId", "memento",
+    "--packId", "Memento",
     "--packVersion", $Version,
     "--packDir", $stagingDir,
     "--mainExe", "memento.exe",
-    "--outputDir", $OutputDir
+    "--outputDir", $OutputDir,
+    "--installDir", "%LOCALAPPDATA%/Programs/Memento"
 )
 
 # Add delta base if previous release exists and not skipped

@@ -5,6 +5,7 @@ import {
   Delete,
   Edit,
   Ellipsis,
+  LogIn,
   PanelLeft,
   Search,
   Share,
@@ -35,6 +36,7 @@ import {
 import { Separator } from "../ui/separator";
 import { MementoLogo } from "../Logo";
 import { PremiumCredits } from "../PremiumCredits";
+import  useAuth  from "@/hooks/useAuth";
 
 const techTopics: string[] = [
   "What are microservices?",
@@ -45,10 +47,15 @@ const techTopics: string[] = [
 function LeftSidebar(): React.ReactElement {
   const { toggleSidebar, state } = useSidebar();
   const [isSettingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const { user, isAuthenticated } = useAuth();
   const isCollapsed = state === "collapsed";
 
   const goToHome = (): void => {
     redirect("/");
+  };
+
+  const handleFooterClick = (): void => {
+    setSettingsOpen(true);
   };
 
   return (
@@ -149,7 +156,7 @@ function LeftSidebar(): React.ReactElement {
             </p>
             <SidebarMenu>
               {techTopics.map((topic: string, i: number) => (
-                <SidebarMenuItem className="group/view" key={i}>
+                <SidebarMenuItem className="group/view list-none" key={i}>
                   <SidebarMenuButton
                     variant="default"
                     className="
@@ -165,7 +172,7 @@ function LeftSidebar(): React.ReactElement {
                     group-data-[collapsible=icon]:px-0
                     "
                   >
-                    <span className="truncate group-data-[collapsible=icon]:hidden">
+                    <span className="truncate text-sm group-data-[collapsible=icon]:hidden">
                       {topic}
                     </span>
 
@@ -226,8 +233,8 @@ function LeftSidebar(): React.ReactElement {
         </div>
 
         <SidebarFooter
-          onClick={(): void => setSettingsOpen(!isSettingsOpen)}
-          className={cn("p-3 pt-0", isCollapsed && "px-2")}
+          onClick={handleFooterClick}
+          className={cn("px-3 pb-3", isCollapsed && "px-2")}
         >
           <SidebarMenu>
             <SidebarMenuItem>
@@ -235,17 +242,43 @@ function LeftSidebar(): React.ReactElement {
                 size="lg"
                 className="w-full cursor-pointer flex items-center justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
               >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
-                  <User2 className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="flex flex-col gap-1 text-left overflow-hidden group-data-[collapsible=icon]:hidden">
-                  <span className="text-sm font-medium leading-none text-foreground whitespace-nowrap">
-                    Bruce Wayne
-                  </span>
-                  <span className="text-xs leading-none truncate text-muted-foreground whitespace-nowrap">
-                    brucewayne@enterprises.com
-                  </span>
-                </div>
+                {isAuthenticated && user ? (
+                  <>
+                    {user.picture ? (
+                      <img
+                        src={user.picture}
+                        alt={user.name}
+                        className="h-8 w-8 shrink-0 rounded-full"
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
+                        <User2 className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="flex flex-col gap-1 text-left overflow-hidden group-data-[collapsible=icon]:hidden">
+                      <span className="text-sm font-medium leading-none text-foreground whitespace-nowrap">
+                        {user.name}
+                      </span>
+                      <span className="text-xs leading-none truncate text-muted-foreground whitespace-nowrap">
+                        {user.email}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
+                      <LogIn className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex flex-col gap-1 text-left overflow-hidden group-data-[collapsible=icon]:hidden">
+                      <span className="text-sm font-medium leading-none text-foreground whitespace-nowrap">
+                        Sign in
+                      </span>
+                      <span className="text-xs leading-none truncate text-muted-foreground whitespace-nowrap">
+                        Sync settings and usage
+                      </span>
+                    </div>
+                  </>
+                )}
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
