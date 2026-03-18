@@ -476,6 +476,7 @@ jobs:
           $tagName     = "v$version"
           $isPrerelease = "${{ needs.validate-policy.outputs.is_prerelease }}"
           $sha         = "${{ github.sha }}"
+          $repo        = "${{ github.repository }}"
 
           $files = Get-ChildItem "velopack-output" | ForEach-Object { $_.FullName }
           if ($files.Count -eq 0) {
@@ -486,7 +487,7 @@ jobs:
           # skip tag/release creation and only re-upload assets.
           $releaseExists = $false
           try {
-            gh release view $tagName --json id | Out-Null
+            gh release view $tagName --repo $repo --json id | Out-Null
             $releaseExists = $true
           } catch {
             # Only swallow "not found" — re-throw anything unexpected
@@ -497,11 +498,12 @@ jobs:
 
           if ($releaseExists) {
             Write-Host "Release $tagName already exists — uploading/replacing assets only."
-            gh release upload $tagName @files --clobber
+            gh release upload $tagName @files --repo $repo --clobber
           } else {
             Write-Host "Creating release $tagName on commit $sha"
             $createArgs = @(
               $tagName,
+              "--repo",           $repo,
               "--title",          "Memento AI $version",
               "--generate-notes",
               "--target",         $sha        # exact tested commit — never points to wrong HEAD
