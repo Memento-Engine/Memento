@@ -6,7 +6,7 @@ use chrono::Utc;
 use image::codecs::jpeg::JpegEncoder;
 
 use tokio::sync::mpsc::Receiver;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::core::ShutdownController;
 use crate::embedding::AsyncEmbeddingModel;
@@ -24,14 +24,18 @@ const CHUNK_SIZE: usize = 300;
 /// JPEG quality for stored images (1-100)
 const IMAGE_QUALITY: u8 = 75;
 
-/// Processes captured OCR results, generates embeddings, and stores in database
+/// Processes captured OCR results, generates embeddings, and stores in database.
+/// Can operate without an embedding model (saves text only, no vector search).
 pub struct OcrProcessor {
-    embedding_model: Arc<AsyncEmbeddingModel>,
+    embedding_model: Option<Arc<AsyncEmbeddingModel>>,
     db: Arc<DatabaseManager>,
 }
 
 impl OcrProcessor {
-    pub fn new(embedding_model: Arc<AsyncEmbeddingModel>, db: Arc<DatabaseManager>) -> Self {
+    pub fn new(embedding_model: Option<Arc<AsyncEmbeddingModel>>, db: Arc<DatabaseManager>) -> Self {
+        if embedding_model.is_none() {
+            warn!("OcrProcessor initialized without embedding model - vector search will be unavailable");
+        }
         Self {
             embedding_model,
             db,
@@ -117,10 +121,15 @@ impl OcrProcessor {
                 continue;
             }
             
-            // Generate embeddings in batch
-            let embeddings = self.embedding_model
-                .generate_batch_embeddings(texts_for_embedding.clone())
-                .await?;
+            // Generate embeddings if model is available, otherwise use empty vectors
+            let embeddings = if let Some(ref model) = self.embedding_model {
+                model
+                    .generate_batch_embeddings(texts_for_embedding.clone())
+                    .await?
+            } else {
+                // No embedding model - use empty vectors (full-text search still works)
+                vec![Vec::new(); texts_for_embedding.len()]
+            };
             
             // Build chunk blocks with aligned bounding boxes
             let text_blocks = self.build_chunk_blocks(

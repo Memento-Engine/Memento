@@ -23,10 +23,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/.memento/memories/**",
-          "C:/Users/pavan/Pictures/Screenshots/**",
-          "C:/Users/*/.memento/memories/**",
-          "C:/Users/pavan/.memento/memories/**"
+          "$LOCALAPPDATA/Memento/data/memories/**",
+          "C:/Users/*/AppData/Local/Memento/data/memories/**"
         ]
       }
     }

@@ -195,11 +195,42 @@ export async function createContextLogger(
   });
 }
 
-// Export singleton for backward compatibility
-export const logger = new Proxy(new ContextLogger(null as any), {
-  async get(target, prop) {
-    const actualLogger = await getLogger();
-    const contextLogger = new ContextLogger(actualLogger);
-    return (contextLogger as any)[prop];
+type LoggerMetadata = Record<string, any>;
+
+// Export singleton for backward compatibility.
+// Keep methods sync so callers can do logger.info(...) without awaiting.
+export const logger = {
+  debug(message: string, metadata?: LoggerMetadata): void {
+    void getLogger()
+      .then((l) => l.debug(metadata ?? {}, message))
+      .catch(() => {
+        // Avoid throwing from logging paths.
+      });
   },
-});
+
+  info(message: string, metadata?: LoggerMetadata): void {
+    void getLogger()
+      .then((l) => l.info(metadata ?? {}, message))
+      .catch(() => {
+        // Avoid throwing from logging paths.
+      });
+  },
+
+  warn(message: string, metadata?: LoggerMetadata): void {
+    void getLogger()
+      .then((l) => l.warn(metadata ?? {}, message))
+      .catch(() => {
+        // Avoid throwing from logging paths.
+      });
+  },
+
+  error(message: string, error?: Error | unknown, metadata?: LoggerMetadata): void {
+    void getLogger()
+      .then((l) => {
+        new ContextLogger(l).error(message, error, metadata);
+      })
+      .catch(() => {
+        // Avoid throwing from logging paths.
+      });
+  },
+};

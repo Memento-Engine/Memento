@@ -256,10 +256,10 @@ impl DatabaseManager {
 
         // create db if not exists
         if !sqlx::Sqlite::database_exists(&connection_string).await? {
-            let home_dir = dirs::home_dir().expect("Failed to get the homeDir");
-            let memento_dir = home_dir.join(".memento");
-            if !memento_dir.exists() {
-                fs::create_dir_all(memento_dir)?;
+            // Ensure the database directory exists using the standardized config
+            let db_dir = crate::config::database_dir();
+            if !db_dir.exists() {
+                fs::create_dir_all(&db_dir)?;
             }
             tracing::info!("connectionString : {:#?}", connection_string);
             sqlx::Sqlite::create_database(&connection_string).await?;

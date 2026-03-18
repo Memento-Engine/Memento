@@ -1,14 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use fastembed::{ TextEmbedding, EmbeddingModel as FastEmbedModel, InitOptions };
-use std::path::PathBuf;
 
-/// Returns the models directory: %APPDATA%\Memento\models\
-/// This location persists across Velopack updates.
-fn get_models_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Memento")
-        .join("models")
+/// Returns the models directory from the standardized config
+/// Windows: C:\Users\<Username>\AppData\Local\Memento\data\models\
+fn get_models_dir() -> std::path::PathBuf {
+    app_core::config::models_dir()
 }
 
 pub struct EmbeddingModel {
@@ -16,15 +12,24 @@ pub struct EmbeddingModel {
 }
 
 impl EmbeddingModel {
+    /// Load the embedding model from the local cache.
+    /// Returns an error if the model hasn't been downloaded yet.
+    /// Models should be downloaded during onboarding, not at runtime.
     pub fn new() -> Result<Self> {
         let cache_dir = get_models_dir();
-        std::fs::create_dir_all(&cache_dir)?;
         
-        // Downloads model on first run if not present
+        if !super::async_engine::embedding_model_exists() {
+            return Err(anyhow!(
+                "Embedding model not found at {:?}. Please complete onboarding to download models.",
+                cache_dir
+            ));
+        }
+        
+        // Load model from cache (no download)
         let model = TextEmbedding::try_new(
             InitOptions::new(FastEmbedModel::AllMiniLML6V2)
                 .with_cache_dir(cache_dir)
-                .with_show_download_progress(true)
+                .with_show_download_progress(false)
         )?;
 
         Ok(Self { model })
@@ -50,15 +55,24 @@ pub struct CrossEncoder {
 }
 
 impl CrossEncoder {
+    /// Load the cross-encoder model from the local cache.
+    /// Returns an error if the model hasn't been downloaded yet.
+    /// Models should be downloaded during onboarding, not at runtime.
     pub fn new() -> Result<Self> {
         let cache_dir = get_models_dir();
-        std::fs::create_dir_all(&cache_dir)?;
         
-        tracing::info!("Loading reranker JINARerankerV1TurboEn");
+        if !super::async_engine::cross_encoder_model_exists() {
+            return Err(anyhow!(
+                "Cross-encoder model not found at {:?}. Please complete onboarding to download models.",
+                cache_dir
+            ));
+        }
+        
+        tracing::info!("Loading reranker JINARerankerV1TurboEn from {:?}", cache_dir);
         let model = TextRerank::try_new(
             RerankInitOptions::new(RerankerModel::JINARerankerV1TurboEn)
                 .with_cache_dir(cache_dir)
-                .with_show_download_progress(true)
+                .with_show_download_progress(false)
         )?;
 
         Ok(Self { model })

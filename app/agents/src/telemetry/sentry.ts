@@ -1,6 +1,5 @@
 import * as Sentry from "@sentry/node";
 import { getConfig } from "../config/config";
-import { logger } from "../utils/logger";
 
 let sentryEnabled = false;
 type SentrySeverityLevel = "fatal" | "error" | "warning" | "log" | "info" | "debug";
@@ -14,14 +13,14 @@ export async function initializeSentry(): Promise<void> {
   const dsn = "https://a291be24371ccc5399d82f2b67fe8ab3@o4511037138206720.ingest.us.sentry.io/4511064036081664";
   const enabled = config.server.environment === "production" && Boolean(dsn);
 
-  logger.info("[Sentry] Initializing Sentry for backend with config", {
+  console.info("[Sentry] Initializing Sentry for backend with config", {
     enabled,
     environment: config.server.environment,
     hasDsn: Boolean(dsn),
   });
 
   if (!enabled || !dsn) {
-    logger.info("[Sentry] Sentry is disabled or DSN is missing");
+    console.info("[Sentry] Sentry is disabled or DSN is missing");
     return;
   }
 

@@ -57,19 +57,25 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 
-function getLocalDataDir(): string {
+/**
+ * Get the Memento base directory
+ * Windows: C:\Users\<Username>\AppData\Local\Memento\
+ * macOS: ~/Library/Application Support/Memento/
+ * Linux: ~/.local/share/Memento/
+ */
+function getMementoBaseDir(): string {
   const platform = os.platform();
   if (platform === "win32") {
-    return path.join(os.homedir(), "AppData", "Local");
+    return path.join(os.homedir(), "AppData", "Local", "Memento");
   }
   if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support");
+    return path.join(os.homedir(), "Library", "Application Support", "Memento");
   }
-  return path.join(os.homedir(), ".local", "share");
+  return path.join(os.homedir(), ".local", "share", "Memento");
 }
 
 export async function readDaemonPort(): Promise<number> {
-  const filePath = path.join(getLocalDataDir(), "memento", "memento-daemon.port");
+  const filePath = path.join(getMementoBaseDir(), "ports", "memento-daemon.port");
   const content = await fs.readFile(filePath, "utf-8");
   const port = parseInt(content.trim(), 10);
   if (Number.isNaN(port)) {

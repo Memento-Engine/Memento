@@ -418,11 +418,12 @@ jobs:
           $version = "${{ needs.validate-policy.outputs.version }}"
           $packArgs = @(
             "pack",
-            "--packId",      "memento",
+            "--packId",      "Memento",
             "--packVersion", $version,
             "--packDir",     "release-staging",
             "--mainExe",     "memento.exe",
-            "--outputDir",   "velopack-output"
+            "--outputDir",   "velopack-output",
+            "--installDir",  "%LOCALAPPDATA%/Programs/Memento"
           )
 
           $prevPkg = Get-ChildItem "previous-release/*.nupkg" -ErrorAction SilentlyContinue |

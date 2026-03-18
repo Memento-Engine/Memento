@@ -9,10 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@sentry/nextjs": "^10.22.0",
     "@langchain/core": "^1.1.30",
     "@langchain/langgraph": "^1.2.0",
     "@langchain/openai": "^1.2.12",
+    "@sentry/nextjs": "^10.22.0",
     "@streamdown/cjk": "^1.0.2",
     "@streamdown/code": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",

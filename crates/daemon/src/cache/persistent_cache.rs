@@ -63,7 +63,12 @@ pub struct PersistentOcrCache {
 
 impl PersistentOcrCache {
     pub fn new(max_age_secs: u64, max_entries: usize) -> Self {
-        let cache_path = app_core::config::base_dir().join("ocr_cache.json");
+        let cache_path = app_core::config::cache_dir().join("ocr_cache.json");
+        
+        // Ensure cache directory exists
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         
         let mut cache = HashMap::new();
         

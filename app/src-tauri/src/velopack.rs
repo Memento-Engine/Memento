@@ -100,7 +100,7 @@ fn on_after_install() {
     }
 }
 
-/// Called before uninstall - stops and removes service
+/// Called before uninstall - stops and removes service, cleans up user data
 fn on_before_uninstall() {
     info!("Velopack: Running pre-uninstall hook");
     
@@ -110,31 +110,66 @@ fn on_before_uninstall() {
         let msg = format!("service-helper.exe not found at {:?}", helper_path);
         warn!("{}", msg);
         sentry::capture_message(&msg, sentry::Level::Warning);
+    } else {
+        debug!("Running service helper for uninstall: {:?}", helper_path);
+        
+        // Run the helper with uninstall command
+        // This will trigger UAC prompt
+        let result = Command::new(&helper_path)
+            .args(["uninstall"])
+            .status();
+        
+        match result {
+            Ok(status) if status.success() => {
+                info!("Service uninstalled successfully");
+                sentry::capture_message("Service uninstalled successfully", sentry::Level::Info);
+            }
+            Ok(status) => {
+                let msg = format!("Service uninstall returned exit code: {:?}", status.code());
+                warn!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Warning);
+            }
+            Err(e) => {
+                let msg = format!("Failed to run service helper: {}", e);
+                error!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Error);
+            }
+        }
+    }
+    
+    // Clean up user data directory: C:\Users\<Username>\AppData\Local\Memento\
+    cleanup_user_data();
+}
+
+/// Remove all user data on uninstall
+fn cleanup_user_data() {
+    info!("Cleaning up user data directory...");
+    
+    // Get the Memento data directory: %LOCALAPPDATA%\Memento
+    let data_dir = match dirs::data_local_dir() {
+        Some(dir) => dir.join("Memento"),
+        None => {
+            warn!("Could not determine local data directory");
+            return;
+        }
+    };
+    
+    if !data_dir.exists() {
+        info!("Data directory does not exist, nothing to clean up");
         return;
     }
     
-    debug!("Running service helper for uninstall: {:?}", helper_path);
+    info!("Removing data directory: {:?}", data_dir);
     
-    // Run the helper with uninstall command
-    // This will trigger UAC prompt
-    let result = Command::new(&helper_path)
-        .args(["uninstall"])
-        .status();
-    
-    match result {
-        Ok(status) if status.success() => {
-            info!("Service uninstalled successfully");
-            sentry::capture_message("Service uninstalled successfully", sentry::Level::Info);
-        }
-        Ok(status) => {
-            let msg = format!("Service uninstall returned exit code: {:?}", status.code());
-            warn!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Warning);
+    match std::fs::remove_dir_all(&data_dir) {
+        Ok(_) => {
+            info!("Successfully removed user data directory");
+            sentry::capture_message("User data cleaned up on uninstall", sentry::Level::Info);
         }
         Err(e) => {
-            let msg = format!("Failed to run service helper: {}", e);
-            error!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Error);
+            let msg = format!("Failed to remove data directory {:?}: {}", data_dir, e);
+            warn!("{}", msg);
+            sentry::capture_message(&msg, sentry::Level::Warning);
         }
     }
 }

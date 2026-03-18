@@ -133,19 +133,17 @@ pub fn get_base_dir() -> PathBuf {
 
 /// Get the memories (screenshots) directory
 pub fn get_memories_dir() -> PathBuf {
-    app_core::config::memories_dir()
+    app_core::config::screenshots_dir()
 }
 
 /// Get the logs directory
 pub fn get_logs_dir() -> PathBuf {
-    get_base_dir().join("logs")
+    app_core::config::logs_dir()
 }
 
 /// Get the cache directory
 pub fn get_cache_dir() -> PathBuf {
-    dirs::cache_dir()
-        .map(|p| p.join("memento"))
-        .unwrap_or_else(|| get_base_dir().join("cache"))
+    app_core::config::cache_dir()
 }
 
 /// Get comprehensive disk usage statistics
@@ -170,7 +168,7 @@ pub fn get_disk_usage() -> DiskUsage {
     debug!("Media: {} files, {} bytes", images_count, images_size);
 
     // Calculate database size
-    let db_path = app_core::config::database_dir();
+    let db_path = app_core::config::database_path();
     let main_db_size = if db_path.exists() {
         fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0)
     } else {
@@ -369,7 +367,7 @@ pub fn clear_media() -> ClearResult {
 
 /// Clear database files (should only be called when daemon is paused)
 pub fn clear_database() -> ClearResult {
-    let db_path = app_core::config::database_dir();
+    let db_path = app_core::config::database_path();
     
     if !db_path.exists() {
         return ClearResult {

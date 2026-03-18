@@ -340,8 +340,26 @@ pub async fn semantic_search(
 
     info!("Semantic search request: query={}", payload.query);
 
+    // Check if embedding model is available
+    let embedding_model = match &state.embedding_model {
+        Some(m) => m,
+        None => {
+            warn!("Semantic search attempted without embedding model");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(SemanticSearchResponse {
+                    success: false,
+                    results: None,
+                    result_count: 0,
+                    error: Some("AI models are not downloaded. Please complete onboarding to enable search.".to_string()),
+                    execution_time_ms: start.elapsed().as_millis(),
+                }),
+            ).into_response();
+        }
+    };
+
     // Generate embedding
-    let embedding = match state.embedding_model.generate_embedding(&payload.query).await {
+    let embedding = match embedding_model.generate_embedding(&payload.query).await {
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);
@@ -557,8 +575,26 @@ pub async fn hybrid_search(
 
     info!("Hybrid search request: query={}, keywords={:?}", payload.query, keywords);
 
+    // Check if embedding model is available
+    let embedding_model = match &state.embedding_model {
+        Some(m) => m,
+        None => {
+            warn!("Hybrid search attempted without embedding model");
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(HybridSearchResponse {
+                    success: false,
+                    results: None,
+                    result_count: 0,
+                    error: Some("AI models are not downloaded. Please complete onboarding to enable search.".to_string()),
+                    execution_time_ms: start.elapsed().as_millis(),
+                }),
+            ).into_response();
+        }
+    };
+
     // Generate embedding
-    let embedding = match state.embedding_model.generate_embedding(&payload.query).await {
+    let embedding = match embedding_model.generate_embedding(&payload.query).await {
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);

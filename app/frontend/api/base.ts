@@ -93,7 +93,8 @@ export async function getBaseUrl(): Promise<string> {
 
 export async function getAgentBaseUrl(): Promise<string> {
   try {
-    const port = await readTextFile("memento/memento-agents.port", {
+    // Read from standardized Memento/ports directory
+    const port = await readTextFile("Memento/ports/memento-agents.port", {
       baseDir: BaseDirectory.LocalData,
     });
 

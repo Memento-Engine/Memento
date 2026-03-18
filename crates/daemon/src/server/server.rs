@@ -16,6 +16,9 @@ use crate::server::privacy_endpoints::{
     list_masked_items, search_masked_items, create_masked_item, 
     update_masked_item, delete_masked_item, check_should_mask, refresh_privacy_cache
 };
+use crate::server::model_endpoints::{
+    check_models_status, download_models_sse, download_models_sync, model_state_stream
+};
 
 #[derive(Serialize)]
 pub struct HealthStatus {
@@ -56,6 +59,12 @@ fn api_router() -> Router<Arc<AppState>> {
         .route("/privacy/masked/{id}", delete(delete_masked_item))
         .route("/privacy/check", get(check_should_mask))
         .route("/privacy/refresh", post(refresh_privacy_cache))
+        // Model setup endpoints (for onboarding)
+        .route("/models/status", get(check_models_status))
+        .route("/models/download", get(download_models_sse))
+        .route("/models/download", post(download_models_sync))
+        // Real-time model state stream (SSE)
+        .route("/models/state/stream", get(model_state_stream))
 }
 
 pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownController>) {
@@ -139,23 +148,14 @@ fn write_port_file(port: u16) {
     
     for attempt in 1..=max_retries {
         let result = (|| -> Result<(), String> {
-            // Use ProgramData for Windows Service compatibility (runs as SYSTEM)
-            // This location is accessible by both the service and user apps
-            #[cfg(windows)]
-            let dir_path = std::env::var("ProgramData")
-                .or_else(|_| std::env::var("ALLUSERSPROFILE"))
-                .map(|p| std::path::PathBuf::from(p).join("Memento"))
-                .map_err(|_| "ProgramData environment variable not set")?;
+            // Use the standardized ports directory from config
+            let file_path = app_core::config::port_file_path("daemon");
             
-            #[cfg(not(windows))]
-            let dir_path = dirs::data_local_dir()
-                .ok_or("Failed to determine data directory")?
-                .join("memento");
-            
-            let file_path = dir_path.join("memento-daemon.port");
-            
-            create_dir_all(&dir_path)
-                .map_err(|e| format!("Failed to create directory {:?}: {}", dir_path, e))?;
+            // Ensure directory exists
+            if let Some(dir_path) = file_path.parent() {
+                create_dir_all(dir_path)
+                    .map_err(|e| format!("Failed to create directory {:?}: {}", dir_path, e))?;
+            }
             
             write(&file_path, port.to_string())
                 .map_err(|e| format!("Failed to write to file {:?}: {}", file_path, e))?;

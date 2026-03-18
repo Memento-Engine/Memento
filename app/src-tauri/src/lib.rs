@@ -119,12 +119,17 @@ fn stop_embedded_agent_server(state: &AgentServerState) {
     }
 }
 
-/// Get the base directory for logs
+/// Get the base directory for Memento
+fn get_base_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .expect("Cannot find local data directory")
+        .join("Memento")
+}
+
+/// Get the log directory based on build mode (dev/production)
 fn get_log_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".memento")
-        .join("logs")
+    let log_mode = if cfg!(debug_assertions) { "dev" } else { "production" };
+    get_base_dir().join("logs").join(log_mode)
 }
 
 /// Set up file and console logging
@@ -133,7 +138,7 @@ pub fn setup_logging() {
         let log_dir = get_log_dir();
         let _ = std::fs::create_dir_all(&log_dir);
         
-        let file_appender = tracing_appender::rolling::daily(&log_dir, "tauri-app.log");
+        let file_appender = tracing_appender::rolling::daily(&log_dir, "memento-tauri.log");
         
         let filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info"));
@@ -199,9 +204,9 @@ fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     Some(guard)
 }
 
-#[tauri::command]
-fn start_daemon(is_dev: bool) -> Result<String, String> {
-    info!("start_daemon called, is_dev={}", is_dev);
+/// Internal function to start the daemon (can be called from setup or command)
+fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
+    info!("start_daemon_internal called, is_dev={}", is_dev);
     
     if daemon_is_running() {
         info!("Daemon already running, skipping start");
@@ -252,6 +257,11 @@ fn start_daemon(is_dev: bool) -> Result<String, String> {
     info!("Daemon started successfully");
 
     Ok("Daemon started successfully".into())
+}
+
+#[tauri::command]
+fn start_daemon(is_dev: bool) -> Result<String, String> {
+    start_daemon_internal(is_dev)
 }
 
 #[tauri::command]
@@ -359,20 +369,10 @@ fn wait_until_healthy() -> Result<(), String> {
 }
 
 fn read_port_file() -> Option<String> {
-    // On Windows, read from ProgramData (shared location for service running as SYSTEM)
-    // ProgramData is accessible by both SYSTEM and normal users
-    #[cfg(windows)]
-    let dir_path = std::env::var("ProgramData")
-        .or_else(|_| std::env::var("ALLUSERSPROFILE"))
-        .map(|p| PathBuf::from(p).join("Memento"))
-        .ok()?;
-    
-    #[cfg(not(windows))]
-    let dir_path = dirs::data_local_dir()?.join("memento");
-    
-    let file_path = dir_path.join("memento-daemon.port");
+    // Read from standardized ports directory
+    let port_path = get_base_dir().join("ports").join("memento-daemon.port");
 
-    std::fs::read_to_string(file_path)
+    std::fs::read_to_string(port_path)
         .ok()
         .map(|p| p.trim().to_string())
 }
@@ -580,6 +580,17 @@ pub fn run() {
             if let Err(err) = start_embedded_agent_server(app.state::<AgentServerState>().inner()) {
                 warn!("Failed to auto-start embedded agents server: {}", err);
             }
+
+            // Start the daemon automatically when the app launches
+            let is_dev = cfg!(debug_assertions);
+            println!("Auto-starting daemon on app launch (dev mode: {})...", is_dev);
+            thread::spawn(move || {
+                info!("Auto-starting daemon on app launch...");
+                match start_daemon_internal(is_dev) {
+                    Ok(msg) => info!("Daemon auto-start: {}", msg),
+                    Err(err) => warn!("Failed to auto-start daemon: {}", err),
+                }
+            });
 
             Ok(())
         })
