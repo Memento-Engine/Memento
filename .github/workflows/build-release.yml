@@ -421,18 +421,27 @@ jobs:
       - name: Test installation package
         shell: pwsh
         run: |
-          # Verify the three expected binaries are present in the packaged artifact.
-          $required = @("memento.exe", "memento-daemon.exe", "service-helper.exe")
-          $errors = @()
+          # Velopack outputs:  *-Setup.exe  and  *-full.nupkg  (plus JSON feed files).
+          # Verify both are present before allowing the release to be created.
+          $setup = Get-ChildItem "test-install" -Filter "*Setup*.exe" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          $nupkg = Get-ChildItem "test-install" -Filter "*.nupkg" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
 
-          foreach ($name in $required) {
-            $file = Get-ChildItem "test-install/$name" -ErrorAction SilentlyContinue
-            if ($file) {
-              Write-Host "$name found: $($file.FullName) ($($file.Length) bytes)"
-            } else {
-              $errors += "$name not found in artifacts"
-            }
+          $errors = @()
+          if ($setup) {
+            Write-Host "Installer  : $($setup.Name) ($($setup.Length) bytes)"
+          } else {
+            $errors += "No *Setup*.exe found in Velopack output"
           }
+          if ($nupkg) {
+            Write-Host "Package    : $($nupkg.Name) ($($nupkg.Length) bytes)"
+          } else {
+            $errors += "No *.nupkg found in Velopack output"
+          }
+
+          Write-Host "All artifact files:"
+          Get-ChildItem "test-install" | ForEach-Object { Write-Host "  $($_.Name)" }
 
           if ($errors.Count -gt 0) {
             foreach ($err in $errors) { Write-Error $err }
