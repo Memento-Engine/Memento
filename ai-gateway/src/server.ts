@@ -27,6 +27,7 @@ import {
 } from "@memento/shared/errors.ts";
 import { runMigrations } from "@/db/migrate.ts";
 import { logger, childLogger } from "@/utils/logger.ts";
+import { httpLogger } from "@/middlewares/httpLogger.ts";
 
 const log = childLogger("server");
 
@@ -93,6 +94,7 @@ async function startServer(): Promise<void> {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
+  app.use(httpLogger);
 
   app.get("/health", (_req: Request, res: Response) => {
     const response: GatewayResponse<{ ok: boolean; service: string }> = {

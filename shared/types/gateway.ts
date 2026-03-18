@@ -86,6 +86,22 @@ export const registerDeviceResponseSchema = z.object({
   deviceId: z.string().min(1), // Server-generated device ID to use in subsequent requests
 });
 
+export const sessionInfoSchema = z.object({
+  id: z.string().min(1),
+  deviceOs: z.string().nullable(),
+  deviceHostname: z.string().nullable(),
+  appVersion: z.string().nullable(),
+  ipAddress: z.string().nullable(),
+  createdAt: z.string().nullable(),
+  lastActiveAt: z.string().nullable(),
+  isCurrent: z.boolean().optional(),
+});
+
+export const getSessionsResponseSchema = z.object({
+  sessions: z.array(sessionInfoSchema),
+  currentSessionId: z.string().min(1),
+});
+
 
 
 export type UserTier  = "free" | "premium";
@@ -96,3 +112,5 @@ export type UserRole = "anonymous" | "logged";
 export type RegisterDeviceResponse = z.infer<typeof registerDeviceResponseSchema>;
 export type RegisterDeviceRequest = z.infer<typeof registerDeviceSchema>;
 export type DeviceMetaData = z.infer<typeof deviceMetaDataSchema>;
+export type SessionInfo = z.infer<typeof sessionInfoSchema>;
+export type GetSessionsResponse = z.infer<typeof getSessionsResponseSchema>;

@@ -15,7 +15,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { db } from "@/db/index.ts";
 import { user, session, premiumCredits } from "@/db/schema.ts";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { childLogger } from "@/utils/logger.ts";
 import {
   BadRequestError,
@@ -625,15 +625,15 @@ export async function logout(req: Request, res: Response): Promise<Response> {
     const decoded = verifyAccessToken(token);
     await requireActiveSession(decoded);
 
-    // Revoke session
+    // Delete current session on logout/signout.
     await db
-      .update(session)
-      .set({
-        revoked: true,
-        revokedAt: new Date(),
-        refreshTokenHash: null,
-      })
-      .where(eq(session.id, decoded.sessionId));
+      .delete(session)
+      .where(
+        and(
+          eq(session.id, decoded.sessionId),
+          eq(session.userId, decoded.userId),
+        )
+      );
 
     log.info({ userId: decoded.userId, sessionId: decoded.sessionId }, "User logged out");
 
@@ -689,7 +689,8 @@ export async function getSessions(req: Request, res: Response): Promise<Response
           eq(session.userId, decoded.userId),
           eq(session.revoked, false),
         )
-      );
+      )
+      .orderBy(desc(session.lastActiveAt), desc(session.createdAt));
 
     const response: GatewayResponse<{ sessions: typeof sessions; currentSessionId: string }> = {
       success: true,
@@ -745,15 +746,15 @@ export async function revokeSession(req: Request, res: Response): Promise<Respon
       throw new UnauthorizedError("Session not found or not owned by user");
     }
 
-    // Revoke session
+    // Delete target session for remote signout.
     await db
-      .update(session)
-      .set({
-        revoked: true,
-        revokedAt: new Date(),
-        refreshTokenHash: null,
-      })
-      .where(eq(session.id, sessionIdToRevoke));
+      .delete(session)
+      .where(
+        and(
+          eq(session.id, sessionIdToRevoke),
+          eq(session.userId, decoded.userId),
+        )
+      );
 
     log.info({ userId: decoded.userId, revokedSessionId: targetSessionId }, "Session revoked");
 

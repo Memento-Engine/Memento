@@ -17,6 +17,7 @@ export default function OnboardingProvider({
   async function isOnboardingCompleted(): Promise<boolean> {
     try {
       const status = await checkModelsStatus();
+      console.log("Model status from daemon:", status);
       // Models are ready if status is "ready" or "downloaded_not_loaded"
       const completed = status.status === "ready" || status.status === "downloaded_not_loaded";
       console.log("Model status:", status.status, "Onboarding completed:", completed);

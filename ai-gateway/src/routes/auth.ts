@@ -31,8 +31,10 @@ authRouter.post("/auth/logout", logout);
 
 // Get active sessions (requires auth)
 authRouter.get("/auth/sessions", getSessions);
+authRouter.get("/v1/sessions", getSessions);
 
 // Revoke specific session (requires auth)
 authRouter.delete("/auth/sessions/:sessionId", revokeSession);
+authRouter.delete("/v1/sessions/:sessionId", revokeSession);
 
 export default authRouter;

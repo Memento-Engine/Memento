@@ -18,6 +18,7 @@ import {
 } from "tauri-plugin-keyring-api";
 import { invoke } from "@tauri-apps/api/core";
 import type { User, SessionInfo } from "@/contexts/authContext";
+import type { GatewayResponse, GetSessionsResponse } from "@shared/types/gateway";
 
 // Google OAuth client ID
 export const GOOGLE_CLIENT_ID = "546479298512-qhvsk7inkt482tq7g1kaujgtvpjjtjlr.apps.googleusercontent.com";
@@ -376,7 +377,7 @@ export async function getActiveSessions(): Promise<{ sessions: SessionInfo[]; cu
     throw new Error("Not authenticated");
   }
 
-  const response = await fetch(`${AUTH_BASE_URL}/auth/sessions`, {
+  const response = await fetch(`${AUTH_BASE_URL}/v1/sessions`, {
     method: "GET",
     headers: {
       "Authorization": `Bearer ${accessToken}`,
@@ -387,7 +388,7 @@ export async function getActiveSessions(): Promise<{ sessions: SessionInfo[]; cu
     throw new Error("Failed to fetch sessions");
   }
 
-  const result = await response.json();
+  const result = (await response.json()) as GatewayResponse<GetSessionsResponse>;
   
   if (!result.success || !result.data) {
     throw new Error("Invalid response from server");
@@ -396,7 +397,7 @@ export async function getActiveSessions(): Promise<{ sessions: SessionInfo[]; cu
   const { sessions, currentSessionId } = result.data;
   
   return {
-    sessions: sessions.map((s: any) => ({
+    sessions: sessions.map((s) => ({
       ...s,
       isCurrent: s.id === currentSessionId,
     })),
@@ -414,7 +415,7 @@ export async function revokeSession(sessionId: string): Promise<void> {
     throw new Error("Not authenticated");
   }
 
-  const response = await fetch(`${AUTH_BASE_URL}/auth/sessions/${sessionId}`, {
+  const response = await fetch(`${AUTH_BASE_URL}/v1/sessions/${sessionId}`, {
     method: "DELETE",
     headers: {
       "Authorization": `Bearer ${accessToken}`,

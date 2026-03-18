@@ -538,6 +538,15 @@ fn apply_update() -> Result<(), String> {
 /// Get the service status
 #[tauri::command]
 fn get_service_status() -> Result<String, String> {
+    // In development we don't run a Windows service; we run the daemon process directly.
+    if cfg!(debug_assertions) {
+        return Ok(if daemon_is_running() {
+            "running".to_string()
+        } else {
+            "stopped".to_string()
+        });
+    }
+
     let output = Command::new("sc")
         .args(["query", SERVICE_NAME])
         .output()

@@ -47,7 +47,7 @@ const techTopics: string[] = [
 function LeftSidebar(): React.ReactElement {
   const { toggleSidebar, state } = useSidebar();
   const [isSettingsOpen, setSettingsOpen] = useState<boolean>(false);
-  const { user, isAuthenticated, loginWithGoogle } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const isCollapsed = state === "collapsed";
 
   const goToHome = (): void => {
@@ -55,11 +55,7 @@ function LeftSidebar(): React.ReactElement {
   };
 
   const handleFooterClick = (): void => {
-    if (isAuthenticated) {
-      setSettingsOpen(!isSettingsOpen);
-    } else {
-      loginWithGoogle();
-    }
+    setSettingsOpen(true);
   };
 
   return (
@@ -160,7 +156,7 @@ function LeftSidebar(): React.ReactElement {
             </p>
             <SidebarMenu>
               {techTopics.map((topic: string, i: number) => (
-                <SidebarMenuItem className="group/view" key={i}>
+                <SidebarMenuItem className="group/view list-none" key={i}>
                   <SidebarMenuButton
                     variant="default"
                     className="
@@ -176,7 +172,7 @@ function LeftSidebar(): React.ReactElement {
                     group-data-[collapsible=icon]:px-0
                     "
                   >
-                    <span className="truncate group-data-[collapsible=icon]:hidden">
+                    <span className="truncate text-sm group-data-[collapsible=icon]:hidden">
                       {topic}
                     </span>
 
@@ -238,7 +234,7 @@ function LeftSidebar(): React.ReactElement {
 
         <SidebarFooter
           onClick={handleFooterClick}
-          className={cn("p-3 pt-0", isCollapsed && "px-2")}
+          className={cn("px-3 pb-3", isCollapsed && "px-2")}
         >
           <SidebarMenu>
             <SidebarMenuItem>

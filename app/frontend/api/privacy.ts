@@ -1,7 +1,7 @@
 import { getBaseUrl } from "./base";
 
 // Types matching the Rust API
-export type MaskedItemType = "website" | "app";
+export type MaskedItemType = "web" | "app";
 
 export interface MaskedItem {
   id: number;
