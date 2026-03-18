@@ -102,10 +102,7 @@ export default function OnboardingPage() {
 
         {currentStep === 3 && (
           <SlideWrapper key="login">
-            <LoginSlide
-              onLogin={() => {}}
-              onSkip={() => {}}
-            />
+            <LoginSlide onLogin={() => {}} onSkip={() => {}} />
           </SlideWrapper>
         )}
       </AnimatePresence>
@@ -185,70 +182,59 @@ function WelcomeSlide({ next }: { next: () => void }) {
     }, 400);
   };
 
-  return (
-    <motion.div
-      variants={container}
-      initial="hidden"
-      animate="show"
-      className="relative z-10 w-full max-w-7xl grid lg:grid-cols-2 grid-cols-1 gap-12 lg:gap-16 items-center"
-    >
-      <motion.div variants={item} className="space-y-8">
-        <div className="flex items-center gap-3">
-          <MementoLogo size={34} />
-          <span className="text-2xl font-semibold tracking-tight">
-            memento ai
-          </span>
-        </div>
-
-        <div className="space-y-4">
-          <h1 className="text-4xl sm:text-5xl font-bold leading-tight tracking-tight">
-            Where memory
-            <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary/60">
-              becomes knowledge
+return (
+    // Added a full-screen wrapper to center everything vertically and horizontally
+    <div className="min-h-screen flex items-center justify-center p-6 sm:p-12">
+      <motion.div
+        variants={container}
+        initial="hidden"
+        animate="show"
+        // Changed from grid to a narrower, centered flex container
+        className="relative z-10 w-full max-w-3xl flex flex-col items-center text-center"
+      >
+        <motion.div variants={item} className="space-y-10 flex flex-col items-center">
+          
+          {/* Centered Logo & Brand */}
+          <div className="flex items-center justify-center gap-3">
+            <MementoLogo size={60} />
+            <span className="text-2xl font-semibold tracking-tight">
+              memento ai
             </span>
-          </h1>
+          </div>
 
-          <p className="text-muted-foreground text-lg max-w-lg">
-            Memento captures your digital activity and transforms it into
-            searchable knowledge so you never lose context again.
-          </p>
-        </div>
+          {/* Centered Typography */}
+          <div className="space-y-6 flex flex-col items-center">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight tracking-tight">
+              Where memory
+              <br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary/60">
+                becomes knowledge
+              </span>
+            </h1>
 
-        <Button
-          size="lg"
-          className="group text-base px-8 cursor-pointer"
-          onClick={handleContinue}
-          disabled={isSubmitting}
-        >
-          {isSubmitting ? "Initializing..." : "Get Started"}
+            <p className="text-muted-foreground text-lg sm:text-xl max-w-lg mx-auto">
+              Memento captures your digital activity and transforms it into
+              searchable knowledge so you never lose context again.
+            </p>
+          </div>
 
-          {!isSubmitting && (
-            <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-          )}
-        </Button>
+          {/* Button aligned to the center */}
+          <Button
+            size="lg"
+            className="group text-base px-8 cursor-pointer rounded-full" // Added rounded-full for a softer onboarding look (optional)
+            onClick={handleContinue}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? "Initializing..." : "Get Started"}
+
+            {!isSubmitting && (
+              <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+            )}
+          </Button>
+
+        </motion.div>
       </motion.div>
-
-      <motion.div variants={container} className="space-y-4 lg:space-y-6">
-        <Feature
-          icon={<BrainCircuit />}
-          title="AI Memory Engine"
-          text="Automatically organizes your browsing, coding, and research into connected knowledge."
-        />
-
-        <Feature
-          icon={<Search />}
-          title="Semantic Search"
-          text="Ask questions about your past work and instantly retrieve the exact moment you saw it."
-        />
-
-        <Feature
-          icon={<Database />}
-          title="Personal Knowledge Graph"
-          text="Your activity becomes a structured graph of ideas, tools, and discoveries."
-        />
-      </motion.div>
-    </motion.div>
+    </div>
   );
 }
 

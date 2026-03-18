@@ -93,28 +93,24 @@ fn setup_logging(debug_mode: bool) {
         .init();
 }
 
+/// Check if this is a production build.
+/// Uses compile-time cfg!(debug_assertions) - standard pattern for desktop apps.
 fn is_production_runtime() -> bool {
-    match std::env::var("MEMENTO_ENV") {
-        Ok(value) => value.eq_ignore_ascii_case("production"),
-        Err(_) => !cfg!(debug_assertions),
-    }
+    memento_daemon::build_info::is_production()
 }
 
 fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     if !is_production_runtime() {
+        info!("Sentry disabled in development mode");
         return None;
     }
 
-    let dsn = std::env::var("DAEMON_SENTRY_DSN")
-        .or_else(|_| std::env::var("SENTRY_DSN"))
-        .ok()?;
-
-    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@1.2.0".to_string());
+    info!("Initializing Sentry (release: {})", memento_daemon::build_info::SENTRY_RELEASE);
 
     let guard = sentry::init((
-        dsn,
+        memento_daemon::build_info::SENTRY_DSN,
         sentry::ClientOptions {
-            release: Some(Cow::Owned(release)),
+            release: Some(Cow::Borrowed(memento_daemon::build_info::SENTRY_RELEASE)),
             environment: Some("daemon".into()),
             ..Default::default()
         },
@@ -132,7 +128,7 @@ fn main() {
     // Check if running as Windows Service
     #[cfg(windows)]
     {
-        if service::is_running_as_service() {
+        if is_production_runtime() && service::is_running_as_service()  {
             // Initialize sentry before service runs
             let _sentry_guard = initialize_sentry();
             

@@ -7,6 +7,9 @@ use std::time::Duration;
 use std::thread;
 use tracing::{info, warn, error, debug};
 
+// Import build_info from the library crate
+use tauri_app_lib::build_info;
+
 /// Service helper executable name
 const SERVICE_HELPER_NAME: &str = "service-helper.exe";
 
@@ -209,17 +212,15 @@ pub fn stop_service_and_wait() -> bool {
 }
 
 /// Check for updates and apply them
+/// Note: Currently unused but preserved for future auto-update feature
+#[allow(dead_code)]
 pub fn check_and_apply_update() -> Result<bool, String> {
-    info!("Checking for updates (velopack)...");
+    info!("Checking for updates (current: {})", build_info::VERSION);
     
-    // Get update source from environment or use default
-    let update_url = std::env::var("MEMENTO_UPDATE_URL")
-           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
-    
-    debug!("Update URL: {}", update_url);
+    debug!("Update URL: {}", build_info::UPDATE_URL);
     
     // Create update manager
-    let source = velopack::sources::HttpSource::new(&update_url);
+    let source = velopack::sources::HttpSource::new(build_info::UPDATE_URL);
     let um = velopack::UpdateManager::new(source, None, None)
         .map_err(|e| {
             let msg = format!("Failed to create update manager: {:?}", e);
@@ -289,10 +290,7 @@ pub fn check_and_apply_update() -> Result<bool, String> {
 /// Rollback to a specific version
 #[allow(dead_code)]
 pub fn rollback_to_version(version: &str) -> Result<(), String> {
-    info!("Rolling back to version: {}", version);
-    
-    let update_url = std::env::var("MEMENTO_UPDATE_URL")
-           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
+    info!("Rolling back to version: {} (current: {})", version, build_info::VERSION);
     
     // Create update manager with downgrade enabled
     let options = velopack::UpdateOptions {
@@ -300,7 +298,7 @@ pub fn rollback_to_version(version: &str) -> Result<(), String> {
         ..Default::default()
     };
     
-    let source = velopack::sources::HttpSource::new(&update_url);
+    let source = velopack::sources::HttpSource::new(build_info::UPDATE_URL);
     let um = velopack::UpdateManager::new(source, Some(options), None)
         .map_err(|e| {
             let msg = format!("Failed to create update manager: {:?}", e);

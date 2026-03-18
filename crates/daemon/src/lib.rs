@@ -1,3 +1,4 @@
+pub mod build_info;
 pub mod pipeline;
 pub mod cache;
 pub mod ocr;

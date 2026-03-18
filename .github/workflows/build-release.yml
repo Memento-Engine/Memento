@@ -33,6 +33,7 @@ env:
 #   validate-policy
 #       │
 #       ├── build-frontend
+#       ├── build-agents
 #       ├── build-daemon
 #       ├── build-service-helper
 #       └── build-tauri
@@ -180,6 +181,34 @@ jobs:
           path: app/frontend/out/
           retention-days: 5
 
+  build-agents:
+    needs: validate-policy
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/agents/package-lock.json
+
+      - name: Install agents dependencies
+        run: cd app/agents && npm ci
+
+      - name: Build agents executable
+        run: cd app/agents && npm run build:exe
+
+      - name: Upload agents artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-bin
+          path: app/agents/dist/memento-agents.exe
+          retention-days: 5
+
   build-daemon:
     needs: validate-policy
     runs-on: windows-latest
@@ -252,7 +281,7 @@ jobs:
           retention-days: 5
 
   build-tauri:
-    needs: [validate-policy, build-frontend]
+    needs: [validate-policy, build-frontend, build-agents]
     runs-on: windows-latest
 
     steps:
@@ -275,6 +304,18 @@ jobs:
           name: frontend-out
           path: app/frontend/out
 
+      - name: Download agents artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: agents-bin
+          path: artifacts/agents
+
+      - name: Stage agents binary for Tauri externalBin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path app/agents/dist
+          Copy-Item "artifacts/agents/memento-agents.exe" "app/agents/dist/memento-agents-x86_64-pc-windows-msvc.exe"
+
       - name: Build Tauri app (Release)
         run: cd app/src-tauri && cargo build --release
 
@@ -292,6 +333,7 @@ jobs:
     needs:
       - validate-policy
       - build-frontend
+      - build-agents
       - build-daemon
       - build-service-helper
       - build-tauri
@@ -316,6 +358,12 @@ jobs:
           name: daemon-bin
           path: artifacts/daemon
 
+      - name: Download agents artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: agents-bin
+          path: artifacts/agents
+
       - name: Download service-helper artifact
         uses: actions/download-artifact@v4
         with:
@@ -334,6 +382,7 @@ jobs:
 
           Copy-Item "artifacts/tauri/tauri-app.exe"            "release-staging/memento.exe"
           Copy-Item "artifacts/daemon/memento-daemon.exe"      "release-staging/"
+          Copy-Item "artifacts/agents/memento-agents.exe"      "release-staging/"
           Copy-Item "artifacts/service-helper/service-helper.exe" "release-staging/"
 
           if (Test-Path "artifacts/daemon/DirectML.dll") {

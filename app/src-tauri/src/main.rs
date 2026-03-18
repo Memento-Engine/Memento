@@ -4,7 +4,6 @@
 mod velopack;
 
 fn main() { 
-    dotenvy::dotenv().ok(); // <-- this loads .env
     // CRITICAL: Velopack must be the FIRST thing called in main()
     // Before Tauri init, before logging, before ANYTHING else
     // If this is not first, install/update hooks will NOT fire

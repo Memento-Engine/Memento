@@ -5,8 +5,8 @@
   "identifier": "com.mementoai.app",
   "build": {
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "cd frontend && npm run dev",
-    "beforeBuildCommand": "cd frontend && npm run build",
+    "beforeDevCommand": "npm run dev:services",
+    "beforeBuildCommand": "npm run build:all",
     "frontendDist": "../frontend/out"
   },
   "app": {
@@ -34,6 +34,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["../agents/dist/memento-agents"],
     "icon": ["icons/icon.icns", "icons/icon.ico"]
   },
   "plugins": {

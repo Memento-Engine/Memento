@@ -3,6 +3,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import * as Sentry from "@sentry/nextjs";
+import { isDesktopProductionMode } from "../lib/runtimeMode";
 
 import { MementoUIMessage, ThinkingStep } from "@/components/types";
 import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContext";
@@ -172,7 +173,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       }
 
       console.error("Error while sending message:", err);
-      if (process.env.NODE_ENV === "production") {
+      if (isDesktopProductionMode()) {
         Sentry.withScope((scope) => {
           scope.setTag("environment", "frontend");
           scope.setTag("service", "ui");

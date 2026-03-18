@@ -1,14 +1,16 @@
 use std::{
     borrow::Cow,
-    process::Command,
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
     path::PathBuf,
-    sync::Once,
+    sync::{Mutex, Once},
 };
+use tauri::{Manager, WindowEvent};
 use tracing::{info, warn, error, debug};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+pub mod build_info;
 pub mod get_app_icon;
 pub mod get_device_id;
 
@@ -16,6 +18,106 @@ pub mod get_device_id;
 const SERVICE_NAME: &str = "SearchEngineDaemon";
 
 static LOGGING_INIT: Once = Once::new();
+
+#[derive(Default)]
+struct AgentServerState {
+    process: Mutex<Option<Child>>,
+}
+
+fn find_embedded_agent_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    let candidates = [
+        exe_dir.join("memento-agents.exe"),
+        exe_dir.join("memento-agents-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("binaries").join("memento-agents.exe"),
+        exe_dir
+            .join("binaries")
+            .join("memento-agents-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("resources").join("memento-agents.exe"),
+        exe_dir
+            .join("resources")
+            .join("memento-agents-x86_64-pc-windows-msvc.exe"),
+    ];
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn start_embedded_agent_server(state: &AgentServerState) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        info!("Debug runtime detected; agents server is managed by beforeDevCommand");
+        return Ok(());
+    }
+
+    let mut process_guard = state
+        .process
+        .lock()
+        .map_err(|_| "Failed to lock agent process state".to_string())?;
+
+    if let Some(existing) = process_guard.as_mut() {
+        match existing.try_wait() {
+            Ok(Some(status)) => {
+                warn!("Embedded agents process already exited with status: {:?}", status);
+                *process_guard = None;
+            }
+            Ok(None) => {
+                info!("Embedded agents process already running");
+                return Ok(());
+            }
+            Err(err) => {
+                warn!("Failed checking embedded agents status: {}", err);
+                *process_guard = None;
+            }
+        }
+    }
+
+    let binary_path = find_embedded_agent_binary().ok_or_else(|| {
+        "Could not find packaged agents binary (memento-agents.exe)".to_string()
+    })?;
+
+    info!("Starting embedded agents server from {:?}", binary_path);
+
+    let mut command = Command::new(&binary_path);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    if let Some(parent_dir) = binary_path.parent() {
+        command.current_dir(parent_dir);
+    }
+
+    let child = command
+        .spawn()
+        .map_err(|err| format!("Failed to start embedded agents server: {}", err))?;
+
+    *process_guard = Some(child);
+    Ok(())
+}
+
+fn stop_embedded_agent_server(state: &AgentServerState) {
+    let child_to_stop = match state.process.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(_) => {
+            warn!("Failed to lock agent process state during shutdown");
+            None
+        }
+    };
+
+    if let Some(mut child) = child_to_stop {
+        info!("Stopping embedded agents server (pid={})", child.id());
+
+        if let Err(err) = child.kill() {
+            warn!("Failed to kill embedded agents process directly: {}", err);
+            let _ = Command::new("taskkill")
+                .args(["/IM", "memento-agents.exe", "/F", "/T"])
+                .status();
+        }
+
+        let _ = child.wait();
+    }
+}
 
 /// Get the base directory for logs
 fn get_log_dir() -> PathBuf {
@@ -62,32 +164,27 @@ pub fn setup_logging() {
     });
 }
 
+/// Check if this is a production build.
+/// Uses compile-time cfg!(debug_assertions) - standard pattern for desktop apps.
 fn is_production_runtime() -> bool {
-    info!("Checking runtime environment {:?}...", std::env::var("MEMENTO_ENV"));
-    match std::env::var("MEMENTO_ENV") {
-        Ok(value) => value.eq_ignore_ascii_case("production"),
-        Err(_) => !cfg!(debug_assertions),
-    }
+    let is_prod = build_info::is_production();
+    info!("Runtime environment: {} (release build: {})", 
+          build_info::environment_name(), is_prod);
+    is_prod
 }
 
 fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     if !is_production_runtime() {
+        info!("Sentry disabled in development mode");
         return None;
     }
 
-
-    println!("Initializing Sentry for error reporting {:?}...", std::env::var("TAURI_SENTRY_DSN").or_else(|_| std::env::var("SENTRY_DSN")));
-
-    let dsn = std::env::var("TAURI_SENTRY_DSN")
-        .or_else(|_| std::env::var("SENTRY_DSN"))
-        .ok()?;
-
-    let release = std::env::var("SENTRY_RELEASE").unwrap_or_else(|_| "memento@0.1.0".to_string());
+    info!("Initializing Sentry for error reporting (release: {})", build_info::SENTRY_RELEASE);
 
     let guard = sentry::init((
-        dsn,
+        build_info::SENTRY_DSN,
         sentry::ClientOptions {
-            release: Some(Cow::Owned(release)),
+            release: Some(Cow::Borrowed(build_info::SENTRY_RELEASE)),
             environment: Some("frontend".into()),
             ..Default::default()
         },
@@ -294,14 +391,11 @@ fn get_daemon_url() -> Result<String, String> {
 /// Check for available updates
 #[tauri::command]
 fn check_for_updates() -> Result<Option<String>, String> {
-    info!("Checking for updates...");
+    info!("Checking for updates (version: {})", build_info::VERSION);
     
-    let update_url = std::env::var("MEMENTO_UPDATE_URL")
-           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
+    debug!("Update URL: {}", build_info::UPDATE_URL);
     
-    debug!("Update URL: {}", update_url);
-    
-    let source = velopack::sources::HttpSource::new(&update_url);
+    let source = velopack::sources::HttpSource::new(build_info::UPDATE_URL);
     let um = velopack::UpdateManager::new(source, None, None)
         .map_err(|e| {
             let msg = format!("Failed to create update manager: {:?}", e);
@@ -373,14 +467,11 @@ fn stop_service_and_wait_internal() -> bool {
 /// Download and apply an update (will restart the app)
 #[tauri::command]
 fn apply_update() -> Result<(), String> {
-    info!("Starting update application...");
+    info!("Starting update application (current: {})", build_info::VERSION);
     
-    let update_url = std::env::var("MEMENTO_UPDATE_URL")
-           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
+    debug!("Update URL: {}", build_info::UPDATE_URL);
     
-    debug!("Update URL: {}", update_url);
-    
-    let source = velopack::sources::HttpSource::new(&update_url);
+    let source = velopack::sources::HttpSource::new(build_info::UPDATE_URL);
     let um = velopack::UpdateManager::new(source, None, None)
         .map_err(|e| {
             let msg = format!("Failed to create update manager: {:?}", e);
@@ -480,10 +571,23 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(AgentServerState::default())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_keyring::init())
+        .setup(|app| {
+            if let Err(err) = start_embedded_agent_server(app.state::<AgentServerState>().inner()) {
+                warn!("Failed to auto-start embedded agents server: {}", err);
+            }
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                stop_embedded_agent_server(window.app_handle().state::<AgentServerState>().inner());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             start_daemon,
             stop_daemon,

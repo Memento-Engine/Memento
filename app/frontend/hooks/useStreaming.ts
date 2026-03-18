@@ -1,5 +1,6 @@
 import { useRef, useCallback } from "react";
 import * as Sentry from "@sentry/nextjs";
+import { isDesktopProductionMode } from "../lib/runtimeMode";
 import { MementoUIMessage, ThinkingStep } from "@/components/types";
 import {
   AssistantStatus,
@@ -305,7 +306,7 @@ export function useStreaming(
             }
           } catch (e) {
             console.warn("Failed to parse streaming event:", line, e);
-            if (process.env.NODE_ENV === "production") {
+            if (isDesktopProductionMode()) {
               Sentry.withScope((scope) => {
                 scope.setTag("environment", "frontend");
                 scope.setTag("service", "ui");
@@ -355,7 +356,7 @@ export function useStreaming(
             throw new Error("AUTH_TOKEN_EXPIRED");
           }
         }
-        if (process.env.NODE_ENV === "production") {
+        if (isDesktopProductionMode()) {
           Sentry.withScope((scope) => {
             scope.setTag("environment", "frontend");
             scope.setTag("service", "ui");
