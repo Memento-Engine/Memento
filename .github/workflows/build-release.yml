@@ -109,6 +109,30 @@ jobs:
           echo "tag_source_branch=$tagSourceBranch" >> $env:GITHUB_OUTPUT
           echo "should_create_release=$($shouldCreateRelease.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
+      - name: Validate required secrets and environment variables
+        shell: pwsh
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          TAURI_SENTRY_DSN: ${{ secrets.TAURI_SENTRY_DSN }}
+          MEMENTO_UPDATE_URL: ${{ secrets.MEMENTO_UPDATE_URL }}
+          SENTRY_RELEASE: ${{ secrets.SENTRY_RELEASE }}
+          MEMENTO_ENV: ${{ secrets.MEMENTO_ENV }}
+        run: |
+          $errors = @()
+
+          if (-not $env:SENTRY_DSN) { $errors += "SENTRY_DSN is not set" }
+          if (-not $env:TAURI_SENTRY_DSN) { $errors += "TAURI_SENTRY_DSN is not set" }
+          if (-not $env:MEMENTO_UPDATE_URL) { $errors += "MEMENTO_UPDATE_URL is not set" }
+          if (-not $env:SENTRY_RELEASE) { $errors += "SENTRY_RELEASE is not set" }
+          if (-not $env:MEMENTO_ENV) { $errors += "MEMENTO_ENV is not set" }
+
+          if ($errors.Count -gt 0) {
+            foreach ($err in $errors) { Write-Error $err }
+            exit 1
+          }
+
+          Write-Host "All required secrets and environment variables are set."
+
   build-frontend:
     needs: validate-policy
     if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
@@ -155,6 +179,13 @@ jobs:
         run: |
           cd app/frontend
           npm run build
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-out
+          path: app/frontend/out/
+          retention-days: 5
 
   build-daemon:
     needs: validate-policy
@@ -249,6 +280,12 @@ jobs:
         with:
           workspaces: |
             .
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-out
+          path: app/frontend/out
 
       - name: Build Tauri app (Release)
         run: |
@@ -393,7 +430,7 @@ jobs:
   test-service:
     needs: package-release
     runs-on: windows-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
     
     steps:
       - name: Download artifacts

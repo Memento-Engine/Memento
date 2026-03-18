@@ -63,6 +63,7 @@ pub fn setup_logging() {
 }
 
 fn is_production_runtime() -> bool {
+    info!("Checking runtime environment {:?}...", std::env::var("MEMENTO_ENV"));
     match std::env::var("MEMENTO_ENV") {
         Ok(value) => value.eq_ignore_ascii_case("production"),
         Err(_) => !cfg!(debug_assertions),
@@ -73,6 +74,9 @@ fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     if !is_production_runtime() {
         return None;
     }
+
+
+    println!("Initializing Sentry for error reporting {:?}...", std::env::var("TAURI_SENTRY_DSN").or_else(|_| std::env::var("SENTRY_DSN")));
 
     let dsn = std::env::var("TAURI_SENTRY_DSN")
         .or_else(|_| std::env::var("SENTRY_DSN"))
@@ -293,7 +297,7 @@ fn check_for_updates() -> Result<Option<String>, String> {
     info!("Checking for updates...");
     
     let update_url = std::env::var("MEMENTO_UPDATE_URL")
-        .unwrap_or_else(|_| "https://github.com/your-org/memento-releases/releases/latest/download".to_string());
+           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
     
     debug!("Update URL: {}", update_url);
     
@@ -372,7 +376,7 @@ fn apply_update() -> Result<(), String> {
     info!("Starting update application...");
     
     let update_url = std::env::var("MEMENTO_UPDATE_URL")
-        .unwrap_or_else(|_| "https://github.com/your-org/memento-releases/releases/latest/download".to_string());
+           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
     
     debug!("Update URL: {}", update_url);
     

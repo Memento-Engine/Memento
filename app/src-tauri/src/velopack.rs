@@ -214,7 +214,7 @@ pub fn check_and_apply_update() -> Result<bool, String> {
     
     // Get update source from environment or use default
     let update_url = std::env::var("MEMENTO_UPDATE_URL")
-        .unwrap_or_else(|_| "https://github.com/your-org/memento-releases/releases/latest/download".to_string());
+           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
     
     debug!("Update URL: {}", update_url);
     
@@ -292,7 +292,7 @@ pub fn rollback_to_version(version: &str) -> Result<(), String> {
     info!("Rolling back to version: {}", version);
     
     let update_url = std::env::var("MEMENTO_UPDATE_URL")
-        .unwrap_or_else(|_| "https://github.com/your-org/memento-releases/releases/latest/download".to_string());
+           .unwrap_or_else(|_| "https://github.com/Memento-Engine/Memento/releases/latest/download".to_string());
     
     // Create update manager with downgrade enabled
     let options = velopack::UpdateOptions {
