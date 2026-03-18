@@ -1,16 +1,16 @@
 name: Build and Release
 
+# Triggered on:
+#   - push to main         → runs all build jobs (CI validation only, no release)
+#   - workflow_dispatch    → builds + tests + creates atomic tag + release
 on:
   push:
     branches:
       - main
-      - develop
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.0.0)'
+        description: 'Version to release (e.g. 1.2.3 or 1.2.3-rc.1)'
         required: true
         type: string
       create_delta:
@@ -24,21 +24,42 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Service name for the daemon
   SERVICE_NAME: SearchEngineDaemon
-  # GitHub repo for releases (update this)
   RELEASE_REPO: ${{ github.repository }}
 
+# ─────────────────────────────────────────────────────────────
+# JOB ORDER:
+#
+#   validate-policy
+#       │
+#       ├── build-frontend
+#       ├── build-daemon
+#       ├── build-service-helper
+#       └── build-tauri
+#               │
+#               ▼
+#        package-release     ← pack only, no release creation
+#               │
+#               ▼
+#         test-service        ← test the package BEFORE publishing
+#               │
+#               ▼
+#        create-release       ← atomic tag + release, only if tests pass
+# ─────────────────────────────────────────────────────────────
+
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 1. VALIDATE POLICY
+  #    - Determines whether this run should produce a release
+  #    - Validates version format and secrets (dispatch only)
+  #    - Prints last release so you know what version to bump from
+  # ─────────────────────────────────────────────────────────────
   validate-policy:
     runs-on: windows-latest
     outputs:
-      run_release_build: ${{ steps.policy.outputs.run_release_build }}
       run_packaging: ${{ steps.policy.outputs.run_packaging }}
-      is_tag: ${{ steps.policy.outputs.is_tag }}
+      version: ${{ steps.policy.outputs.version }}
       is_prerelease: ${{ steps.policy.outputs.is_prerelease }}
-      tag_source_branch: ${{ steps.policy.outputs.tag_source_branch }}
-      should_create_release: ${{ steps.policy.outputs.should_create_release }}
 
     steps:
       - name: Checkout code
@@ -46,96 +67,76 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate branch and tag policy
+      - name: Determine build policy
         id: policy
         shell: pwsh
         run: |
           $event = "${{ github.event_name }}"
-          $ref = "${{ github.ref }}"
-          $sha = "${{ github.sha }}"
-          $tagName = "${{ github.ref_name }}"
-
-          $runReleaseBuild = $false
           $runPackaging = $false
-          $isTag = $false
+          $version = ""
           $isPrerelease = $false
-          $tagSourceBranch = ""
-          $shouldCreateRelease = $false
 
           if ($event -eq "workflow_dispatch") {
-            # Manual dispatch is allowed only from develop/main.
-            if ($ref -ne "refs/heads/develop" -and $ref -ne "refs/heads/main") {
-              Write-Error "workflow_dispatch is allowed only on develop or main."
-              exit 1
-            }
-            $runReleaseBuild = $true
             $runPackaging = $true
-          } elseif ($ref -eq "refs/heads/develop" -or $ref -eq "refs/heads/main") {
-            # Heavy release builds run only on develop/main pushes.
-            $runReleaseBuild = $true
-          } elseif ($ref.StartsWith("refs/tags/v")) {
-            # Tags trigger packaging/release, but tag commit must belong to develop or main.
-            $runReleaseBuild = $true
-            $runPackaging = $true
-            $isTag = $true
+            $version = "${{ github.event.inputs.version }}".TrimStart('v')
 
-            if ($tagName -match '-(alpha|beta|rc)(\.|$)') {
+            # Validate version format: 1.2.3 or 1.2.3-rc.1 etc.
+            if ($version -notmatch '^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$') {
+              throw "Invalid version format: '$version'. Expected: 1.2.3 or 1.2.3-rc.1"
+            }
+
+            # Detect pre-release suffix
+            if ($version -match '[-.](alpha|beta|rc)') {
               $isPrerelease = $true
             }
-
-            git fetch origin main develop --depth=1
-
-            $containsBranches = git branch -r --contains $sha
-            $onMain = $containsBranches | Select-String -SimpleMatch "origin/main"
-            $onDevelop = $containsBranches | Select-String -SimpleMatch "origin/develop"
-
-            if (-not $onMain -and -not $onDevelop) {
-              Write-Error "Tag '$tagName' is not on develop or main. Releases/tags are allowed only from develop/main."
-              exit 1
-            }
-
-            if ($onMain) {
-              $tagSourceBranch = "main"
-              $shouldCreateRelease = $true
-            } elseif ($onDevelop) {
-              $tagSourceBranch = "develop"
-            }
           }
+          # Push to main: run all build jobs for CI validation only — no packaging or release.
 
-          echo "run_release_build=$($runReleaseBuild.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           echo "run_packaging=$($runPackaging.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          echo "is_tag=$($isTag.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          echo "version=$version"                                    >> $env:GITHUB_OUTPUT
           echo "is_prerelease=$($isPrerelease.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          echo "tag_source_branch=$tagSourceBranch" >> $env:GITHUB_OUTPUT
-          echo "should_create_release=$($shouldCreateRelease.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
-      - name: Validate required secrets and environment variables
+      # Only runs on workflow_dispatch — no point checking secrets on plain push
+      - name: Show last release + validate secrets
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: pwsh
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           TAURI_SENTRY_DSN: ${{ secrets.TAURI_SENTRY_DSN }}
           MEMENTO_UPDATE_URL: ${{ secrets.MEMENTO_UPDATE_URL }}
           SENTRY_RELEASE: ${{ secrets.SENTRY_RELEASE }}
           MEMENTO_ENV: ${{ secrets.MEMENTO_ENV }}
         run: |
-          $errors = @()
+          # Print last release so you can sanity-check your version bump
+          $lastTag = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null
+          if ($lastTag) {
+            Write-Host "Last release : $lastTag"
+          } else {
+            Write-Host "Last release : (none — this will be the first)"
+          }
+          Write-Host "New release  : v${{ github.event.inputs.version }}"
 
-          if (-not $env:SENTRY_DSN) { $errors += "SENTRY_DSN is not set" }
-          if (-not $env:TAURI_SENTRY_DSN) { $errors += "TAURI_SENTRY_DSN is not set" }
-          if (-not $env:MEMENTO_UPDATE_URL) { $errors += "MEMENTO_UPDATE_URL is not set" }
-          if (-not $env:SENTRY_RELEASE) { $errors += "SENTRY_RELEASE is not set" }
-          if (-not $env:MEMENTO_ENV) { $errors += "MEMENTO_ENV is not set" }
+          # Validate required secrets
+          $errors = @()
+          if (-not $env:SENTRY_DSN)         { $errors += "SENTRY_DSN is not set" }
+          if (-not $env:TAURI_SENTRY_DSN)   { $errors += "TAURI_SENTRY_DSN is not set" }
+          if (-not $env:MEMENTO_UPDATE_URL)  { $errors += "MEMENTO_UPDATE_URL is not set" }
+          if (-not $env:SENTRY_RELEASE)     { $errors += "SENTRY_RELEASE is not set" }
+          if (-not $env:MEMENTO_ENV)        { $errors += "MEMENTO_ENV is not set" }
 
           if ($errors.Count -gt 0) {
             foreach ($err in $errors) { Write-Error $err }
             exit 1
           }
 
-          Write-Host "All required secrets and environment variables are set."
+          Write-Host "All required secrets are set."
 
+  # ─────────────────────────────────────────────────────────────
+  # 2. BUILD JOBS (run in parallel)
+  # ─────────────────────────────────────────────────────────────
   build-frontend:
     needs: validate-policy
-    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
     runs-on: windows-latest
 
     steps:
@@ -161,24 +162,16 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('app/frontend/package-lock.json') }}-
 
       - name: Install app dependencies
-        run: |
-          cd app
-          npm ci
+        run: cd app && npm ci
 
       - name: Install shared dependencies
-        run: |
-          cd shared
-          npm ci
+        run: cd shared && npm ci
 
       - name: Install frontend dependencies
-        run: |
-          cd app/frontend
-          npm ci
+        run: cd app/frontend && npm ci
 
       - name: Build frontend
-        run: |
-          cd app/frontend
-          npm run build
+        run: cd app/frontend && npm run build
 
       - name: Upload frontend artifact
         uses: actions/upload-artifact@v4
@@ -189,7 +182,6 @@ jobs:
 
   build-daemon:
     needs: validate-policy
-    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
     runs-on: windows-latest
 
     steps:
@@ -204,8 +196,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
+          workspaces: .
 
       - name: Build daemon (Release)
         run: cargo build --release -p memento-daemon
@@ -216,7 +207,8 @@ jobs:
           Copy-Item "target/release/memento-daemon.exe" "out-daemon/"
 
           # Include DirectML.dll if present for ONNX Runtime GPU support
-          $ortBinDir = Get-ChildItem -Path "$env:LOCALAPPDATA\ort.pyke.io\dfbin\x86_64-pc-windows-msvc" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          $ortBinDir = Get-ChildItem -Path "$env:LOCALAPPDATA\ort.pyke.io\dfbin\x86_64-pc-windows-msvc" `
+            -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($ortBinDir) {
             $directMlDll = Join-Path $ortBinDir.FullName "DirectML.dll"
             if (Test-Path $directMlDll) {
@@ -233,7 +225,6 @@ jobs:
 
   build-service-helper:
     needs: validate-policy
-    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
     runs-on: windows-latest
 
     steps:
@@ -248,8 +239,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
+          workspaces: .
 
       - name: Build service-helper (Release)
         run: cargo build --release -p service-helper
@@ -262,8 +252,7 @@ jobs:
           retention-days: 5
 
   build-tauri:
-    needs: validate-policy
-    if: ${{ needs.validate-policy.outputs.run_release_build == 'true' }}
+    needs: [validate-policy, build-frontend]
     runs-on: windows-latest
 
     steps:
@@ -278,8 +267,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
+          workspaces: .
 
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
@@ -288,9 +276,7 @@ jobs:
           path: app/frontend/out
 
       - name: Build Tauri app (Release)
-        run: |
-          cd app/src-tauri
-          cargo build --release
+        run: cd app/src-tauri && cargo build --release
 
       - name: Upload Tauri artifact
         uses: actions/upload-artifact@v4
@@ -299,6 +285,9 @@ jobs:
           path: target/release/tauri-app.exe
           retention-days: 5
 
+  # ─────────────────────────────────────────────────────────────
+  # 3. PACKAGE — assemble + velopack pack only, NO release yet
+  # ─────────────────────────────────────────────────────────────
   package-release:
     needs:
       - validate-policy
@@ -343,8 +332,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path release-staging
 
-          Copy-Item "artifacts/tauri/tauri-app.exe" "release-staging/memento.exe"
-          Copy-Item "artifacts/daemon/memento-daemon.exe" "release-staging/"
+          Copy-Item "artifacts/tauri/tauri-app.exe"            "release-staging/memento.exe"
+          Copy-Item "artifacts/daemon/memento-daemon.exe"      "release-staging/"
           Copy-Item "artifacts/service-helper/service-helper.exe" "release-staging/"
 
           if (Test-Path "artifacts/daemon/DirectML.dll") {
@@ -358,46 +347,53 @@ jobs:
             Copy-Item -Recurse "app/src-tauri/icons" "release-staging/"
           }
 
-      - name: Get version
-        id: version
-        run: |
-          if ("${{ github.event.inputs.version }}" -ne "") {
-            $version = "${{ github.event.inputs.version }}"
-          } else {
-            $version = "${{ github.ref_name }}".TrimStart('v')
-          }
-          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-
       - name: Download previous release (for delta patches)
         if: ${{ github.event.inputs.create_delta != 'false' }}
         continue-on-error: true
+        shell: pwsh
         run: |
           $prevRelease = gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null
           if ($prevRelease) {
+            Write-Host "Downloading previous release: $prevRelease"
             New-Item -ItemType Directory -Force -Path previous-release
             gh release download $prevRelease -D previous-release -p "*.nupkg" 2>$null
+          } else {
+            Write-Host "No previous release found — skipping delta patch."
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pack with Velopack
+        shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.VERSION }}"
+          $version = "${{ needs.validate-policy.outputs.version }}"
           $packArgs = @(
             "pack",
-            "--packId", "memento",
+            "--packId",      "memento",
             "--packVersion", $version,
-            "--packDir", "release-staging",
-            "--mainExe", "memento.exe",
-            "--outputDir", "velopack-output"
+            "--packDir",     "release-staging",
+            "--mainExe",     "memento.exe",
+            "--outputDir",   "velopack-output"
           )
 
-          if (Test-Path "previous-release/*.nupkg") {
-            $prevPkg = Get-ChildItem "previous-release/*.nupkg" | Select-Object -First 1
+          $prevPkg = Get-ChildItem "previous-release/*.nupkg" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+          if ($prevPkg) {
+            Write-Host "Delta source: $($prevPkg.FullName)"
             $packArgs += @("--delta", $prevPkg.FullName)
           }
 
           vpk @packArgs
+
+      - name: Guard — ensure output files exist
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "velopack-output" -ErrorAction SilentlyContinue
+          if (-not $files -or $files.Count -eq 0) {
+            throw "velopack-output is empty — pack step failed silently. Aborting."
+          }
+          Write-Host "Packed $($files.Count) file(s):"
+          $files | ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Upload Velopack artifacts
         uses: actions/upload-artifact@v4
@@ -406,49 +402,99 @@ jobs:
           path: velopack-output/*
           retention-days: 5
 
-      - name: Create GitHub Release
-        if: ${{ needs.validate-policy.outputs.should_create_release == 'true' }}
-        run: |
-          $isPreRelease = "${{ needs.validate-policy.outputs.is_prerelease }}"
-
-          if ($isPreRelease -eq "true") {
-            gh release create ${{ github.ref_name }} `
-              --title "Memento AI ${{ steps.version.outputs.VERSION }}" `
-              --generate-notes `
-              --prerelease `
-              velopack-output/*
-          } else {
-            gh release create ${{ github.ref_name }} `
-              --title "Memento AI ${{ steps.version.outputs.VERSION }}" `
-              --generate-notes `
-              velopack-output/*
-          }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Optional: Separate job for testing the service installation
+  # ─────────────────────────────────────────────────────────────
+  # 4. TEST — validate the package BEFORE it goes public
+  #    If this fails, no release is created. Nothing to clean up.
+  # ─────────────────────────────────────────────────────────────
   test-service:
-    needs: package-release
+    needs: [validate-policy, package-release]
     runs-on: windows-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
-    
+    if: ${{ needs.validate-policy.outputs.run_packaging == 'true' }}
+
     steps:
-      - name: Download artifacts
+      - name: Download Velopack artifacts
         uses: actions/download-artifact@v4
         with:
           name: velopack-release
           path: test-install
 
-      - name: Test installation
+      - name: Test installation package
+        shell: pwsh
         run: |
-          # Run the setup in a test environment
-          # Note: This won't actually install the service due to permission constraints
-          # but verifies the installer runs without errors
           $setupExe = Get-ChildItem "test-install/Setup.exe" -ErrorAction SilentlyContinue
-          if ($setupExe) {
-            Write-Host "Setup.exe found: $($setupExe.FullName)"
-            Write-Host "File size: $($setupExe.Length) bytes"
-          } else {
-            Write-Host "Setup.exe not found in artifacts"
+          if (-not $setupExe) {
+            Write-Error "Setup.exe not found in artifacts"
             exit 1
           }
+          Write-Host "Setup.exe found : $($setupExe.FullName)"
+          Write-Host "File size       : $($setupExe.Length) bytes"
+          # Add further smoke tests here (e.g. silent install + version check)
+
+  # ─────────────────────────────────────────────────────────────
+  # 5. RELEASE — atomic tag + GitHub release, only after tests pass
+  #
+  #    - Uses github.sha so the tag always points to the exact
+  #      commit that was built and tested, not whatever HEAD is now.
+  #    - Idempotent: if the release already exists (e.g. asset
+  #      upload failed mid-way on a previous run), only re-uploads
+  #      assets — does not recreate the tag or release.
+  # ─────────────────────────────────────────────────────────────
+  create-release:
+    needs: [validate-policy, test-service]
+    runs-on: windows-latest
+    if: ${{ needs.validate-policy.outputs.run_packaging == 'true' }}
+
+    steps:
+      - name: Download Velopack artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: velopack-release
+          path: velopack-output
+
+      - name: Create GitHub Release (atomic tag + release)
+        shell: pwsh
+        run: |
+          $version     = "${{ needs.validate-policy.outputs.version }}"
+          $tagName     = "v$version"
+          $isPrerelease = "${{ needs.validate-policy.outputs.is_prerelease }}"
+          $sha         = "${{ github.sha }}"
+
+          $files = Get-ChildItem "velopack-output" | ForEach-Object { $_.FullName }
+          if ($files.Count -eq 0) {
+            throw "No files found in velopack-output — aborting release."
+          }
+
+          # Idempotent: if release exists (e.g. asset upload failed on a prior run),
+          # skip tag/release creation and only re-upload assets.
+          $releaseExists = $false
+          try {
+            gh release view $tagName --json id | Out-Null
+            $releaseExists = $true
+          } catch {
+            # Only swallow "not found" — re-throw anything unexpected
+            if ($_.Exception.Message -notmatch "release not found|404|Could not resolve") {
+              throw
+            }
+          }
+
+          if ($releaseExists) {
+            Write-Host "Release $tagName already exists — uploading/replacing assets only."
+            gh release upload $tagName @files --clobber
+          } else {
+            Write-Host "Creating release $tagName on commit $sha"
+            $createArgs = @(
+              $tagName,
+              "--title",          "Memento AI $version",
+              "--generate-notes",
+              "--target",         $sha        # exact tested commit — never points to wrong HEAD
+            )
+            if ($isPrerelease -eq "true") {
+              $createArgs += "--prerelease"
+            }
+            $createArgs += $files
+            gh release create @createArgs
+          }
+
+          Write-Host "Done. Release: https://github.com/${{ github.repository }}/releases/tag/$tagName"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
