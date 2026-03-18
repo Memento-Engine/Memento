@@ -1,4 +1,4 @@
-import type { ChatMessage, ProviderName, TokenUsage } from "../types.js";
+import type { ChatMessage, ProviderName, TokenUsage } from "@/types.ts";
 
 export type ProviderChatRequest = {
   model: string;

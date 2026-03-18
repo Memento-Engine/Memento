@@ -19,6 +19,7 @@ use tracing::{ info, error, debug, warn };
 use crate::browser_utils::create_url_detector;
 use crate::{
     cache::{ cache::FrameComparer, ocr_cache::{ WindowCacheKey, WindowOcrCache } },
+    embedding::all_models_exist,
     ocr::{ engine::{ OcrEngine, WindowsOcrEngine } },
     pipeline::monitor::{ SafeMonitor, get_monitor_by_id },
 };
@@ -1081,6 +1082,7 @@ pub async fn continuous_capture_v2(
     let mut frame_counter: u64 = 0;
     let mut frame_comparer = FrameComparer::new(100, 10);
     let mut shutdown_rx = shutdown.subscribe();
+    let mut models_missing_logged = false;
     
     debug!("continuous_capture_v2: Starting with adaptive scheduling for monitor: {}", monitor_id);
     
@@ -1110,6 +1112,26 @@ pub async fn continuous_capture_v2(
         if shutdown.is_shutdown_requested() {
             info!("Shutdown requested, stopping capture");
             break;
+        }
+
+        // Halt capture when model files are missing. This uses filesystem detection
+        // and allows automatic resume once models are restored.
+        if !all_models_exist() {
+            if !models_missing_logged {
+                warn!("Model files are missing; capture is paused until models are available");
+                models_missing_logged = true;
+            }
+
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                _ = shutdown_rx.recv() => break,
+            }
+            continue;
+        }
+
+        if models_missing_logged {
+            info!("Model files detected again; resuming capture");
+            models_missing_logged = false;
         }
         
         // Get adaptive scheduling parameters

@@ -13,6 +13,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 pub mod build_info;
 pub mod get_app_icon;
 pub mod get_device_id;
+pub mod oauth;
 
 /// Service name constant
 const SERVICE_NAME: &str = "SearchEngineDaemon";
@@ -318,7 +319,7 @@ fn stop_daemon(is_dev: bool) -> Result<String, String> {
 
 fn daemon_is_running() -> bool {
     if let Some(port) = read_port_file() {
-        let url = format!("http://127.0.0.1:{}/healthz", port);
+        let url = format!("http://127.0.0.1:{}/api/v1/healthz", port);
         return reqwest::blocking::get(url).is_ok();
     }
     false
@@ -329,7 +330,7 @@ fn wait_until_unhealthy() -> Result<(), String> {
     let timeout = Duration::from_secs(60);
 
     while start.elapsed() < timeout {
-        if daemon_is_running() {
+        if !daemon_is_running() {
             return Ok(());
         }
 
@@ -351,7 +352,7 @@ fn wait_until_healthy() -> Result<(), String> {
     let timeout = Duration::from_secs(60);
 
     while start.elapsed() < timeout {
-        if !daemon_is_running() {
+        if daemon_is_running() {
             return Ok(());
         }
 
@@ -607,7 +608,9 @@ pub fn run() {
             get_service_status,
             get_daemon_url,
             get_app_icon::get_app_icon_ipc,
-            get_device_id::generate_auth_headers
+            get_device_id::generate_auth_headers,
+            oauth::start_oauth_flow,
+            oauth::cancel_oauth_flow
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

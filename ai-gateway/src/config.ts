@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import { z } from "zod";
-import type { GatewayRole, ProviderName } from "./types.js";
+import type { GatewayRole, ProviderName } from "@/types.ts";
 import { Router } from "express";
 dotenv.config();
 const providerSchema = z.object({

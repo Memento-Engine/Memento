@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { type GatewayResponse } from "@memento/shared/types/gateway.ts";
-import { childLogger } from "./logger.js";
+import { childLogger } from "@/utils/logger.ts";
 
 const log = childLogger("errorHandler");
 

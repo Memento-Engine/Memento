@@ -1,5 +1,5 @@
-import type { ChatMessage } from "../types.js";
-import type { LlmProviderAdapter, ProviderChatRequest, ProviderChatResult, StreamChunkCallback } from "./provider.js";
+import type { ChatMessage } from "@/types.ts";
+import type { LlmProviderAdapter, ProviderChatRequest, ProviderChatResult, StreamChunkCallback } from "@/providers/provider.ts";
 
 type OpenRouterAdapterOptions = {
   baseUrl: string;

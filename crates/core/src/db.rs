@@ -1106,22 +1106,24 @@ SELECT
                 .execute(&mut **tx.conn()).await?
                 .last_insert_rowid();
 
-            //  Insert Embedding — serialize Vec<f32> to raw bytes for sqlite-vec
-            let embedding_bytes: Vec<u8> = chunk.text_embeddings
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
+            // Only write vectors when non-empty; sqlite-vec rejects zero-length vectors.
+            if !chunk.text_embeddings.is_empty() {
+                let embedding_bytes: Vec<u8> = chunk.text_embeddings
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect();
 
-            sqlx
-                ::query(
-                    r#"
-            INSERT INTO vec_chunks (chunk_id, embedding)
-            VALUES (?, ?)
-            "#
-                )
-                .bind(chunk_id)
-                .bind(&embedding_bytes)
-                .execute(&mut **tx.conn()).await?;
+                sqlx
+                    ::query(
+                        r#"
+                INSERT INTO vec_chunks (chunk_id, embedding)
+                VALUES (?, ?)
+                "#
+                    )
+                    .bind(chunk_id)
+                    .bind(&embedding_bytes)
+                    .execute(&mut **tx.conn()).await?;
+            }
         }
 
         tx.commit().await?;

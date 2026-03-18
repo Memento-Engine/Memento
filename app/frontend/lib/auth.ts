@@ -1,4 +1,8 @@
-import { deletePassword } from "tauri-plugin-keyring-api";
+import { 
+  clearAccessToken, 
+  clearRefreshToken, 
+  clearStoredUser 
+} from "@/api/auth";
 
 /**
  * Rate limit error details from the gateway
@@ -12,22 +16,12 @@ export interface RateLimitInfo {
 
 /**
  * Clears all authentication state from the device.
- * This removes tokens from cookies, localStorage, and keyring.
+ * Removes tokens and user data from OS keyring.
  */
 export async function clearAuthState(): Promise<void> {
-  // Clear device ID from localStorage
-  localStorage.removeItem("deviceId");
-
-  // Clear access token cookie
-  document.cookie = "accessToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-
-  // Clear refresh token from keyring
-  try {
-    await deletePassword("memento-ai", "device-token");
-  } catch (err) {
-    // Ignore if credential doesn't exist
-    console.log("No refresh token to clear or failed to clear:", err);
-  }
+  await clearAccessToken();
+  await clearRefreshToken();
+  await clearStoredUser();
 }
 
 /**

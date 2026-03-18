@@ -5,10 +5,7 @@ import { motion, Variants, AnimatePresence } from "framer-motion";
 import {
   BrainCircuit,
   ArrowRight,
-  Database,
-  Search,
   LogIn,
-  Server,
   ShieldCheck,
   HardDrive,
   Cloud,
@@ -25,9 +22,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { MementoLogo } from "@/components/Logo";
 import useOnboarding from "@/hooks/useOnboarding";
-import { registerDevice } from "@/api/registerDevice";
 import { checkModelsStatus, downloadModelsWithProgress, ModelDownloadProgress } from "@/api/models";
 import { cn } from "@/lib/utils";
+import useAuth from "@/hooks/useAuth";
 
 function Feature({
   icon,
@@ -63,21 +60,17 @@ export default function OnboardingPage() {
   const { currentStep, setCurrentStep, setIsOnboardingComplete } =
     useOnboarding();
 
-  const [isRegistering, setIsRegistering] = useState(false);
-  
   // Track completion state for each step
   // Step 0: Welcome (always completable)
   // Step 1: Daemon Startup (must wait for daemon)
   // Step 2: Privacy (always completable)  
   // Step 3: Model Download (must complete download)
-  // Step 4: Device Registration (must register)
-  // Step 5: Login/Skip (final step)
+  // Step 4: Login/Skip (final step)
   const [stepStates, setStepStates] = useState<StepState[]>([
     { completed: false, canProceed: true },  // Welcome
     { completed: false, canProceed: false }, // Daemon Startup
     { completed: false, canProceed: true },  // Privacy
     { completed: false, canProceed: false }, // Model Download
-    { completed: false, canProceed: false }, // Device Registration
     { completed: false, canProceed: true },  // Login/Skip
   ]);
 
@@ -97,19 +90,6 @@ export default function OnboardingPage() {
       setCurrentStep(fromStep + 1);
     }
   }, [stepStates, completeStep, setCurrentStep]);
-
-  const handleDeviceRegistration = async (): Promise<void> => {
-    setIsRegistering(true);
-    try {
-      await registerDevice();
-      completeStep(4);
-      setCurrentStep(5);
-    } catch (err: unknown) {
-      console.error("Device registration failed:", err);
-    } finally {
-      setIsRegistering(false);
-    }
-  };
 
   const handleModelsDownloaded = useCallback(() => {
     completeStep(3);
@@ -152,19 +132,9 @@ export default function OnboardingPage() {
         )}
 
         {currentStep === 4 && (
-          <SlideWrapper key="device">
-            <DeviceRegistrationSlide
-              onRegister={handleDeviceRegistration}
-              isLoading={isRegistering}
-            />
-          </SlideWrapper>
-        )}
-
-        {currentStep === 5 && (
           <SlideWrapper key="login">
             <LoginSlide 
-              onLogin={() => {}} 
-              onSkip={() => setIsOnboardingComplete(true)} 
+              onComplete={() => setIsOnboardingComplete(true)} 
             />
           </SlideWrapper>
         )}
@@ -172,7 +142,7 @@ export default function OnboardingPage() {
 
       <ProgressDots 
         step={currentStep} 
-        total={6} 
+        total={5} 
         stepStates={stepStates}
       />
     </div>
@@ -532,51 +502,30 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-function DeviceRegistrationSlide({
-  onRegister,
-  isLoading,
-}: {
-  onRegister: () => void;
-  isLoading: boolean;
-}) {
-  return (
-    <div className="w-full max-w-xl text-center space-y-8 px-6">
-      <div className="flex justify-center">
-        <Server className="text-primary" size={40} />
-      </div>
-
-      <h1 className="text-3xl sm:text-4xl font-bold">Register this device</h1>
-
-      <p className="text-muted-foreground text-lg">
-        To prevent spam and abuse, Memento registers your device with our
-        servers.
-      </p>
-
-      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-        <ShieldCheck size={16} className="text-primary" />
-        This only creates a device ID. Your data stays local.
-      </div>
-
-      <Button
-        className={cn(isLoading ? "cursor-not-allowed" : "", "cursor-pointer")}
-        size="lg"
-        onClick={onRegister}
-        disabled={isLoading}
-      >
-        {isLoading ? "Registering device..." : "Register device"}
-        {!isLoading && <ArrowRight className="ml-2 h-5 w-5" />}
-      </Button>
-    </div>
-  );
-}
-
 function LoginSlide({
-  onLogin,
-  onSkip,
+  onComplete,
 }: {
-  onLogin: () => void;
-  onSkip: () => void;
+  onComplete: () => void;
 }) {
+  const { loginWithGoogle, isAuthenticated, isLoading } = useAuth();
+
+  // If user successfully authenticates, complete onboarding
+  useEffect(() => {
+    if (isAuthenticated) {
+      onComplete();
+    }
+  }, [isAuthenticated, onComplete]);
+
+  const handleSignIn = async () => {
+    try {
+      await loginWithGoogle();
+      // Advance immediately on successful login; auth effect remains a fallback.
+      onComplete();
+    } catch {
+      // AuthProvider already surfaces a toast with the error.
+    }
+  };
+
   return (
     <div className="w-full max-w-xl text-center space-y-8 px-6">
       <div className="flex justify-center">
@@ -596,7 +545,7 @@ function LoginSlide({
       </p>
 
       <div className="flex flex-col gap-4 items-center pt-4">
-        <Button size="lg" onClick={onSkip} className="w-72 cursor-pointer">
+        <Button size="lg" onClick={onComplete} className="w-72 cursor-pointer">
           Continue without account
           <ArrowRight className="ml-2 h-5 w-5" />
         </Button>
@@ -604,11 +553,16 @@ function LoginSlide({
         <Button
           variant="ghost"
           size="lg"
-          onClick={onLogin}
+          onClick={handleSignIn}
+          disabled={isLoading}
           className="w-72 text-muted-foreground cursor-pointer"
         >
-          <LogIn className="mr-2 h-4 w-4" />
-          Sign in
+          {isLoading ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <LogIn className="mr-2 h-4 w-4" />
+          )}
+          Sign in with Google
         </Button>
       </div>
     </div>

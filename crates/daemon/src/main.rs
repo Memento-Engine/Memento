@@ -305,8 +305,9 @@ async fn run_standalone() {
     let capture_privacy_cache = privacy_manager.cache();
     let capture_shutdown = Arc::clone(&shutdown);
     
-    let _capture_handle = tokio::spawn(async move {
-        continuous_capture_v2(
+    info!("Spawning capture task");
+    let capture_handle = tokio::spawn(async move {
+        let result = continuous_capture_v2(
             capture_tx,
             capture_scheduler,
             capture_ocr_engine,
@@ -315,7 +316,15 @@ async fn run_standalone() {
             monitor_id,
             capture_shutdown,
             capture_lifecycle,
-        ).await
+        ).await;
+
+        if let Err(ref e) = result {
+            error!("Capture task exited with error: {:?}", e);
+        } else {
+            info!("Capture task exited gracefully");
+        }
+
+        result
     });
     
     // 17. Spawn the OCR result processor
@@ -323,17 +332,21 @@ async fn run_standalone() {
     let processor_db = Arc::clone(&db);
     let processor_shutdown = Arc::clone(&shutdown);
     
-    let _processor_handle = tokio::spawn(async move {
+    info!("Spawning OCR processor task");
+    let processor_handle = tokio::spawn(async move {
         let processor = OcrProcessor::new(processor_embedding, processor_db);
         processor.process_stream(capture_rx, processor_shutdown).await;
+        info!("OCR processor task exited");
     });
     
     // 18. Spawn the HTTP server
     let server_state = Arc::clone(&app_state);
     let server_shutdown = Arc::clone(&shutdown);
     
+    info!("Spawning HTTP server task");
     let server_handle = tokio::spawn(async move {
         start_server(server_state, server_shutdown).await;
+        info!("HTTP server task exited");
     });
     
     // 19. Spawn cache persistence task (saves every 5 minutes)
@@ -405,9 +418,21 @@ async fn run_standalone() {
     
     tokio::select! {
         _ = async {
-            // let _ = capture_handle.await;
-            // let _ = processor_handle.await;
-            let _ = server_handle.await;
+            match capture_handle.await {
+                Ok(Ok(())) => info!("Capture task joined"),
+                Ok(Err(e)) => error!("Capture task returned error: {:?}", e),
+                Err(e) => error!("Capture task join error: {:?}", e),
+            }
+
+            match processor_handle.await {
+                Ok(()) => info!("OCR processor task joined"),
+                Err(e) => error!("OCR processor task join error: {:?}", e),
+            }
+
+            match server_handle.await {
+                Ok(()) => info!("HTTP server task joined"),
+                Err(e) => error!("HTTP server task join error: {:?}", e),
+            }
         } => {
             info!("All tasks completed gracefully");
         }
@@ -572,8 +597,9 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     let capture_privacy_cache = privacy_manager.cache();
     let capture_shutdown = Arc::clone(&shutdown);
     
-    let _capture_handle = tokio::spawn(async move {
-        continuous_capture_v2(
+    info!("Spawning capture task");
+    let capture_handle = tokio::spawn(async move {
+        let result = continuous_capture_v2(
             capture_tx,
             capture_scheduler,
             capture_ocr_engine,
@@ -582,7 +608,15 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
             monitor_id,
             capture_shutdown,
             capture_lifecycle,
-        ).await
+        ).await;
+
+        if let Err(ref e) = result {
+            error!("Capture task exited with error: {:?}", e);
+        } else {
+            info!("Capture task exited gracefully");
+        }
+
+        result
     });
     
     // 17. Spawn the OCR result processor
@@ -590,17 +624,21 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     let processor_db = Arc::clone(&db);
     let processor_shutdown = Arc::clone(&shutdown);
     
-    let _processor_handle = tokio::spawn(async move {
+    info!("Spawning OCR processor task");
+    let processor_handle = tokio::spawn(async move {
         let processor = OcrProcessor::new(processor_embedding, processor_db);
         processor.process_stream(capture_rx, processor_shutdown).await;
+        info!("OCR processor task exited");
     });
     
     // 18. Spawn the HTTP server
     let server_state = Arc::clone(&app_state);
     let server_shutdown = Arc::clone(&shutdown);
     
+    info!("Spawning HTTP server task");
     let server_handle = tokio::spawn(async move {
         start_server(server_state, server_shutdown).await;
+        info!("HTTP server task exited");
     });
     
     // 19. Spawn cache persistence task (saves every 5 minutes)
@@ -668,7 +706,21 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     
     tokio::select! {
         _ = async {
-            let _ = server_handle.await;
+            match capture_handle.await {
+                Ok(Ok(())) => info!("Capture task joined"),
+                Ok(Err(e)) => error!("Capture task returned error: {:?}", e),
+                Err(e) => error!("Capture task join error: {:?}", e),
+            }
+
+            match processor_handle.await {
+                Ok(()) => info!("OCR processor task joined"),
+                Err(e) => error!("OCR processor task join error: {:?}", e),
+            }
+
+            match server_handle.await {
+                Ok(()) => info!("HTTP server task joined"),
+                Err(e) => error!("HTTP server task join error: {:?}", e),
+            }
         } => {
             info!("All tasks completed gracefully");
         }

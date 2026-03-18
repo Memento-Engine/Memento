@@ -56,6 +56,11 @@ tauri-plugin-stronghold = "2.3.1"
 tauri-plugin-os = "2"
 tauri-plugin-keyring = "0.1.0"
 
+# OAuth dependencies
+rand = "0.8"
+urlencoding = "2.1"
+base64 = "0.22"
+
 # Velopack for auto-updates
 velopack = "0.0"
 

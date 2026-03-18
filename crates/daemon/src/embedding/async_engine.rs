@@ -9,21 +9,57 @@ fn get_models_dir() -> std::path::PathBuf {
     app_core::config::models_dir()
 }
 
+/// Return true if any subdirectory in `models_dir` starts with one of the provided prefixes.
+fn has_model_dir_with_prefix(models_dir: &std::path::Path, prefixes: &[&str]) -> bool {
+    let entries = match std::fs::read_dir(models_dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Check if embedding model files exist in the cache directory
 pub fn embedding_model_exists() -> bool {
     let models_dir = get_models_dir();
-    // fastembed stores models in subdirectories based on model name
-    // AllMiniLML6V2 creates a directory like "sentence-transformers--all-MiniLM-L6-v2"
-    let model_dir = models_dir.join("fast-all-MiniLM-L6-v2");
-    model_dir.exists() && model_dir.is_dir()
+    // Current cache naming (observed): models--Qdrant--all-MiniLM-L6-v2-onnx
+    // Keep legacy prefix for backward compatibility.
+    has_model_dir_with_prefix(
+        &models_dir,
+        &[
+            "models--Qdrant--all-MiniLM-L6-v2-onnx",
+            "fast-all-MiniLM-L6-v2",
+        ],
+    )
 }
 
 /// Check if cross-encoder model files exist in the cache directory
 pub fn cross_encoder_model_exists() -> bool {
     let models_dir = get_models_dir();
-    // JINA Reranker creates a directory like "jinaai--jina-reranker-v1-turbo-en"
-    let model_dir = models_dir.join("fast-jina-reranker-v1-turbo-en");
-    model_dir.exists() && model_dir.is_dir()
+    // Current cache naming (observed): models--jinaai--jina-reranker-v1-turbo-en
+    // Keep legacy prefix for backward compatibility.
+    has_model_dir_with_prefix(
+        &models_dir,
+        &[
+            "models--jinaai--jina-reranker-v1-turbo-en",
+            "fast-jina-reranker-v1-turbo-en",
+        ],
+    )
 }
 
 /// Check if all required models are downloaded

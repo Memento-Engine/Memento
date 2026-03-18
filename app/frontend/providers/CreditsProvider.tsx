@@ -6,6 +6,7 @@ import { AI_GATEWAY_BASE_URL } from "@/api/base";
 import { GatewayResponse } from "@shared/types/gateway";
 import { clearAuthState } from "@/lib/auth";
 import useOnboarding from "@/hooks/useOnboarding";
+import { getAuthHeaders } from "@/api/auth";
 
 interface CreditsProviderProps {
   children: React.ReactNode;
@@ -38,31 +39,6 @@ interface UsageResponseData {
   };
 }
 
-// Helper to get auth headers
-function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  // Get access token from cookie
-  const cookies = document.cookie.split(";");
-  const accessTokenCookie = cookies.find((c) => c.trim().startsWith("accessToken="));
-  if (accessTokenCookie) {
-    const accessToken = accessTokenCookie.split("=")[1]?.trim();
-    if (accessToken) {
-      headers["Authorization"] = `Bearer ${accessToken}`;
-    }
-  }
-
-  // Get device ID from localStorage or generate one
-  const deviceId = localStorage.getItem("deviceId");
-  if (deviceId) {
-    headers["X-Device-ID"] = deviceId;
-  }
-
-  return headers;
-}
-
 export default function CreditsProvider({ children }: CreditsProviderProps) {
   const [credits, setCredits] = useState<CreditsData>({
     total: 0,
@@ -85,22 +61,14 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
       setIsLoading(true);
       setError(null);
 
-      const headers = getAuthHeaders();
-      
-      // We need at least a device ID to fetch credits
-      // If not found, user needs to complete onboarding
-      if (!headers["X-Device-ID"]) {
-        console.log("No device ID available - device not registered");
-        setIsLoading(false);
-        setError("Device not registered");
-        return;
-      }
+      // Get auth headers from OS keyring asynchronously
+      const headers = await getAuthHeaders();
 
-      // Also need access token for auth
+      // Need access token for auth to fetch usage
       if (!headers["Authorization"]) {
-        console.log("No access token available - need to refresh or re-register");
+        console.log("No access token available - user not authenticated");
         setIsLoading(false);
-        setError("Authentication required");
+        // Not an error - user might be anonymous or not logged in yet
         return;
       }
 
@@ -149,18 +117,6 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
     // Poll for updates every 30 seconds
     const interval = setInterval(refreshCredits, 30000);
     return () => clearInterval(interval);
-  }, [refreshCredits]);
-
-  // Listen for storage events (device ID changes)
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "deviceId") {
-        refreshCredits();
-      }
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
   }, [refreshCredits]);
 
   return (

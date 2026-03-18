@@ -15,11 +15,11 @@ import {
 } from "@memento/shared/types/gateway.ts";
 import jwt from "jsonwebtoken";
 import { fromError } from "zod-validation-error";
-import { db } from "src/db/index.ts";
-import { device, premiumCredits } from "src/db/schema.ts";
+import { db } from "@/db/index.ts";
+import { device, premiumCredits } from "@/db/schema.ts";
 import { eq } from "drizzle-orm";
-import { ANONYMOUS_PREMIUM_CREDITS } from "src/usageTracker.ts";
-import { childLogger } from "src/utils/logger.js";
+import { ANONYMOUS_PREMIUM_CREDITS } from "@/usageTracker.ts";
+import { childLogger } from "@/utils/logger.ts";
 
 const log = childLogger("registerDevice");
 

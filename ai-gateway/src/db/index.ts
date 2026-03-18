@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@/config.ts";
 
 let client;
 

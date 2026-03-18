@@ -10,4 +10,4 @@ export type {
   UserRole,
   UserTier,
   GatewayResponse,
-} from "../../shared/types/gateway.js";
+} from "@memento/shared/types/gateway.ts";

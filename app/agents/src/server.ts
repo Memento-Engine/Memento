@@ -75,9 +75,10 @@ async function writePortFile(port: number, logger: any): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const dirPath = path.join(getLocalDataDir(), "memento");
-      const filePath = path.join(dirPath, "memento-agents.port");
+      const portPath = path.join(dirPath, "ports");
+      const filePath = path.join(portPath, "memento-agents.port");
 
-      fs.mkdirSync(dirPath, { recursive: true });
+      fs.mkdirSync(portPath, { recursive: true });
       fs.writeFileSync(filePath, port.toString());
 
       logger.info(`Successfully wrote port ${port} to ${filePath}`);

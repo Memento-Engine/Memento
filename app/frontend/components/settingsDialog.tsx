@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
+import useAuth from "@/hooks/useAuth";
 
 export enum SettingsTabs {
   Profile,
@@ -45,6 +46,52 @@ const settingsTabs = [
 import { Input } from "@/components/ui/input";
 
 function ProfileTab(): React.ReactElement {
+  const { user, logout, isLoading } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Get user initials for fallback avatar
+  const getInitials = (name: string) => {
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  const handleLogout = async () => {
+    try {
+      setIsLoggingOut(true);
+      await logout();
+    } catch (err) {
+      console.error("Logout failed:", err);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
+  if (!user) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h3 className="text-base font-semibold tracking-tight">Profile</h3>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Manage your personal information and display preferences.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-dashed p-8 text-center space-y-4">
+          <p className="text-sm text-muted-foreground">
+            You are not logged in.
+          </p>
+          <p className="text-xs text-muted-foreground/70">
+            Sign in to your account to manage your profile information.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -54,32 +101,38 @@ function ProfileTab(): React.ReactElement {
         </p>
       </div>
 
+      {/* Avatar Section */}
       <div className="flex items-center gap-4">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted text-xl font-semibold text-foreground shadow-sm">
-          A
-        </div>
+        {user.picture ? (
+          <img
+            src={user.picture}
+            alt={user.name}
+            className="h-16 w-16 rounded-2xl object-cover shadow-sm border border-border"
+          />
+        ) : (
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted text-lg font-semibold text-foreground shadow-sm">
+            {getInitials(user.name)}
+          </div>
+        )}
 
         <div className="space-y-1">
           <p className="text-sm font-medium">Avatar</p>
-
-          <Button
-            variant="link"
-            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors h-auto p-0"
-          >
-            Upload new photo
-          </Button>
+          <p className="text-xs text-muted-foreground">
+            {user.picture ? "From your Google account" : "Generated from initials"}
+          </p>
         </div>
       </div>
 
+      {/* User Info */}
       <div className="space-y-3">
         <div className="space-y-1.5">
           <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Display Name
           </Label>
-
           <Input
-            className="w-full h-9 rounded-lg border bg-background px-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring/0 transition"
-            placeholder="Your name"
+            disabled
+            className="w-full h-9 rounded-lg border bg-muted px-3 text-sm text-foreground"
+            value={user.name}
           />
         </div>
 
@@ -87,17 +140,34 @@ function ProfileTab(): React.ReactElement {
           <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Email
           </Label>
-
           <Input
+            disabled
             type="email"
-            className="w-full h-9 rounded-lg border bg-background px-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/30 transition"
-            placeholder="you@example.com"
+            className="w-full h-9 rounded-lg border bg-muted px-3 text-sm text-foreground"
+            value={user.email}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Plan
+          </Label>
+          <Input
+            disabled
+            className="w-full h-9 rounded-lg border bg-muted px-3 text-sm text-foreground capitalize"
+            value={user.plan}
           />
         </div>
       </div>
 
-      <Button className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-        Save changes
+      {/* Logout Button */}
+      <Button
+        onClick={handleLogout}
+        disabled={isLoggingOut || isLoading}
+        variant="destructive"
+        className="w-full"
+      >
+        {isLoggingOut ? "Signing out..." : "Sign out"}
       </Button>
     </div>
   );
