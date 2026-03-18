@@ -421,14 +421,23 @@ jobs:
       - name: Test installation package
         shell: pwsh
         run: |
-          $setupExe = Get-ChildItem "test-install/Setup.exe" -ErrorAction SilentlyContinue
-          if (-not $setupExe) {
-            Write-Error "Setup.exe not found in artifacts"
+          # Verify the three expected binaries are present in the packaged artifact.
+          $required = @("memento.exe", "memento-daemon.exe", "service-helper.exe")
+          $errors = @()
+
+          foreach ($name in $required) {
+            $file = Get-ChildItem "test-install/$name" -ErrorAction SilentlyContinue
+            if ($file) {
+              Write-Host "$name found: $($file.FullName) ($($file.Length) bytes)"
+            } else {
+              $errors += "$name not found in artifacts"
+            }
+          }
+
+          if ($errors.Count -gt 0) {
+            foreach ($err in $errors) { Write-Error $err }
             exit 1
           }
-          Write-Host "Setup.exe found : $($setupExe.FullName)"
-          Write-Host "File size       : $($setupExe.Length) bytes"
-          # Add further smoke tests here (e.g. silent install + version check)
 
   # ─────────────────────────────────────────────────────────────
   # 5. RELEASE — atomic tag + GitHub release, only after tests pass
