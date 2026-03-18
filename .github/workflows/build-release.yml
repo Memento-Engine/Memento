@@ -478,27 +478,22 @@ jobs:
           $sha         = "${{ github.sha }}"
           $repo        = "${{ github.repository }}"
 
-          $files = Get-ChildItem "velopack-output" | ForEach-Object { $_.FullName }
+          $files = Get-ChildItem "velopack-output" -File | ForEach-Object { $_.FullName }
           if ($files.Count -eq 0) {
             throw "No files found in velopack-output — aborting release."
           }
 
           # Idempotent: if release exists (e.g. asset upload failed on a prior run),
           # skip tag/release creation and only re-upload assets.
-          $releaseExists = $false
-          try {
-            gh release view $tagName --repo $repo --json id | Out-Null
-            $releaseExists = $true
-          } catch {
-            # Only swallow "not found" — re-throw anything unexpected
-            if ($_.Exception.Message -notmatch "release not found|404|Could not resolve") {
-              throw
-            }
-          }
+          # gh is an external binary — it signals failure via exit code, not exceptions,
+          # so we check $LASTEXITCODE rather than using try/catch.
+          $null = gh release view $tagName --repo $repo --json id 2>$null
+          $releaseExists = ($LASTEXITCODE -eq 0)
 
           if ($releaseExists) {
             Write-Host "Release $tagName already exists — uploading/replacing assets only."
             gh release upload $tagName @files --repo $repo --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
             Write-Host "Creating release $tagName on commit $sha"
             $createArgs = @(
@@ -513,6 +508,7 @@ jobs:
             }
             $createArgs += $files
             gh release create @createArgs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
           Write-Host "Done. Release: https://github.com/${{ github.repository }}/releases/tag/$tagName"
