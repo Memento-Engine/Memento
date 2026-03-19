@@ -1,5 +1,5 @@
 use axum::{ extract::{ Json, State }, response::{ IntoResponse, Response } };
-use chrono::{DateTime, Utc};
+use chrono::{ DateTime, Utc };
 use reqwest::StatusCode;
 use serde::{ Deserialize, Serialize };
 use sqlx::Column;
@@ -71,10 +71,12 @@ pub struct ChunkResult {
 fn model_not_ready_response() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        Json(serde_json::json!({
+        Json(
+            serde_json::json!({
             "success": false,
             "error": "Models are not ready. Please complete model download first."
-        })),
+        })
+        ),
     ).into_response()
 }
 
@@ -124,14 +126,20 @@ pub async fn search_results_by_chunk_ids(
         }
         Err(e) => {
             error!("Error retrieving search results: {:?}", e);
-            sentry::with_scope(|scope| {
-                scope.set_tag("environment", "daemon");
-                scope.set_tag("service", "daemon");
-                scope.set_tag("area", "search_results_by_chunk_ids");
-                scope.set_extra("error", e.to_string().into());
-            }, || {
-                sentry::capture_message("search_results_by_chunk_ids failed", sentry::Level::Error);
-            });
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "search_results_by_chunk_ids");
+                    scope.set_extra("error", e.to_string().into());
+                },
+                || {
+                    sentry::capture_message(
+                        "search_results_by_chunk_ids failed",
+                        sentry::Level::Error
+                    );
+                }
+            );
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve search results").into_response()
         }
     }
@@ -198,6 +206,8 @@ pub async fn sql_execute(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SqlExecuteRequest>
 ) -> Response {
+    println!("Received SQL execute request: {}", payload.sql);
+    println!("Current model state: {:?}", state.model_state.get_state().status);
     if let Err(resp) = ensure_models_ready(&state) {
         return resp;
     }
@@ -294,14 +304,17 @@ pub async fn sql_execute(
         }
         Err(e) => {
             error!("SQL execution failed: {:?}", e);
-            sentry::with_scope(|scope| {
-                scope.set_tag("environment", "daemon");
-                scope.set_tag("service", "daemon");
-                scope.set_tag("area", "sql_execute");
-                scope.set_extra("error", e.to_string().into());
-            }, || {
-                sentry::capture_message("sql_execute failed", sentry::Level::Error);
-            });
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "sql_execute");
+                    scope.set_extra("error", e.to_string().into());
+                },
+                || {
+                    sentry::capture_message("sql_execute failed", sentry::Level::Error);
+                }
+            );
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 Json(SqlExecuteResponse {
@@ -386,7 +399,9 @@ pub async fn semantic_search(
                     success: false,
                     results: None,
                     result_count: 0,
-                    error: Some("AI models are not downloaded. Please complete onboarding to enable search.".to_string()),
+                    error: Some(
+                        "AI models are not downloaded. Please complete onboarding to enable search.".to_string()
+                    ),
                     execution_time_ms: start.elapsed().as_millis(),
                 }),
             ).into_response();
@@ -398,15 +413,21 @@ pub async fn semantic_search(
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);
-            sentry::with_scope(|scope| {
-                scope.set_tag("environment", "daemon");
-                scope.set_tag("service", "daemon");
-                scope.set_tag("area", "semantic_search");
-                scope.set_extra("stage", "embedding".into());
-                scope.set_extra("error", e.to_string().into());
-            }, || {
-                sentry::capture_message("semantic_search embedding failed", sentry::Level::Error);
-            });
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "semantic_search");
+                    scope.set_extra("stage", "embedding".into());
+                    scope.set_extra("error", e.to_string().into());
+                },
+                || {
+                    sentry::capture_message(
+                        "semantic_search embedding failed",
+                        sentry::Level::Error
+                    );
+                }
+            );
 
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -511,15 +532,21 @@ pub async fn semantic_search(
         Ok(r) => r,
         Err(e) => {
             error!("Semantic search failed: {:?}", e);
-            sentry::with_scope(|scope| {
-                scope.set_tag("environment", "daemon");
-                scope.set_tag("service", "daemon");
-                scope.set_tag("area", "semantic_search");
-                scope.set_extra("stage", "database".into());
-                scope.set_extra("error", e.to_string().into());
-            }, || {
-                sentry::capture_message("semantic_search database failed", sentry::Level::Error);
-            });
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "semantic_search");
+                    scope.set_extra("stage", "database".into());
+                    scope.set_extra("error", e.to_string().into());
+                },
+                || {
+                    sentry::capture_message(
+                        "semantic_search database failed",
+                        sentry::Level::Error
+                    );
+                }
+            );
 
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -625,7 +652,9 @@ pub async fn hybrid_search(
                     success: false,
                     results: None,
                     result_count: 0,
-                    error: Some("AI models are not downloaded. Please complete onboarding to enable search.".to_string()),
+                    error: Some(
+                        "AI models are not downloaded. Please complete onboarding to enable search.".to_string()
+                    ),
                     execution_time_ms: start.elapsed().as_millis(),
                 }),
             ).into_response();
@@ -637,15 +666,18 @@ pub async fn hybrid_search(
         Ok(e) => e,
         Err(e) => {
             error!("Embedding generation failed: {:?}", e);
-            sentry::with_scope(|scope| {
-                scope.set_tag("environment", "daemon");
-                scope.set_tag("service", "daemon");
-                scope.set_tag("area", "hybrid_search");
-                scope.set_extra("stage", "embedding".into());
-                scope.set_extra("error", e.to_string().into());
-            }, || {
-                sentry::capture_message("hybrid_search embedding failed", sentry::Level::Error);
-            });
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "hybrid_search");
+                    scope.set_extra("stage", "embedding".into());
+                    scope.set_extra("error", e.to_string().into());
+                },
+                || {
+                    sentry::capture_message("hybrid_search embedding failed", sentry::Level::Error);
+                }
+            );
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 Json(HybridSearchResponse {
@@ -856,15 +888,18 @@ pub async fn hybrid_search(
         Ok(r) => r,
         Err(e) => {
             error!("Hybrid search failed: {:?}", e);
-            sentry::with_scope(|scope| {
-                scope.set_tag("environment", "daemon");
-                scope.set_tag("service", "daemon");
-                scope.set_tag("area", "hybrid_search");
-                scope.set_extra("stage", "database".into());
-                scope.set_extra("error", e.to_string().into());
-            }, || {
-                sentry::capture_message("hybrid_search database failed", sentry::Level::Error);
-            });
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "hybrid_search");
+                    scope.set_extra("stage", "database".into());
+                    scope.set_extra("error", e.to_string().into());
+                },
+                || {
+                    sentry::capture_message("hybrid_search database failed", sentry::Level::Error);
+                }
+            );
 
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,

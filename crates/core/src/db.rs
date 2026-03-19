@@ -1138,4 +1138,77 @@ SELECT
 
         Ok(())
     }
+
+    /// Save a chat message and return its id.
+    pub async fn save_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+    ) -> Result<i64, sqlx::Error> {
+        let result = sqlx::query(
+            "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)"
+        )
+            .bind(session_id)
+            .bind(role)
+            .bind(content)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Save message sources (chunk references) for a message.
+    pub async fn save_message_sources(
+        &self,
+        message_id: i64,
+        sources: &[(i64, &str, Option<&str>)], // (chunk_id, usage_type, step_id)
+    ) -> Result<(), sqlx::Error> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.begin_immediate_with_retry().await?;
+
+        for (chunk_id, usage_type, step_id) in sources {
+            sqlx::query(
+                "INSERT INTO message_sources (message_id, chunk_id, usage_type, step_id) VALUES (?, ?, ?, ?)"
+            )
+                .bind(message_id)
+                .bind(chunk_id)
+                .bind(usage_type)
+                .bind(step_id)
+                .execute(&mut **tx.conn())
+                .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Load recent messages for a session.
+    /// Returns (id, role, content, created_at) ordered oldest-first.
+    pub async fn get_session_messages(
+        &self,
+        session_id: &str,
+        limit: i32,
+    ) -> Result<Vec<(i64, String, String, String)>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT id, role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?"
+        )
+            .bind(session_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows.iter().map(|r| {
+            use sqlx::Row;
+            (
+                r.get::<i64, _>("id"),
+                r.get::<String, _>("role"),
+                r.get::<String, _>("content"),
+                r.get::<String, _>("created_at"),
+            )
+        }).collect())
+    }
 }

@@ -19,6 +19,9 @@ use crate::server::privacy_endpoints::{
 use crate::server::model_endpoints::{
     check_models_status, download_models_sse, download_models_sync, model_state_stream
 };
+use crate::server::chat_endpoints::{
+    save_message, get_messages
+};
 
 #[derive(Serialize)]
 pub struct HealthStatus {
@@ -65,6 +68,9 @@ fn api_router() -> Router<Arc<AppState>> {
         .route("/models/download", post(download_models_sync))
         // Real-time model state stream (SSE)
         .route("/models/state/stream", get(model_state_stream))
+        // Chat message persistence
+        .route("/chat/messages", post(save_message))
+        .route("/chat/messages/list", post(get_messages))
 }
 
 pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownController>) {

@@ -1,6 +1,7 @@
 import { getConfig } from "../config/config";
 import { AgentError, ErrorCode, RateLimitError } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
+import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
 
 export type LlmRole =
   | "clarifyAndRewriter"
@@ -222,8 +223,21 @@ export async function invokeRoleLlm({
   retryCount: number;
 }> {
   const config = await getConfig();
+  const logger = await getLogger();
   const messages = await toGatewayMessages(prompt);
   const usePremiumCredits = shouldUsePremiumCredits(role);
+
+  logSeparator(logger, `LLM CALL START | role=${role}`, {
+    requestId,
+    role,
+    messageCount: messages.length,
+    usePremiumCredits,
+  });
+  logSectionLine(logger, "CALLED ai-gateway /v1/chat", {
+    requestId,
+    role,
+    timeoutMs: config.aiGateway.timeoutMs,
+  });
 
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
@@ -280,7 +294,7 @@ export async function invokeRoleLlm({
         }
 
         const result = (await gatewayResponse.json()) as GatewayResponse;
-        
+
         // Handle wrapped response format
         if (!result.success || !result.data) {
           throw new AgentError(
@@ -290,16 +304,22 @@ export async function invokeRoleLlm({
             500
           );
         }
-        
+
         const responseData = result.data;
         const usage = extractTokenUsage(responseData);
 
-        console.log("ai-gateway response", {
-          contentLength: responseData.content?.length,
+        logSectionLine(logger, "RESULT ai-gateway /v1/chat", {
+          requestId,
+          role,
+          contentLength: responseData.content?.length ?? 0,
           attempts: responseData.attempts,
           usage,
           usePremiumCredits,
           metadata: responseData.metadata,
+        });
+        logSeparator(logger, `LLM CALL END | role=${role}`, {
+          requestId,
+          role,
         });
         return responseData;
       } finally {
@@ -315,7 +335,18 @@ export async function invokeRoleLlm({
       retryCount: Math.max(0, (response.attempts ?? 1) - 1),
     };
   } catch (error) {
-    console.error("ai-gateway invocation failed", error);
+    logger.error(
+      {
+        requestId,
+        role,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "ai-gateway invocation failed",
+    );
+    logSeparator(logger, `LLM CALL FAILED | role=${role}`, {
+      requestId,
+      role,
+    });
 
     // Re-throw rate limit errors as-is for proper handling upstream
     if (error instanceof RateLimitError) {
@@ -354,8 +385,21 @@ export async function invokeRoleLlmStreaming({
   retryCount: number;
 }> {
   const config = await getConfig();
+  const logger = await getLogger();
   const messages = await toGatewayMessages(prompt);
   const usePremiumCredits = shouldUsePremiumCredits(role);
+
+  logSeparator(logger, `LLM STREAM START | role=${role}`, {
+    requestId,
+    role,
+    messageCount: messages.length,
+    usePremiumCredits,
+  });
+  logSectionLine(logger, "CALLED ai-gateway /v1/chat/stream", {
+    requestId,
+    role,
+    timeoutMs: config.aiGateway.timeoutMs,
+  });
 
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
@@ -418,6 +462,7 @@ export async function invokeRoleLlmStreaming({
         let fullContent = "";
         let modelName = "ai-gateway";
         let buffer = "";
+        let chunkCount = 0;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -437,13 +482,18 @@ export async function invokeRoleLlmStreaming({
               // Handle chunk messages (simple format)
               if (json.chunk) {
                 fullContent += json.chunk;
+                chunkCount += 1;
                 onChunk(json.chunk);
               }
 
               // Handle wrapped done message: { success: true, data: { done: true, ... } }
               if (json.success && json.data?.done) {
                 // Done message received, extract any metadata if needed
-                console.log("Streaming complete", { metadata: json.data.metadata });
+                logSectionLine(logger, "RESULT ai-gateway stream done", {
+                  requestId,
+                  role,
+                  metadata: json.data.metadata,
+                });
               }
 
               // Handle legacy done format
@@ -466,15 +516,32 @@ export async function invokeRoleLlmStreaming({
                 parseError instanceof Error &&
                 parseError.message !== "Unexpected end of JSON input"
               ) {
-                console.warn("Failed to parse SSE line:", trimmed, parseError);
+                logger.warn(
+                  {
+                    requestId,
+                    role,
+                    linePreview: trimmed.slice(0, 200),
+                    error: parseError.message,
+                  },
+                  "Failed to parse SSE line",
+                );
               }
             }
           }
         }
 
-        console.log("ai-gateway streaming response complete", {
+        logSectionLine(logger, "RESULT ai-gateway /v1/chat/stream", {
+          requestId,
+          role,
+          chunkCount,
           contentLength: fullContent.length,
         });
+        logSeparator(logger, `LLM STREAM END | role=${role}`, {
+          requestId,
+          role,
+        });
+
+
 
         return {
           response: {
@@ -488,7 +555,18 @@ export async function invokeRoleLlmStreaming({
       }
     });
   } catch (error) {
-    console.error("ai-gateway streaming invocation failed", error);
+    logger.error(
+      {
+        requestId,
+        role,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "ai-gateway streaming invocation failed",
+    );
+    logSeparator(logger, `LLM STREAM FAILED | role=${role}`, {
+      requestId,
+      role,
+    });
 
     // Re-throw rate limit errors as-is for proper handling upstream
     if (error instanceof RateLimitError) {

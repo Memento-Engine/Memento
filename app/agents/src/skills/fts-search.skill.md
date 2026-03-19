@@ -26,7 +26,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content,
+  SUBSTR(c.text_content, 1, 150) as preview,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -45,7 +45,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content,
+  SUBSTR(c.text_content, 1, 150) as preview,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -63,7 +63,7 @@ SELECT
   f.app_name,
   f.browser_url,
   f.image_path,
-  c.text_content,
+  SUBSTR(c.text_content, 1, 150) as preview,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -81,7 +81,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content,
+  SUBSTR(c.text_content, 1, 150) as preview,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
@@ -101,7 +101,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content,
+  SUBSTR(c.text_content, 1, 150) as preview,
   snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id

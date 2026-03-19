@@ -1,45 +1,34 @@
 import { AgentStateType } from "../agentState";
 import { executeSql, formatResultsAsJson } from "./sqlExecutor";
 import { getToolRegistry } from "../tools/registry";
-import { getLogger, logger } from "../utils/logger";
+import { getLogger, logger, logSectionLine, logSeparator } from "../utils/logger";
 import { getConfig } from "../config/config";
 import { invokeRoleLlm, AuthHeaders } from "../llm/routing";
 import { getSkills, buildSkillContext } from "./loader";
 import { SafeJsonParser } from "../utils/parser";
 import { runWithSpan } from "../telemetry/tracing";
-import { emitSources, emitStepEvent } from "../utils/eventQueue";
+import { emitStepEvent } from "../utils/eventQueue";
 import { z } from "zod";
 import { PlanStep } from "../planner/plan.schema";
 import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
-import { buildCompactAppAliasSection, expandAppQuery, getAppNameVariants } from "../utils/appNameAliases";
+import { buildCompactAppAliasSection } from "../utils/appNameAliases";
 import {
-  getProvenanceRegistry,
-  ProvenanceRow,
-  ProvenanceSummary,
-  compressStepResults,
-  createCompressedOutput,
-  CompressedStepOutput,
-} from "../provenance";
+  StepResult,
+  SearchPerformed,
+  SearchModeConfig,
+  SEARCH_MODE_PRESETS,
+  SearchMode,
+} from "../types/stepResult";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Action types the LLM can take in the ReAct loop.
- * Note: ReAct is a DATA COLLECTOR, not an answerer.
- * The final LLM synthesizes answers from collected chunks.
- */
-export type ReActActionType = "sql" | "semantic" | "hybrid" | "think" | "done";
+export type ReActActionType = "sql" | "semantic" | "hybrid" | "readMore" | "getStepResult" | "currentDateTime" | "think" | "done";
 
-/**
- * Schema for LLM action output.
- */
 export const ReActActionSchema = z.object({
-  thought: z
-    .string()
-    .describe("Reasoning about current state and what to do next"),
-  action: z.enum(["sql", "semantic", "hybrid", "think", "done"]),
+  thought: z.string().describe("Reasoning about current state and what to do next"),
+  action: z.enum(["sql", "semantic", "hybrid", "readMore", "getStepResult", "currentDateTime", "think", "done"]),
 
   // For sql action
   sql: z.string().optional(),
@@ -47,31 +36,33 @@ export const ReActActionSchema = z.object({
   // For semantic/hybrid action
   query: z.string().optional(),
   keywords: z.array(z.string()).optional(),
-  filters: z
-    .object({
-      app_names: z.array(z.string()).optional(),
-      time_range: z
-        .object({
-          start: z.string().optional(),
-          end: z.string().optional(),
-        })
-        .optional(),
-    })
-    .optional(),
+  filters: z.object({
+    app_names: z.array(z.string()).optional(),
+    time_range: z.object({
+      start: z.string().optional(),
+      end: z.string().optional(),
+    }).optional(),
+  }).optional(),
+  limit: z.number().optional(),
+  offset: z.number().optional(),
 
-  // For think action - intermediate reasoning
+  // For readMore action
+  chunkIds: z.array(z.number()).optional(),
+
+  // For getStepResult action
+  targetStepId: z.string().optional(),
+
+  // For think action
   analysis: z.string().optional(),
 
-  // For done action - brief summary of what was collected (NOT the final answer)
+  // For done action
   summary: z.string().optional(),
   confidence: z.enum(["high", "medium", "low"]).optional(),
+  gaps: z.array(z.string()).optional(),
 });
 
 export type ReActAction = z.infer<typeof ReActActionSchema>;
 
-/**
- * Single turn in the ReAct loop (action + observation).
- */
 export interface ReActTurn {
   turnNumber: number;
   action: ReActAction;
@@ -84,211 +75,200 @@ export interface ReActTurn {
   };
 }
 
-/**
- * Final result of ReAct execution.
- * Contains all turns with their summaries and raw data.
- * The final LLM uses this context to synthesize the answer.
- */
 export interface ReActResult {
   success: boolean;
-  /** Brief summary from ReAct (NOT the final answer) */
-  summary?: string;
-  confidence?: "high" | "medium" | "low";
-  /** All turns with action thoughts and observation data */
+  stepResult: StepResult;
   turns: ReActTurn[];
   totalTimeMs: number;
-  error?: string;
-  
-  /** Provenance tracking for context compression */
-  provenance_id?: string;
-  compressed_summary?: ProvenanceSummary;
-  all_chunk_ids?: number[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// QUERY ANALYSIS
+// PREVIEW TRUNCATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Fuzzy concept indicators that suggest semantic .
- */
-const FUZZY_CONCEPTS = [
-  "session",
-  "coding",
-  "programming",
-  "work",
-  "working",
-  "learning",
-  "learned",
-  "studying",
-  "reading",
-  "browsing",
-  "searching",
-  "debugging",
-  "deep work",
-  "focused",
-  "productive",
-  "meeting",
-  "call",
-  "conversation",
-  "discussion",
-  "tutorial",
-  "guide",
-  "documentation",
-  "research",
-  "exploring",
-  "watching",
-  "activity",
-  "activities",
-  "doing",
-  "did",
-  "stuff",
-  "things",
-];
+const DEFAULT_PREVIEW_LENGTH = 150;
+const MAX_OFFSET = 60;
 
 /**
- * Exact keyword indicators that suggest SQL/FTS search.
+ * Truncate text_content fields in search results to preview length.
+ * Preserves all other fields (agent gets full metadata).
  */
-const EXACT_INDICATORS = [
-  "error",
-  "exception",
-  "failed",
-  "404",
-  "500",
-  "crash",
-  "bug",
-  "line",
-  "file",
-  "function",
-  "variable",
-  "import",
-  "export",
-  "exact",
-  "specific",
-  "precisely",
-  "literally",
-];
+function truncateToPreview(rows: Record<string, unknown>[], previewLength = DEFAULT_PREVIEW_LENGTH): Record<string, unknown>[] {
+  return rows.map(row => {
+    const result = { ...row };
+    if (typeof result.text_content === "string" && result.text_content.length > previewLength) {
+      const truncated = result.text_content.slice(0, previewLength);
+      const lastSpace = truncated.lastIndexOf(" ");
+      result.text_content = (lastSpace > previewLength * 0.6 ? truncated.slice(0, lastSpace) : truncated) + "...";
+    }
+    return result;
+  });
+}
 
-/**
- * Aggregate/structural indicators that suggest SQL.
- */
-const AGGREGATE_INDICATORS = [
-  "count",
-  "how many",
-  "total",
-  "sum",
-  "average",
-  "most",
-  "least",
-  "grouped",
-  "per app",
-  "per day",
-  "breakdown",
-  "statistics",
-];
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION EXECUTORS
+// ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Time-specific indicators that suggest SQL.
- */
-const TIME_INDICATORS = [
-  "at \\d",
-  "\\d:\\d\\d",
-  "\\d pm",
-  "\\d am",
-  "yesterday",
-  "today",
-  "this morning",
-  "this afternoon",
-  "last week",
-  "last hour",
-  "\\d minutes ago",
-];
-
-/**
- * Analyze a query and suggest the best initial action type.
- */
-function analyzeQueryIntent(query: string): {
-  suggestedAction: "semantic" | "sql" | "hybrid";
-  reasoning: string;
-  hints: string[];
-} {
-  const q = query.toLowerCase();
-  const hints: string[] = [];
-
-  // Check for fuzzy concepts
-  const hasFuzzyConcept = FUZZY_CONCEPTS.some((concept) => q.includes(concept));
-  if (hasFuzzyConcept) {
-    hints.push("Query contains fuzzy concepts (coding, learning, etc.)");
+async function executeSqlAction(
+  action: ReActAction,
+  requestId: string,
+  previewLength: number,
+): Promise<ReActTurn["observation"]> {
+  if (!action.sql) {
+    return { success: false, error: "Missing SQL in action" };
   }
 
-  // Check for exact keywords
-  const hasExactIndicator = EXACT_INDICATORS.some((ind) => q.includes(ind));
-  if (hasExactIndicator) {
-    hints.push("Query contains exact keyword indicators (error, file, etc.)");
-  }
+  const result = await executeSql({ sql: action.sql });
 
-  // Check for aggregates
-  const hasAggregateIndicator = AGGREGATE_INDICATORS.some((ind) =>
-    q.includes(ind),
-  );
-  if (hasAggregateIndicator) {
-    hints.push("Query requests aggregation or counting");
-  }
-
-  // Check for time specifics
-  const hasTimeIndicator = TIME_INDICATORS.some((ind) =>
-    new RegExp(ind, "i").test(query),
-  );
-  if (hasTimeIndicator) {
-    hints.push("Query has specific time references");
-  }
-
-  // Decision logic
-  if (hasAggregateIndicator) {
+  if (!result.success) {
     return {
-      suggestedAction: "sql",
-      reasoning: "Aggregation queries need SQL with GROUP BY",
-      hints,
+      success: false,
+      error: result.error,
+      executionTimeMs: result.executionTimeMs,
     };
   }
 
-  if (hasFuzzyConcept && !hasExactIndicator) {
-    return {
-      suggestedAction: "semantic",
-      reasoning: "Fuzzy concepts are best matched with semantic search",
-      hints,
-    };
-  }
+  // Truncate text_content to preview
+  const previews = truncateToPreview(result.rows ?? [], previewLength);
 
-  if (hasExactIndicator && !hasFuzzyConcept) {
-    return {
-      suggestedAction: "sql",
-      reasoning: "Exact keywords should use FTS for precision",
-      hints,
-    };
-  }
-
-  if (hasFuzzyConcept && hasExactIndicator) {
-    return {
-      suggestedAction: "hybrid",
-      reasoning: "Mix of concepts and keywords benefits from hybrid search",
-      hints,
-    };
-  }
-
-  if (hasTimeIndicator && !hasFuzzyConcept) {
-    return {
-      suggestedAction: "sql",
-      reasoning: "Time-based queries work well with SQL date functions",
-      hints,
-    };
-  }
-
-  // Default to hybrid for safety
   return {
-    suggestedAction: "hybrid",
-    reasoning: "Hybrid search is the safe default for unclear queries",
-    hints,
+    success: true,
+    data: previews,
+    rowCount: result.rowCount,
+    executionTimeMs: result.executionTimeMs,
+  };
+}
+
+async function executeSemanticAction(
+  action: ReActAction,
+  requestId: string,
+  previewLength: number,
+): Promise<ReActTurn["observation"]> {
+  if (!action.query) {
+    return { success: false, error: "Missing query in semantic action" };
+  }
+
+  const toolRegistry = await getToolRegistry();
+  const semanticTool = toolRegistry.get("semantic_search");
+  if (!semanticTool) {
+    return { success: false, error: "Semantic search tool not available" };
+  }
+
+  const toolResult = await semanticTool.execute(
+    {
+      query: action.query,
+      limit: action.limit ?? 20,
+      offset: Math.min(action.offset ?? 0, MAX_OFFSET),
+      filters: action.filters,
+    },
+    { requestId, stepId: "react-semantic", attemptNumber: 1, timeout: 30000 },
+  );
+
+  const nestedData = toolResult.data as { data?: unknown[] };
+  const results = Array.isArray(nestedData?.data)
+    ? nestedData.data
+    : Array.isArray(toolResult.data)
+      ? toolResult.data
+      : [];
+
+  // Truncate to preview
+  const previews = truncateToPreview(results as Record<string, unknown>[], previewLength);
+
+  return {
+    success: toolResult.success,
+    data: previews,
+    rowCount: previews.length,
+    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
+  };
+}
+
+async function executeHybridAction(
+  action: ReActAction,
+  requestId: string,
+  previewLength: number,
+): Promise<ReActTurn["observation"]> {
+  if (!action.query) {
+    return { success: false, error: "Missing query in hybrid action" };
+  }
+
+  const toolRegistry = await getToolRegistry();
+  const hybridTool = toolRegistry.get("hybrid_search");
+  if (!hybridTool) {
+    return { success: false, error: "Hybrid search tool not available" };
+  }
+
+  const toolResult = await hybridTool.execute(
+    {
+      query: action.query,
+      keywords: action.keywords,
+      limit: action.limit ?? 20,
+      offset: Math.min(action.offset ?? 0, MAX_OFFSET),
+      filters: action.filters,
+    },
+    { requestId, stepId: "react-hybrid", attemptNumber: 1, timeout: 30000 },
+  );
+
+  const nestedData = toolResult.data as { data?: unknown[] };
+  const results = Array.isArray(nestedData?.data)
+    ? nestedData.data
+    : Array.isArray(toolResult.data)
+      ? toolResult.data
+      : [];
+
+  const previews = truncateToPreview(results as Record<string, unknown>[], previewLength);
+
+  return {
+    success: toolResult.success,
+    data: previews,
+    rowCount: previews.length,
+    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
+  };
+}
+
+async function executeReadMoreAction(
+  action: ReActAction,
+  requestId: string,
+  maxChunks: number,
+): Promise<ReActTurn["observation"]> {
+  if (!action.chunkIds || action.chunkIds.length === 0) {
+    return { success: false, error: "Missing chunkIds in readMore action" };
+  }
+
+  const ids = action.chunkIds.slice(0, maxChunks);
+  const startTime = Date.now();
+
+  const results = await getSearchResultsByChunkIds(ids, requestId);
+
+
+  console.log("ReadMore tool returns", results);
+
+  return {
+    success: true,
+    data: results,
+    rowCount: results.length,
+    executionTimeMs: Date.now() - startTime,
+  };
+}
+
+async function executeCurrentDateTimeAction(
+  requestId: string,
+): Promise<ReActTurn["observation"]> {
+  const toolRegistry = await getToolRegistry();
+  const currentDateTimeTool = toolRegistry.get("current_datetime");
+
+  if (!currentDateTimeTool) {
+    return { success: false, error: "current_datetime tool not available" };
+  }
+
+  const toolResult = await currentDateTimeTool.execute(
+    {},
+    { requestId, stepId: "react-current-datetime", attemptNumber: 1, timeout: 10000 },
+  );
+
+  return {
+    success: toolResult.success,
+    data: toolResult.data,
+    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
   };
 }
 
@@ -296,17 +276,12 @@ function analyzeQueryIntent(query: string): {
 // PROMPTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Build skill reference sections for the prompt.
- */
 function buildSkillReferences(
   skills: Map<string, { metadata: { name: string }; content: string }>,
 ): string {
   const sections: string[] = [];
-
-  // Include these skills in order - skill-selection comes first with critical guidance
   const skillOrder = [
-    "skill-selection", // Critical: Action selection guidance
+    "skill-selection",
     "fts-search",
     "semantic-search",
     "hybrid-search",
@@ -324,16 +299,19 @@ function buildSkillReferences(
   return sections.join("\n\n");
 }
 
-/**
- * Build the ReAct system prompt with schema and all skills.
- */
 async function buildReActSystemPrompt(): Promise<string> {
   const skills = await getSkills();
   const schemaSkill = skills.get("database-schema");
   const schemaContext = schemaSkill?.content ?? "";
   const skillReferences = buildSkillReferences(skills);
 
-  return `You are a search agent with access to a screen activity database. Your job is to find information about the user's screen activity by choosing the RIGHT search strategy.
+  return `You are a search agent for a personal screen activity database. You find information by searching, then selectively reading full content.
+
+## WORKFLOW
+1. **Search** (sql/semantic/hybrid) → returns PREVIEWS (truncated text, metadata)
+2. **Observe previews** → decide which chunks look relevant
+3. **readMore** → get FULL text for specific chunk_ids you want to examine
+4. **Repeat or Done** → once you have enough evidence
 
 ## Database Schema
 ${schemaContext}
@@ -341,175 +319,111 @@ ${schemaContext}
 ## Query Patterns & Skills
 ${skillReferences}
 
-## CRITICAL: Choosing the Right Action
-
-### ACTION SELECTION DECISION TREE
-
-1. **Is the query about FUZZY CONCEPTS?** (coding session, learning, debugging, deep work, browsing)
-   → Use **semantic** or **hybrid** FIRST, not SQL!
-
-2. **Is the query about EXACT KEYWORDS?** (error messages, specific file names, exact phrases)
-   → Use **sql** with FTS MATCH
-
-3. **Is the query STRUCTURAL/AGGREGATE?** (count apps, most used, grouped by)
-   → Use **sql** with GROUP BY
-
-4. **Is the query TIME-BASED with specific times?** (at 3pm, yesterday morning)
-   → Use **sql** with date filters
-
-5. **UNSURE?**
-   → Use **hybrid** as the safe default
-
-### COMMON MISTAKES TO AVOID
-
-❌ **WRONG**: Searching for "rust" in app_name or window_title
-   - App names won't contain programming languages!
-   - VS Code, IntelliJ work on ALL languages
-
-✓ **RIGHT**: Use semantic search to find content ABOUT Rust, or search for file extensions like ".rs"
-
-❌ **WRONG**: Searching browser_url LIKE '%search%' for search activities
-   - Most search URLs don't contain the word "search"
-   - Google uses /search?q=, but user might use DuckDuckGo, Bing, etc.
-
-✓ **RIGHT**: Use semantic/hybrid to find browsing activities with search-like behavior
-
-❌ **WRONG**: Using SQL for "what did I do during coding session"
-   - "coding session" is a fuzzy concept
-
-✓ **RIGHT**: Use semantic search for conceptual queries, then SQL to refine
-
 ${buildCompactAppAliasSection()}
-
-## PROGRAMMING LANGUAGE DETECTION
-
-Languages are NOT in app_name! Look for them in OCR text_content:
-- **Rust**: ".rs" files, "cargo", "rustc", "fn main", "impl", "pub fn"
-- **Python**: ".py" files, "import", "def ", "class ", "pip"
-- **JavaScript/TypeScript**: ".js", ".ts", "npm", "const ", "function", "=>"
-- **Go**: ".go" files, "go mod", "func ", "package main"
 
 ## Available Actions
 
 ### sql
-Execute a SQLite query. ONLY SELECT/WITH queries allowed. Always include LIMIT (max 100).
-Use for: exact keywords, time queries, aggregations, counts.
+Execute a SQLite query. Returns PREVIEWS (text_content is truncated to ~150 chars).
+Always include \`c.id as chunk_id\` and LIMIT clause.
 \`\`\`json
-{"action": "sql", "thought": "Need exact FTS match for error message", "sql": "SELECT c.id as chunk_id, f.captured_at, f.app_name, f.window_title, c.text_content FROM chunks_fts JOIN chunks c ON chunks_fts.rowid = c.id JOIN frames f ON c.frame_id = f.id WHERE chunks_fts MATCH 'error 404' LIMIT 20"}
+{"action": "sql", "thought": "...", "sql": "SELECT c.id as chunk_id, f.captured_at, f.app_name, f.window_title, c.text_content FROM chunks_fts JOIN chunks c ON chunks_fts.rowid = c.id JOIN frames f ON c.frame_id = f.id WHERE chunks_fts MATCH 'error' LIMIT 20"}
 \`\`\`
 
-### semantic  
-Vector similarity search using embeddings. Use for: fuzzy concepts, "things related to X", learning/tutorials, conceptual queries.
+### semantic
+Vector similarity search. Returns PREVIEWS.
 \`\`\`json
-{"action": "semantic", "thought": "Looking for coding activity - this is a conceptual query", "query": "programming development writing code debugging", "filters": {"app_names": ["VS Code", "Cursor", "IntelliJ IDEA", "WebStorm", "PyCharm"]}}
+{"action": "semantic", "thought": "...", "query": "coding debugging rust", "filters": {"app_names": ["VS Code", "Cursor"]}, "limit": 20}
 \`\`\`
 
 ### hybrid
-Combined FTS + vector search. Use for: mixed queries, keywords + concepts, DEFAULT when unsure.
+Combined FTS + vector search. Returns PREVIEWS.
 \`\`\`json
-{"action": "hybrid", "thought": "User wants 'search activities' - conceptual but might have keywords", "query": "web search browsing looking up information query", "keywords": ["google", "search", "stackoverflow"]}
+{"action": "hybrid", "thought": "...", "query": "web search browsing", "keywords": ["google", "stackoverflow"], "limit": 20}
+\`\`\`
+
+### readMore
+Get FULL text content for specific chunks you've seen in previews. Use this when you need to examine content in detail.
+Max ${DEFAULT_PREVIEW_LENGTH} chunks per call.
+\`\`\`json
+{"action": "readMore", "thought": "Chunks 42, 45 look relevant from the VS Code results - need full text", "chunkIds": [42, 45, 47]}
+\`\`\`
+
+### getStepResult
+Retrieve the full result of a previously completed step. Use when you need detailed findings from another step beyond what dependency context provides.
+\`\`\`json
+{"action": "getStepResult", "thought": "Need full details from step1 to cross-reference", "targetStepId": "step1"}
+\`\`\`
+
+### currentDateTime
+Get current local date/time from the user machine (with timezone). Use this before interpreting "today", "yesterday", or local-time references.
+\`\`\`json
+{"action": "currentDateTime", "thought": "Need exact local date/time before time filtering"}
 \`\`\`
 
 ### think
-Pause to reason about results before next action.
+Pause to reason about what you've found so far.
 \`\`\`json
-{"action": "think", "thought": "Got empty results from SQL", "analysis": "SQL didn't work because 'rust coding' is conceptual. Need to try semantic search instead targeting code editors."}
+{"action": "think", "thought": "...", "analysis": "The SQL results show VS Code activity but I haven't found terminal usage yet"}
 \`\`\`
 
 ### done
-Signal that you have collected enough data. DO NOT synthesize an answer - just summarize what you found.
-The final LLM will use the collected chunks to generate an answer with citations.
+Conclude the step. Provide a summary of what you found and any gaps.
 \`\`\`json
-{"action": "done", "thought": "Found sufficient data about user activities", "summary": "Collected 25 chunks: 15 from VS Code showing coding activity, 10 from Chrome showing web browsing", "confidence": "high"}
+{"action": "done", "thought": "Found sufficient evidence", "summary": "Found 3 VS Code sessions between 2-6pm working on Rust daemon code", "confidence": "high", "gaps": []}
 \`\`\`
 
-## RETRY STRATEGY
+If data is incomplete:
+\`\`\`json
+{"action": "done", "thought": "Could only find partial data", "summary": "Found VS Code activity but no terminal data", "confidence": "medium", "gaps": ["No terminal/CLI activity found", "Morning hours not searched"]}
+\`\`\`
 
-If an action returns **empty results**:
-1. SQL returned empty → Try **semantic** or **hybrid** with the same concept
-2. Semantic returned empty → Try **sql** with broader terms or different app filters
-3. Still empty → **Broaden scope**: remove time filters, try different app categories
-4. After 3+ empty results → Inform user, suggest alternatives
+## STRATEGY
+- First, call currentDateTime to ground all temporal reasoning in the user's local machine time
+- Start with a search to see the landscape (previews)
+- Use readMore only on chunks that look relevant
+- Don't readMore everything — be selective
+- If search returns empty, switch strategy (SQL→semantic, or broaden filters)
+- After 2-3 empty results, conclude with what you have
+- For URLs/domains (github.com, docs.site/path), prefer browser_url LIKE '%...%' instead of bare FTS MATCH tokens
+- If using MATCH with dotted/domain terms, quote each term: '"github.com" OR "gitlab.com"'
 
 ## Time Reference
 Current date: ${new Date().toISOString().split("T")[0]}
-Use: date('now') for today, date('now', '-1 day') for yesterday, datetime('now', '-7 days') for last week
+Use: date('now') for today, date('now', '-1 day') for yesterday
 
 ## Response Format
-1. Output ONLY valid JSON matching an action schema
-2. Include reasoning in "thought" - explain WHY you chose this action
-3. ONE action per turn - you'll see real results and can adapt
-4. If results are empty, SWITCH strategy in your next turn
-
-## EXAMPLES
-
-**Query: "what tabs did I switch during rust coding session"**
-Turn 1: {"action": "semantic", "thought": "Rust coding is conceptual - need to find code editor activity with Rust-related content", "query": "rust programming cargo rustc development coding", "filters": {"app_names": ["VS Code", "Cursor", "RustRover", "IntelliJ IDEA"]}}
-
-**Query: "show my all search activities"**  
-Turn 1: {"action": "hybrid", "thought": "Search activities = browsing behavior, web searches. This is conceptual, not literal 'search' keyword", "query": "web search browsing google searching information lookup", "keywords": ["google", "stackoverflow", "github"]}
-
-**Query: "find error messages from today"**
-Turn 1: {"action": "sql", "thought": "Error messages = exact keyword search", "sql": "SELECT c.id as chunk_id, f.captured_at, f.app_name, f.window_title, c.text_content, snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched FROM chunks_fts JOIN chunks c ON chunks_fts.rowid = c.id JOIN frames f ON c.frame_id = f.id WHERE chunks_fts MATCH 'error OR exception OR failed' AND date(f.captured_at) = date('now') LIMIT 30"}`;
+Output ONLY valid JSON matching an action schema. ONE action per turn.`;
 }
 
 /**
- * Build the prompt for each turn, including history.
+ * Build the per-turn prompt with history and context.
  */
 function buildTurnPrompt(
-  userQuery: string,
+  stepGoal: string,
   history: ReActTurn[],
-  depContext: Record<string, any>,
+  depContext: Record<string, unknown>,
 ): string {
-  let prompt = `## User Query\n${userQuery}\n\n`;
+  let prompt = `## Step Goal\n${stepGoal}\n\n`;
 
-  // Dependency context
-  if (depContext && Object.keys(depContext).length > 0) {
-    prompt += `## Available Context From Previous Steps\n`;
-    prompt += `You may reuse these results instead of searching again.\n\n`;
-
+  // Dependency context from previous steps
+  if (Object.keys(depContext).length > 0) {
+    prompt += `## Context From Previous Steps\n`;
     for (const [stepId, result] of Object.entries(depContext)) {
       prompt += `### ${stepId}\n`;
-
-      if (Array.isArray(result)) {
-        if (result.length === 0) {
-          prompt += `Result: Empty\n`;
-        } else if (result.length <= 10) {
-          prompt += `\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`;
-        } else {
-          prompt += `${result.length} rows available. First 5:\n`;
-          prompt += `\`\`\`json\n${JSON.stringify(result.slice(0, 5), null, 2)}\n\`\`\`\n`;
-          prompt += `... (${result.length - 5} more rows)\n`;
-        }
+      if (typeof result === "string") {
+        // Brief from transitive ancestor
+        prompt += `${result}\n`;
       } else {
+        // Full step result from direct dependency
         prompt += `\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`;
       }
-
       prompt += `\n`;
     }
-
     prompt += `---\n\n`;
   }
 
-  // On first turn, add query analysis to help guide action selection
-  if (history.length === 0) {
-    const analysis = analyzeQueryIntent(userQuery);
-    prompt += `## Query Analysis (First Turn Guidance)\n`;
-    prompt += `**Suggested Action:** ${analysis.suggestedAction}\n`;
-    prompt += `**Reasoning:** ${analysis.reasoning}\n`;
-    if (analysis.hints.length > 0) {
-      prompt += `**Detected Patterns:**\n`;
-      for (const hint of analysis.hints) {
-        prompt += `- ${hint}\n`;
-      }
-    }
-    prompt += `\n⚠️ This is a suggestion. Use your judgment, but strongly consider this guidance.\n\n`;
-  }
-
-  // Track empty results for retry guidance
-  let emptyResultsCount = 0;
-  let lastEmptyAction: ReActActionType | null = null;
-
+  // Turn history
   if (history.length > 0) {
     prompt += `## Previous Actions & Observations\n`;
 
@@ -518,37 +432,25 @@ function buildTurnPrompt(
       prompt += `**Thought:** ${turn.action.thought}\n`;
       prompt += `**Action:** ${turn.action.action}\n`;
 
-      if (turn.action.sql) {
-        prompt += `**SQL:** \`${turn.action.sql}\`\n`;
-      }
-      if (turn.action.query) {
-        prompt += `**Query:** "${turn.action.query}"\n`;
-      }
-      if (turn.action.keywords) {
-        prompt += `**Keywords:** ${JSON.stringify(turn.action.keywords)}\n`;
-      }
-      if (turn.action.filters) {
-        prompt += `**Filters:** ${JSON.stringify(turn.action.filters)}\n`;
-      }
-      if (turn.action.analysis) {
-        prompt += `**Analysis:** ${turn.action.analysis}\n`;
-      }
+      if (turn.action.sql) prompt += `**SQL:** \`${turn.action.sql}\`\n`;
+      if (turn.action.query) prompt += `**Query:** "${turn.action.query}"\n`;
+      if (turn.action.keywords) prompt += `**Keywords:** ${JSON.stringify(turn.action.keywords)}\n`;
+      if (turn.action.chunkIds) prompt += `**ChunkIds:** ${JSON.stringify(turn.action.chunkIds)}\n`;
+      if (turn.action.targetStepId) prompt += `**TargetStep:** ${turn.action.targetStepId}\n`;
+      if (turn.action.analysis) prompt += `**Analysis:** ${turn.action.analysis}\n`;
 
       prompt += `\n**Observation:**\n`;
       if (turn.observation.success) {
         const data = turn.observation.data;
         if (Array.isArray(data)) {
           if (data.length === 0) {
-            prompt += `⚠️ Empty result set (0 rows) - Consider changing strategy!\n`;
-            emptyResultsCount++;
-            lastEmptyAction = turn.action.action as ReActActionType;
+            prompt += `⚠️ Empty result set (0 rows)\n`;
           } else if (data.length <= 10) {
             prompt += `\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
           } else {
-            // Truncate large results
-            prompt += `${turn.observation.rowCount} rows returned. First 5:\n`;
-            prompt += `\`\`\`json\n${JSON.stringify(data.slice(0, 5), null, 2)}\n\`\`\`\n`;
-            prompt += `...(${data.length - 5} more rows)\n`;
+            prompt += `${turn.observation.rowCount} rows. First 8:\n`;
+            prompt += `\`\`\`json\n${JSON.stringify(data.slice(0, 8), null, 2)}\n\`\`\`\n`;
+            prompt += `...(${data.length - 8} more)\n`;
           }
         } else if (data) {
           prompt += `\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
@@ -559,387 +461,162 @@ function buildTurnPrompt(
     }
 
     prompt += `\n---\n`;
-
-    // Add retry guidance if we have empty results
-    if (emptyResultsCount > 0 && lastEmptyAction) {
-      prompt += `\n## ⚠️ RETRY GUIDANCE\n`;
-      prompt += `Your ${lastEmptyAction} action returned empty. You MUST try a DIFFERENT strategy:\n`;
-
-      switch (lastEmptyAction) {
-        case "sql":
-          prompt += `- SQL didn't find matches → Try **semantic** or **hybrid** search instead\n`;
-          prompt += `- The concept might be fuzzy (e.g., "coding session") → Use semantic search\n`;
-          prompt += `- Consider broadening: remove time filters, expand app list\n`;
-          break;
-        case "semantic":
-          prompt += `- Semantic search found nothing → Try **hybrid** with keywords OR broader **sql**\n`;
-          prompt += `- Try different app categories (browsers instead of editors, or vice versa)\n`;
-          prompt += `- Rephrase the query to capture related concepts\n`;
-          break;
-        case "hybrid":
-          prompt += `- Hybrid returned empty → Try pure **semantic** with broader concept\n`;
-          prompt += `- Or try **sql** with different time ranges/app filters\n`;
-          prompt += `- Consider: maybe no data exists for this query\n`;
-          break;
-      }
-
-      if (emptyResultsCount >= 3) {
-        prompt += `\n⚠️ Multiple empty results. If no strategy works, use **done** action to signal completion with what you found (even if empty). The final LLM will inform the user.\n`;
-      }
-    }
   }
 
-  prompt += `\nBased on the above, what is your next action? Output ONLY the JSON action.`;
-
+  prompt += `\nWhat is your next action? Output ONLY the JSON action.`;
   return prompt;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ACTION EXECUTORS
-// ═══════════════════════════════════════════════════════════════════════════
-
-async function executeSqlAction(
-  action: ReActAction,
-  requestId: string,
-): Promise<ReActTurn["observation"]> {
-  if (!action.sql) {
-    return { success: false, error: "Missing SQL in action" };
-  }
-
-  // Extract query text from SQL for display (simplified)
-  const queryDisplay =
-    action.sql.length > 80 ? action.sql.slice(0, 80) + "..." : action.sql;
-
-  const result = await executeSql({ sql: action.sql });
-
-  return {
-    success: result.success,
-    data: result.rows,
-    rowCount: result.rowCount,
-    error: result.error,
-    executionTimeMs: result.executionTimeMs,
-  };
-}
-
-async function executeSemanticAction(
-  action: ReActAction,
-  requestId: string,
-): Promise<ReActTurn["observation"]> {
-  if (!action.query) {
-    return { success: false, error: "Missing query in semantic action" };
-  }
-
-  const toolRegistry = await getToolRegistry();
-  const semanticTool = toolRegistry.get("semantic_search");
-
-  if (!semanticTool) {
-    return { success: false, error: "Semantic search tool not available" };
-  }
-
-  const toolResult = await semanticTool.execute(
-    {
-      query: action.query,
-      limit: 20,
-      filters: action.filters,
-    },
-    {
-      requestId,
-      stepId: `react-semantic`,
-      attemptNumber: 1,
-      timeout: 30000,
-    },
-  );
-
-  // Extract the actual results array - it's nested in toolResult.data.data
-  const nestedData = toolResult.data as { data?: unknown[] };
-  const results = Array.isArray(nestedData?.data)
-    ? nestedData.data
-    : Array.isArray(toolResult.data)
-      ? toolResult.data
-      : [];
-
-  console.log({ results }, "Result from tool semantic");
-
-  return {
-    success: toolResult.success,
-    data: results,
-    rowCount: results.length,
-    error:
-      typeof toolResult.error === "string"
-        ? toolResult.error
-        : toolResult.error?.message,
-    executionTimeMs: toolResult.metadata?.executionTime,
-  };
-}
-
-async function executeHybridAction(
-  action: ReActAction,
-  requestId: string,
-): Promise<ReActTurn["observation"]> {
-  if (!action.query) {
-    return { success: false, error: "Missing query in hybrid action" };
-  }
-
-  const toolRegistry = await getToolRegistry();
-  const hybridTool = toolRegistry.get("hybrid_search");
-
-  if (!hybridTool) {
-    return { success: false, error: "Hybrid search tool not available" };
-  }
-
-  const toolResult = await hybridTool.execute(
-    {
-      query: action.query,
-      keywords: action.keywords,
-      limit: 20,
-      filters: action.filters,
-    },
-    {
-      requestId,
-      stepId: `react-hybrid`,
-      attemptNumber: 1,
-      timeout: 30000,
-    },
-  );
-
-  // Extract the actual results array - it's nested in toolResult.data.data
-  const nestedData = toolResult.data as { data?: unknown[] };
-  const results = Array.isArray(nestedData?.data)
-    ? nestedData.data
-    : Array.isArray(toolResult.data)
-      ? toolResult.data
-      : [];
-
-  return {
-    success: toolResult.success,
-    data: results,
-    rowCount: results.length,
-    error:
-      typeof toolResult.error === "string"
-        ? toolResult.error
-        : toolResult.error?.message,
-    executionTimeMs: toolResult.metadata?.executionTime,
-  };
-}
-
-async function executeThinkAction(
-  action: ReActAction,
-): Promise<ReActTurn["observation"]> {
-  // Think action just records the analysis - no external call
-  return {
-    success: true,
-    data: { analysis: action.analysis },
-  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN REACT LOOP
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MAX_TURNS = 4;
-
-/**
- * Execute a query using the ReAct loop.
- *
- * The LLM iteratively:
- * 1. Thinks about what to do
- * 2. Takes an action (sql, semantic, hybrid, think)
- * 3. Observes the result
- * 4. Repeats until it has an answer
- */
 export async function executeReActLoop(
   currentPlanStep: PlanStep,
   requestId: string,
-  depContext: Record<string, any>,
+  depContext: Record<string, unknown>,
+  searchMode: SearchMode = "search",
   authHeaders?: AuthHeaders,
+  allStepResults?: Record<string, StepResult>,
 ): Promise<ReActResult> {
   const logger = await getLogger();
+  const config = await getConfig();
+  const modeConfig = SEARCH_MODE_PRESETS[searchMode];
   const startTime = Date.now();
   const history: ReActTurn[] = [];
+  const previewLength = config.agent.previewLength;
 
-  logger.info({ query: currentPlanStep.stepGoal }, "Starting ReAct loop");
+  // Track for StepResult
+  const searchesPerformed: SearchPerformed[] = [];
+  const allChunkIds = new Set<number>();
+  const chunksRead = new Set<number>();
+  let searchCallCount = 0;
+
 
   const systemPrompt = await buildReActSystemPrompt();
 
-  if (currentPlanStep.kind === "search" && currentPlanStep.uiSearchQueries) {
-    emitStepEvent(requestId, {
-      stepType: "searching",
-      stepId: currentPlanStep.id,
-      title: "Searching for...",
-      queries: currentPlanStep.uiSearchQueries,
-      status: "running",
-    });
-  } else if (currentPlanStep.kind === "reason" && currentPlanStep.uiReason) {
-    emitStepEvent(requestId, {
-      stepType: "reasoning",
-      stepId: currentPlanStep.id,
-      title: currentPlanStep.uiReason,
-      status: "running",
-    });
-  } else {
-    emitStepEvent(requestId, {
-      stepType: "searching",
-      stepId: currentPlanStep.id,
-      title: 'Searching for information...',
-      status: "running",
-    });
-  }
+  const currentDateTimeObservation = await executeCurrentDateTimeAction(requestId);
+  history.push({
+    turnNumber: 0,
+    action: {
+      thought: "Captured current local machine date/time for temporal grounding",
+      action: "currentDateTime",
+    },
+    observation: currentDateTimeObservation,
+  });
 
-  for (let turn = 1; turn <= MAX_TURNS; turn++) {
-    const turnPrompt = buildTurnPrompt(
-      currentPlanStep.stepGoal,
-      history,
-      depContext,
-    );
 
-    // Call LLM for next action
+
+  for (let turn = 1; turn <= modeConfig.maxReactTurns; turn++) {
+
+    const turnPrompt = buildTurnPrompt(currentPlanStep.stepGoal, history, depContext);
+
+
+
     const { response } = await invokeRoleLlm({
       role: "executor",
       prompt: [
         { role: "system", content: systemPrompt },
         { role: "user", content: turnPrompt },
       ],
-      requestId: requestId,
+      requestId,
       spanName: "react.turn",
       spanAttributes: { turn_number: turn },
       authHeaders,
     });
 
     const content = typeof response === "string" ? response : response.content;
+    logSectionLine(logger, "RESULT executor LLM", {
+      requestId,
+      stepId: currentPlanStep.id,
+      turn,
+      contentLength: content?.length ?? 0,
+    });
 
-    // Parse the action
+    // Parse action
     let action: ReActAction;
     try {
       const parsed = await SafeJsonParser.parseContent(content);
-      if (!parsed) {
-        throw new Error("Failed to parse LLM response as JSON");
-      }
       action = ReActActionSchema.parse(parsed);
     } catch (error) {
       logger.error({ content, error }, "Failed to parse ReAct action");
-
-      // Try to continue with a think action
       action = {
         thought: "Parse error, attempting recovery",
         action: "think",
-        analysis: `Could not parse: ${content.slice(0, 200)}`,
+        analysis: `Could not parse: ${String(content).slice(0, 200)}`,
       };
     }
 
-    logger.info(
-      { turn, action: action.action, analysis : action.analysis, thought: action.thought },
-      "ReAct action",
-    );
+    logger.info({ turn, action: action.action, thought: action.thought, gaps: action.gaps }, "ReAct action");
+    logSectionLine(logger, "THINKING / ANALYSIS", {
+      requestId,
+      stepId: currentPlanStep.id,
+      turn,
+      thought: action.thought,
+      analysis: action.analysis,
+      action: action.action,
+    });
 
-    // Check for done action (terminal) - return turns with all collected data
+    // Handle done action
     if (action.action === "done") {
-      history.push({
-        turnNumber: turn,
-        action,
-        observation: { success: true, data: { summary: action.summary } },
-      });
-
-      // Extract chunk_ids and raw data from all turns' observation data
-      const chunkIds: number[] = [];
-      const allRawData: ProvenanceRow[] = [];
-      
+      // Collect all evidence chunk_ids from successful turns
+      let stepObservedData;
       for (const t of history) {
         if (t.observation.success && Array.isArray(t.observation.data)) {
-          for (const row of t.observation.data) {
+          for (const row of t.observation.data as Record<string, unknown>[]) {
             const chunkId = row?.chunk_id ?? row?.id;
-            if (typeof chunkId === "number") {
-              if (!chunkIds.includes(chunkId)) {
-                chunkIds.push(chunkId);
-              }
-              // Store raw data for provenance
-              allRawData.push({
-                chunk_id: chunkId,
-                ...row,
-              });
-            }
+            if (typeof chunkId === "number") allChunkIds.add(chunkId);
           }
+          stepObservedData = t.observation.data;
         }
       }
 
-      console.log("ChunkIDs", chunkIds);
-      console.log("History Turn", history);
+      // Emit search results for UI
+      const evidenceIds = Array.from(allChunkIds);
+      if (evidenceIds.length > 0) {
+        const searchResults = await getSearchResultsByChunkIds(evidenceIds, requestId);
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          stepId: currentPlanStep.id,
+          title: "Found relevant information",
+          resultCount: searchResults.length,
+          results: searchResults,
+          status: "completed",
+        });
+      } else {
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          stepId: currentPlanStep.id,
+          title: action.summary ?? "Step complete",
+          status: "completed",
+        });
+      }
 
-      // Store in provenance registry
-      const registry = getProvenanceRegistry(requestId);
-      const provenanceId = registry.store({
+      const stepResult: StepResult = {
         stepId: currentPlanStep.id,
-        rawData: allRawData,
-        derivation: "source",
-        searchType: history.find(h => h.action.action !== "think" && h.action.action !== "done")?.action.action as "sql" | "semantic" | "hybrid" | undefined,
-        query: currentPlanStep.stepGoal,
-      });
+        goal: currentPlanStep.stepGoal,
+        status: evidenceIds.length > 0 ? (action.confidence === "high" ? "complete" : "partial") : "empty",
+        summary: action.summary ?? "No summary provided",
+        evidenceChunkIds: evidenceIds,
+        evidence: stepObservedData ?? null,
+        gaps: action.gaps ?? [],
+        searchesPerformed,
+        chunksRead: Array.from(chunksRead),
+        confidence: action.confidence ?? "medium",
+      };
 
-      // Create compressed summary
-      const compressedSummary = compressStepResults({
-        provenanceId,
-        stepId: currentPlanStep.id,
-        rawData: allRawData,
-        searchType: registry.get(provenanceId)?.search_type,
-        query: currentPlanStep.stepGoal,
-      });
-
-      // Fetch full results for sources panel (UI still needs this)
-      const searchResults = await getSearchResultsByChunkIds(
-        chunkIds,
-        requestId,
-      );
-
-      emitStepEvent(requestId, {
-        stepType: "searching",
-        stepId: currentPlanStep.id,
-        title: "Found relevant information",
-        resultCount: searchResults.length,
-        results: searchResults,
-        status: "running",
-      });
-
-      // // Emit sources for the UI sources panel
-      // emitSources(requestId, {
-      //   includeImages: false,
-      //   sources: searchResults.map((s) => ({
-      //     chunkId: s.chunk_id,
-      //     appName: s.app_name,
-      //     windowTitle: s.window_name,
-      //     capturedAt: s.captured_at,
-      //     browserUrl: s.browser_url,
-      //     textContent: s.text_content,
-      //     textJson: s.text_json,
-      //     imagePath : s.image_path
-      //   })),
-      // });
-
-      logger.info(
-        {
-          turns: turn,
-          confidence: action.confidence,
-          chunkCount: chunkIds.length,
-          provenanceId,
-        },
-        "ReAct loop completed - data stored in provenance registry",
-      );
 
       return {
         success: true,
-        summary: action.summary,
-        confidence: action.confidence,
+        stepResult,
         turns: history,
         totalTimeMs: Date.now() - startTime,
-        // New provenance fields
-        provenance_id: provenanceId,
-        compressed_summary: compressedSummary,
-        all_chunk_ids: chunkIds,
       };
     }
 
-    // Execute the action
+    // Execute action
     let observation: ReActTurn["observation"];
 
-    // Let the user know what the agent is thinking
     if (turn > 1) {
       emitStepEvent(requestId, {
         stepType: "searching",
@@ -952,146 +629,222 @@ export async function executeReActLoop(
 
     switch (action.action) {
       case "sql":
-        observation = await executeSqlAction(action, requestId);
-        console.log({ observation }, "Observation from SQL action");
+        logSectionLine(logger, "CALLED ACTION sql", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          sql: action.sql,
+        });
+        if (searchCallCount >= modeConfig.maxSearchCalls) {
+          observation = { success: false, error: "Search call limit reached. Use readMore or done." };
+        } else {
+          observation = await executeSqlAction(action, requestId, previewLength);
+          searchCallCount++;
+          searchesPerformed.push({
+            type: "sql",
+            query: action.sql?.slice(0, 100) ?? "",
+            resultCount: observation.rowCount ?? 0,
+          });
+        }
+        logSectionLine(logger, "RESULT ACTION sql", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          success: observation.success,
+          rowCount: observation.rowCount,
+          executionTimeMs: observation.executionTimeMs,
+          error: observation.error,
+        });
         break;
 
       case "semantic":
-        observation = await executeSemanticAction(action, requestId);
-        console.log({ observation }, "Observation from Semantic action");
+        logSectionLine(logger, "CALLED ACTION semantic", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          query: action.query,
+          limit: action.limit ?? 20,
+          offset: Math.min(action.offset ?? 0, MAX_OFFSET),
+        });
+        if (searchCallCount >= modeConfig.maxSearchCalls) {
+          observation = { success: false, error: "Search call limit reached. Use readMore or done." };
+        } else {
+          observation = await executeSemanticAction(action, requestId, previewLength);
+          searchCallCount++;
+          searchesPerformed.push({
+            type: "semantic",
+            query: action.query ?? "",
+            resultCount: observation.rowCount ?? 0,
+          });
+        }
+        logSectionLine(logger, "RESULT ACTION semantic", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          success: observation.success,
+          rowCount: observation.rowCount,
+          error: observation.error,
+        });
         break;
 
       case "hybrid":
-        observation = await executeHybridAction(action, requestId);
-        console.log({ observation }, "Observation from Hybrid action");
+        logSectionLine(logger, "CALLED ACTION hybrid", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          query: action.query,
+          keywords: action.keywords,
+          limit: action.limit ?? 20,
+          offset: Math.min(action.offset ?? 0, MAX_OFFSET),
+        });
+        if (searchCallCount >= modeConfig.maxSearchCalls) {
+          observation = { success: false, error: "Search call limit reached. Use readMore or done." };
+        } else {
+          observation = await executeHybridAction(action, requestId, previewLength);
+          searchCallCount++;
+          searchesPerformed.push({
+            type: "hybrid",
+            query: action.query ?? "",
+            resultCount: observation.rowCount ?? 0,
+          });
+        }
+        logSectionLine(logger, "RESULT ACTION hybrid", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          success: observation.success,
+          rowCount: observation.rowCount,
+          error: observation.error,
+        });
+        break;
+
+      case "readMore":
+        logSectionLine(logger, "CALLED ACTION readMore", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          chunkIds: action.chunkIds,
+        });
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          stepId: currentPlanStep.id,
+          title: "Reading full content...",
+          message: `Reading chunks: ${(action.chunkIds ?? []).slice(0, modeConfig.maxReadMoreChunks).join(", ")}`,
+          status: "running",
+        });
+        observation = await executeReadMoreAction(action, requestId, modeConfig.maxReadMoreChunks);
+        // Track which chunks were fully read
+        if (observation.success && Array.isArray(observation.data)) {
+          for (const row of observation.data as Record<string, unknown>[]) {
+            const id = (row as any)?.chunk_id;
+            if (typeof id === "number") chunksRead.add(id);
+          }
+        }
+        logSectionLine(logger, "RESULT ACTION readMore", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          success: observation.success,
+          rowCount: observation.rowCount,
+          error: observation.error,
+        });
+        break;
+
+      case "getStepResult":
+        logSectionLine(logger, "CALLED ACTION getStepResult", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          targetStepId: action.targetStepId,
+        });
+        if (!action.targetStepId) {
+          observation = { success: false, error: "Missing targetStepId in getStepResult action" };
+        } else if (!allStepResults || !(action.targetStepId in allStepResults)) {
+          observation = { success: false, error: `Step "${action.targetStepId}" not found or not yet completed` };
+        } else {
+          observation = { success: true, data: allStepResults[action.targetStepId] };
+        }
+        logSectionLine(logger, "RESULT ACTION getStepResult", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          success: observation.success,
+          error: observation.error,
+        });
+        break;
+
+      case "currentDateTime":
+        logSectionLine(logger, "CALLED ACTION currentDateTime", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+        });
+        observation = await executeCurrentDateTimeAction(requestId);
+        logSectionLine(logger, "RESULT ACTION currentDateTime", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          success: observation.success,
+          data: observation.data,
+          error: observation.error,
+        });
         break;
 
       case "think":
-        observation = await executeThinkAction(action);
-        console.log({ observation }, "Observation from Think action");
+        observation = { success: true, data: { analysis: action.analysis } };
+        logSectionLine(logger, "RESULT ACTION think", {
+          requestId,
+          stepId: currentPlanStep.id,
+          turn,
+          analysis: action.analysis,
+        });
         break;
 
       default:
-        observation = {
-          success: false,
-          error: `Unknown action: ${action.action}`,
-        };
+        observation = { success: false, error: `Unknown action: ${action.action}` };
     }
 
-    // Record the turn
-    history.push({
-      turnNumber: turn,
-      action,
-      observation,
-    });
-
-    // If action failed, log but continue - LLM can adapt
-    if (!observation.success) {
-      logger.warn(
-        { turn, error: observation.error },
-        "Action failed, continuing loop",
-      );
-    }
-  }
-
-  // Max turns reached without done action - still return what we have
-  logger.warn(
-    { turns: MAX_TURNS },
-    "ReAct loop hit max turns - returning available data",
-  );
-
-  // Extract chunk_ids and raw data from all turns
-  const chunkIds: number[] = [];
-  const allRawData: ProvenanceRow[] = [];
-  
-  for (const t of history) {
-    if (t.observation.success && Array.isArray(t.observation.data)) {
-      for (const row of t.observation.data) {
+    // Track chunk_ids from search results
+    if (observation.success && Array.isArray(observation.data)) {
+      for (const row of observation.data as Record<string, unknown>[]) {
         const chunkId = row?.chunk_id ?? row?.id;
-        if (typeof chunkId === "number") {
-          if (!chunkIds.includes(chunkId)) {
-            chunkIds.push(chunkId);
-          }
-          allRawData.push({
-            chunk_id: chunkId,
-            ...row,
-          });
-        }
+        if (typeof chunkId === "number") allChunkIds.add(chunkId);
       }
     }
-  }
 
-  // Check if any turn has results
-  const hasResults = allRawData.length > 0;
-
-  // Store in provenance registry even if max turns reached
-  let provenanceId: string | undefined;
-  let compressedSummary: ProvenanceSummary | undefined;
-  
-  if (hasResults) {
-    const registry = getProvenanceRegistry(requestId);
-    provenanceId = registry.store({
+    history.push({ turnNumber: turn, action, observation });
+    logSeparator(logger, `REACT TURN END | step=${currentPlanStep.id} turn=${turn}`, {
+      requestId,
       stepId: currentPlanStep.id,
-      rawData: allRawData,
-      derivation: "source",
-      query: currentPlanStep.stepGoal,
-    });
-    
-    compressedSummary = compressStepResults({
-      provenanceId,
-      stepId: currentPlanStep.id,
-      rawData: allRawData,
-      query: currentPlanStep.stepGoal,
+      turn,
+      action: action.action,
+      success: observation.success,
+      rowCount: observation.rowCount,
+      error: observation.error,
     });
   }
+
+  // Max turns reached — produce step result with what we have
+  logger.warn({ turns: modeConfig.maxReactTurns }, "ReAct loop hit max turns");
+
+  const evidenceIds = Array.from(allChunkIds);
+
+  const stepResult: StepResult = {
+    stepId: currentPlanStep.id,
+    goal: currentPlanStep.stepGoal,
+    status: evidenceIds.length > 0 ? "partial" : "empty",
+    summary: "Max turns reached. " + (evidenceIds.length > 0 ? `Found ${evidenceIds.length} potentially relevant chunks.` : "No relevant results found."),
+    evidenceChunkIds: evidenceIds,
+    gaps: ["Step terminated early — turn limit reached"],
+    searchesPerformed,
+    chunksRead: Array.from(chunksRead),
+    confidence: "low",
+  };
 
   return {
-    success: hasResults,
+    success: evidenceIds.length > 0,
+    stepResult,
     turns: history,
     totalTimeMs: Date.now() - startTime,
-    error: hasResults
-      ? undefined
-      : `Max turns (${MAX_TURNS}) reached without finding data`,
-    // Provenance fields
-    provenance_id: provenanceId,
-    compressed_summary: compressedSummary,
-    all_chunk_ids: chunkIds.length > 0 ? chunkIds : undefined,
   };
-}
-
-/**
- * Format ReAct results for the final answer generator.
- * Returns each turn's summary and results for final LLM context.
- */
-export function   formatReActResultsForAnswer(result: ReActResult): string {
-  if (!result.success || result.turns.length === 0) {
-    return JSON.stringify({
-      summary: result.summary || "No data found",
-      turns: [],
-      error: result.error,
-    });
-  }
-
-  const filteredResults = result.turns.filter(
-    (t) =>
-      t.observation.success &&
-      Array.isArray(t.observation.data) &&
-      t.observation.data.length > 0,
-  );
-
-  // Format each turn with its action thought and observation data
-  const formattedTurns = filteredResults.map((turn) => ({
-    summary: turn.action.summary,
-    data: turn.observation.data,
-  }));
-
-  return JSON.stringify(
-    {
-      summary: result.summary,
-      confidence: result.confidence,
-      turns: formattedTurns,
-    },
-    null,
-    2,
-  );
 }

@@ -10,18 +10,14 @@ export { loadSkills, getSkills, getSchemaSkill, buildSkillContext, clearSkillsCa
 export { validateSql, executeSql, formatResultsAsMarkdown, formatResultsAsJson } from "./sqlExecutor";
 
 // Tools
-export { SqlExecuteTool, SemanticSearchTool, HybridSearchTool, createSkillTools } from "./tools";
+export { CurrentDateTimeTool, SqlExecuteTool, SemanticSearchTool, HybridSearchTool, createSkillTools } from "./tools";
 
 // Prompts
 export { skillPlannerPrompt, skillSqlGeneratorPrompt, skillReasoningPrompt, skillFinalAnswerPrompt, buildAvailableSkillsDescription } from "./prompts";
 
-// Legacy upfront planner (deprecated - use ReAct instead)
-export { executeSkillPlan, generateSkillPlan } from "./executor";
-
-// ReAct loop executor (recommended)
+// ReAct loop executor
 export { 
   executeReActLoop, 
-  formatReActResultsForAnswer,
   ReActActionSchema,
   type ReActAction,
   type ReActTurn,

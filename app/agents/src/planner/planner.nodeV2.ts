@@ -10,6 +10,7 @@ import { emitStepEvent } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlm } from "../llm/routing";
 import { buildPlannerContext, getDatabaseSchemaContext } from "./skillContext";
+import { SEARCH_MODE_PRESETS, SearchMode } from "../types/stepResult";
 
 /*
 ============================================================
@@ -94,6 +95,7 @@ export async function plannerNodeV2(
         // Load skills and tools context
         const plannerContext = await getPlannerContext();
         const currentDate = new Date().toISOString().split("T")[0];
+        const modeConfig = SEARCH_MODE_PRESETS[(state.searchMode ?? "search") as SearchMode];
 
         let lastError = "";
         let lastRawError: unknown;
@@ -108,14 +110,10 @@ export async function plannerNodeV2(
               availableTools: plannerContext.toolsContext,
               schemaContext: plannerContext.schemaContext,
               currentDate,
+              maxSteps: String(modeConfig.maxPlanSteps),
             });
 
-            logger.debug("Invoking planner LLM", {
-              attempt: attempt + 1,
-              maxAttempts,
-              hasSkillsContext: !!plannerContext.skillsContext,
-              hasToolsContext: !!plannerContext.toolsContext,
-            });
+
 
             const llmResult = await invokeRoleLlm({
               role: "planner",
@@ -154,21 +152,8 @@ export async function plannerNodeV2(
               }
               continue;
             }
-
             const plan: Plan = validation.data;
-
             logger.info("Plan", { plan });
-
-            const durationMs = Date.now() - startMs;
-
-            logger.info("Plan created successfully", {
-              attempt: attempt + 1,
-              stepCount: plan.steps.length,
-              stepIds: plan.steps.map((s) => s.id),
-              stepKinds: plan.steps.map((s) => s.kind),
-              durationMs,
-            });
-
             return {
               ...state,
               plan,
@@ -180,10 +165,7 @@ export async function plannerNodeV2(
             lastRawError = attemptError;
             lastError = ErrorHandler.getSafeMessage(attemptError);
 
-            logger.warn("Planner attempt failed", {
-              attempt: attempt + 1,
-              error: lastError,
-            });
+
           }
         }
 
@@ -201,7 +183,6 @@ export async function plannerNodeV2(
           { goal: state.goal },
         );
 
-        logger.error("Planner node failed", error);
 
         emitStepEvent(state.requestId, {
           stepId: "plan_0",
@@ -213,9 +194,6 @@ export async function plannerNodeV2(
 
         return {
           ...state,
-          shouldReplan: true,
-          plannerErrors: agentError.message,
-          failureReason: `Planner failed: ${agentError.message}`,
           planAttempts: (state.planAttempts ?? 0) + 1,
           llmCalls: (state.llmCalls ?? 0) + 1,
         };

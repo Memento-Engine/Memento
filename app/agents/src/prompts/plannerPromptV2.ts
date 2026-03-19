@@ -82,8 +82,8 @@ STEP RULES
 2. A step may depend only on earlier steps
 3. No circular dependencies
 4. Last step MUST be kind "final"
-5. Prefer minimal steps (1-3 for simple queries, up to 6 for complex)
-6. Maximum steps: 6
+5. Prefer minimal steps (1-3 for simple queries, up to {maxSteps} for complex)
+6. Maximum steps: {maxSteps}
 
 ================================
 SKILL SELECTION GUIDANCE

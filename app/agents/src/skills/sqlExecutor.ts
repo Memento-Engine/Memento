@@ -1,5 +1,5 @@
 import { SqlExecuteInput, SqlValidationResult } from "./types";
-import { getLogger } from "../utils/logger";
+import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
 import { getConfig } from "../config/config";
 import axios from "axios";
 
@@ -31,6 +31,45 @@ const MAX_ROWS = 100;
  * Default LIMIT to add if query doesn't have one.
  */
 const DEFAULT_LIMIT = 50;
+
+const FTS_OPERATORS = new Set(["AND", "OR", "NOT", "NEAR"]);
+
+function quoteFtsTokenIfNeeded(token: string): string {
+  if (!token) return token;
+
+  // Preserve leading/trailing parentheses around a token.
+  const leadingParens = token.match(/^\(+/)?.[0] ?? "";
+  const trailingParens = token.match(/\)+$/)?.[0] ?? "";
+  const core = token.slice(leadingParens.length, token.length - trailingParens.length);
+
+  if (!core) return token;
+  if (FTS_OPERATORS.has(core.toUpperCase())) return token;
+  if ((core.startsWith('"') && core.endsWith('"')) || core === "*") return token;
+
+  // Keep FTS prefix wildcard outside quotes: foo* => "foo"*
+  const hasWildcard = core.endsWith("*");
+  const bare = hasWildcard ? core.slice(0, -1) : core;
+
+  // Quote tokens containing punctuation that FTS parsers treat as operators/syntax.
+  if (/[.:/@-]/.test(bare)) {
+    const escaped = bare.replace(/"/g, "");
+    return `${leadingParens}"${escaped}"${hasWildcard ? "*" : ""}${trailingParens}`;
+  }
+
+  return token;
+}
+
+function normalizeFtsMatchExpressions(sql: string): string {
+  // Normalize single-quoted MATCH expressions: chunks_fts MATCH '...'
+  return sql.replace(/\bMATCH\s*'([^']*)'/gi, (_full, expr: string) => {
+    const normalizedExpr = expr
+      .split(/(\s+)/)
+      .map((part) => (part.trim() ? quoteFtsTokenIfNeeded(part) : part))
+      .join("");
+
+    return `MATCH '${normalizedExpr}'`;
+  });
+}
 
 /**
  * Validate that a SQL query is read-only and safe to execute.
@@ -96,6 +135,9 @@ export function validateSql(sql: string): SqlValidationResult {
     }
   }
 
+  // Normalize FTS MATCH expressions to avoid parser errors on dotted domains, URLs, etc.
+  normalized = normalizeFtsMatchExpressions(normalized);
+
   return {
     valid: true,
     normalized: normalized.replace(/;\s*$/, ""), // Remove trailing semicolon
@@ -123,10 +165,21 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
   const config = await getConfig();
   const startTime = Date.now();
 
+  logSeparator(logger, "SQL EXECUTION START", {
+    sql: input.sql,
+  });
+  logSectionLine(logger, "CALLED sqlExecutor.executeSql", {
+    sql: input.sql,
+  });
+
   // Validate first
   const validation = validateSql(input.sql);
   if (!validation.valid) {
     logger.warn({ error: validation.error, sql: input.sql }, "SQL validation failed");
+    logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
+      success: false,
+      error: validation.error,
+    });
     return {
       success: false,
       error: validation.error,
@@ -141,6 +194,11 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
     const searchToolUrl = config.backend.searchToolUrl;
     const baseUrl = searchToolUrl.replace("/api/v1/search_tool", "");
     const sqlEndpoint = `${baseUrl}/api/v1/sql_execute`;
+
+    logSectionLine(logger, "CALLED backend /api/v1/sql_execute", {
+      endpoint: sqlEndpoint,
+      timeoutMs: config.backend.timeout,
+    });
 
     const response = await axios.post(
       sqlEndpoint,
@@ -159,6 +217,11 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
     logger.debug({ status: response.status, data: JSON.stringify(data).slice(0, 500) }, "SQL endpoint response");
 
     if (data.success === false) {
+      logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
+        success: false,
+        error: data.error || "SQL execution failed (no error message)",
+        executionTimeMs,
+      });
       return {
         success: false,
         error: data.error || "SQL execution failed (no error message)",
@@ -170,6 +233,16 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
     const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
 
     logger.info({ rowCount: rows.length, executionTimeMs }, "SQL executed successfully");
+    logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
+      success: true,
+      rowCount: rows.length,
+      columns,
+      executionTimeMs,
+    });
+    logSeparator(logger, "SQL EXECUTION END", {
+      success: true,
+      rowCount: rows.length,
+    });
 
     return {
       success: true,
@@ -191,6 +264,15 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
     }
     
     logger.error({ error: errorMessage, sql: safeSql }, "SQL execution failed");
+    logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
+      success: false,
+      error: errorMessage,
+      executionTimeMs,
+    });
+    logSeparator(logger, "SQL EXECUTION END", {
+      success: false,
+      error: errorMessage,
+    });
 
     return {
       success: false,

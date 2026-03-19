@@ -62,7 +62,7 @@ SELECT
   f.app_name,
   f.window_title,
   f.browser_url,
-  c.text_content
+  SUBSTR(c.text_content, 1, 150) as preview
 FROM chunks_fts 
 JOIN chunks c ON chunks_fts.rowid = c.id
 JOIN frames f ON c.frame_id = f.id
@@ -97,7 +97,7 @@ SELECT
   f.app_name,
   f.window_title,
   f.browser_url,
-  c.text_content,
+  SUBSTR(c.text_content, 1, 150) as preview,
   f.image_path
 FROM chunks c
 JOIN frames f ON c.frame_id = f.id

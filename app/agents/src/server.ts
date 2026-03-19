@@ -33,6 +33,7 @@ import {
 } from "./telemetry/sentry";
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
+import { saveMessage, buildSourcesFromStepResults } from "./tools/chatPersistence";
 
 type InvokableGraph = {
   invoke(input: unknown): Promise<unknown>;
@@ -45,6 +46,12 @@ const AgentRequestSchema = z.object({
     .min(1, "Goal cannot be empty")
     .max(5000, "Goal exceeds maximum length")
     .trim(),
+  mode: z.enum(["search", "accurateSearch"]).optional().default("search"),
+  sessionId: z.string().optional(),
+  chatHistory: z
+    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() }))
+    .optional()
+    .default([]),
 });
 
 /**
@@ -226,7 +233,7 @@ async function startServer() {
                 } as AgentResponse);
               }
 
-              const { goal } = validationResult.data;
+              const { goal, mode, chatHistory, sessionId } = validationResult.data;
 
               // Extract auth headers for credit tracking
               const authHeaders = {
@@ -280,14 +287,11 @@ async function startServer() {
                       goal: goal as any,
                       requestId: requestId as any,
                       authHeaders: authHeaders as any,
+                      searchMode: mode as any,
+                      chatHistory: chatHistory as any,
                       planAttempts: 0 as any,
-                      replanAttempts: 0 as any,
                       llmCalls: 0 as any,
-                      stepErrors: {} as any,
                       startTime: startTime as any,
-                      currentStep: 0 as any,
-                      shouldReplan: false as any,
-                      noResultsFound: false as any,
                     }),
                 );
               } catch (error) {
@@ -392,6 +396,22 @@ async function startServer() {
 
               // Sources are already emitted during streaming via emitSources() in finalAnswer
 
+              // Persist messages to DB (fire-and-forget, don't block response)
+              if (sessionId) {
+                const persistSession = sessionId;
+                const finalResult = (result as any)?.finalResult;
+                const stepResults = (result as any)?.stepResults;
+
+                // Save user message (no sources)
+                saveMessage(persistSession, "user", goal, []).catch(() => {});
+
+                // Save assistant message with chunk references
+                if (finalResult && stepResults) {
+                  const sources = buildSourcesFromStepResults(stepResults);
+                  saveMessage(persistSession, "assistant", finalResult, sources).catch(() => {});
+                }
+              }
+
               res.write(
                 JSON.stringify({
                   type: "complete",
@@ -400,7 +420,6 @@ async function startServer() {
                     metadata: {
                       requestId,
                       duration,
-                      noResultsFound: result?.noResultsFound,
                       timestamp: formatLocalTimestamp(),
                     },
                   },

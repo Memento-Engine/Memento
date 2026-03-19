@@ -1,63 +1,55 @@
 import { Annotation } from "@langchain/langgraph";
 import { Plan } from "./planner/plan.schema";
-import { Route } from "./router/router.node";
-import { RetrievedSource } from "./types/agent";
 import { AuthHeaders } from "./llm/routing";
+import { StepResult, SearchMode } from "./types/stepResult";
 
 /**
- * Agent execution state representing the complete workflow state.
- * Immutable updates recommended for replay and debugging.
+ * Agent execution state.
+ * Tracks the full workflow from query to final answer.
  */
 export const AgentState = Annotation.Root({
-  // -- Core identifiers ─────────────────────────────────────
+  // ── Request context ──────────────────────────────────
+  goal: Annotation<string>(),
+  requestId: Annotation<string>(),
+  authHeaders: Annotation<AuthHeaders | undefined>(),
+
+  // ── Search mode ──────────────────────────────────────
+  searchMode: Annotation<SearchMode>({
+    value: (_: SearchMode, next: SearchMode) => next,
+    default: () => "search" as SearchMode,
+  }),
+
+  // ── Chat history (for clarifier) ─────────────────────
+  chatHistory: Annotation<Array<{ role: string; content: string }>>({
+    value: (_: Array<{ role: string; content: string }>, next: Array<{ role: string; content: string }>) => next,
+    default: () => [],
+  }),
+
+  // ── Clarify + Rewrite outputs ────────────────────────
   isClarificationNeeded: Annotation<boolean>(),
   clarificationQuestion: Annotation<string | undefined>(),
   rewrittenQuery: Annotation<string>(),
 
-  // Intent Router
+  // ── Intent Router outputs ────────────────────────────
   isConversation: Annotation<boolean>({
     value: (_: boolean, next: boolean) => next,
     default: () => false,
   }),
-
   isNeedPlanning: Annotation<boolean>({
     value: (_: boolean, next: boolean) => next,
     default: () => false,
   }),
   conversationResponse: Annotation<string | undefined>(),
 
-
-  // ── Request context ──────────────────────────────────
-  goal: Annotation<string>(),
-  requestId: Annotation<string>(),
-
-  // ── Auth context for credit tracking ─────────────────
-  authHeaders: Annotation<AuthHeaders | undefined>(),
-
-  // ── Router outputs ───────────────────────────────────
-  route: Annotation<Route | undefined>(),
-  routerConfidence: Annotation<number | undefined>(),
-
   // ── Planning phase ───────────────────────────────────
   plan: Annotation<Plan | undefined>(),
-  plannerErrors: Annotation<string | undefined>(),
   planAttempts: Annotation<number>(),
 
   // ── Execution phase ──────────────────────────────────
-  currentStep: Annotation<number>(),
-  stepResults: Annotation<Record<string, any> | undefined>(),
-  stepErrors: Annotation<Record<string, string> | undefined>(),
-
-  // ── Replanning phase ─────────────────────────────────
-  replanAttempts: Annotation<number>(),
-  lastFailedStepId: Annotation<string | undefined>(),
-  failureReason: Annotation<string | undefined>(),
-  previousPlan: Annotation<Plan | undefined>(),
-  shouldReplan: Annotation<boolean>(),
-
-  // ── Result handling ──────────────────────────────────
-  noResultsFound: Annotation<boolean>(),
-  hasSearchResults: Annotation<boolean>(),
+  stepResults: Annotation<Record<string, StepResult>>({
+    value: (prev: Record<string, StepResult>, next: Record<string, StepResult>) => ({ ...prev, ...next }),
+    default: () => ({}),
+  }),
 
   // ── Timing and metrics ───────────────────────────────
   startTime: Annotation<number>(),
@@ -66,7 +58,6 @@ export const AgentState = Annotation.Root({
 
   // ── Final result ─────────────────────────────────────
   finalResult: Annotation<string | undefined>(),
-  retrievedSources: Annotation<RetrievedSource[] | undefined>(),
 });
 
 export type AgentStateType = typeof AgentState.State;

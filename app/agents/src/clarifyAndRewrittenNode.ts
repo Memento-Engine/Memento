@@ -19,7 +19,10 @@ export async function clarifyAndRewrittenNode(
   // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
   const prompt = await clarifyAndRewritePrompt.invoke({
     userQuery: state.goal,
-    conversation: "",
+    conversation: (state.chatHistory ?? [])
+      .slice(-10)
+      .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)
+      .join("\n") || "(no prior conversation)",
   });
 
   for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {

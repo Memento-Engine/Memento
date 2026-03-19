@@ -40,14 +40,10 @@ const ConfigSchema = z.object({
   }),
   agent: z.object({
     maxPlanRetries: z.number().int().min(1).default(2),
-    maxStepRetries: z.number().int().min(1).default(1),
     stepTimeoutMs: z.number().int().min(1000).default(20000),
-    maxReplanAttempts: z.number().int().min(1).default(2),
-    maxReasoningSteps: z.number().int().min(1).default(3),
-    maxLlmCalls: z.number().int().min(1).default(6),
-    maxSteps: z.number().int().min(1).default(4),
-    maxRuntimeMs: z.number().int().min(1000).default(15000),
-    useReActExecutor: z.boolean().default(true),
+    maxLlmCalls: z.number().int().min(1).default(12),
+    maxRuntimeMs: z.number().int().min(1000).default(30000),
+    previewLength: z.number().int().min(50).default(150),
   }),
 });
 
@@ -110,14 +106,10 @@ export async function loadConfig(): Promise<Config> {
     },
     agent: {
       maxPlanRetries: 2,
-      maxStepRetries: 1,
       stepTimeoutMs: 20000,
-      maxReplanAttempts: 2,
-      maxReasoningSteps: 3,
-      maxLlmCalls: 6,
-      maxSteps: 4,
-      maxRuntimeMs: 15000,
-      useReActExecutor: true,
+      maxLlmCalls: 12,
+      maxRuntimeMs: 30000,
+      previewLength: 150,
     },
   };
 

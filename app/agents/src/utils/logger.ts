@@ -4,6 +4,8 @@ import { getConfig } from "../config/config";
 import { captureAgentException, isSentryEnabled } from "../telemetry/sentry";
 import { formatLocalTimestamp, getLocalTimeZone } from "./time";
 
+const LOG_SEPARATOR = "=".repeat(90);
+
 let loggerInstance: pino.Logger | null = null;
 let httpLoggerInstance: pino.Logger | null = null;
 
@@ -234,3 +236,27 @@ export const logger = {
       });
   },
 };
+
+/**
+ * Emit a visually distinct separator block in logs for important phases.
+ */
+export function logSeparator(
+  log: pino.Logger,
+  title: string,
+  metadata?: Record<string, any>,
+): void {
+  log.info(metadata ?? {}, LOG_SEPARATOR);
+  log.info(metadata ?? {}, `[AGENT] ${title}`);
+  log.info(metadata ?? {}, LOG_SEPARATOR);
+}
+
+/**
+ * Emit a section line for called/result style logs.
+ */
+export function logSectionLine(
+  log: pino.Logger,
+  label: string,
+  metadata?: Record<string, any>,
+): void {
+  log.info(metadata ?? {}, `--- ${label} ---`);
+}

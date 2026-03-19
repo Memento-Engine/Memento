@@ -9,3 +9,4 @@ pub mod storage_endpoints;
 pub mod privacy;
 pub mod privacy_endpoints;
 pub mod model_endpoints;
+pub mod chat_endpoints;

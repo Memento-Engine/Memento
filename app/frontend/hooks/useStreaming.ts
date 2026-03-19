@@ -297,13 +297,14 @@ export function useStreaming(
     async (goal: string, signal: AbortSignal) => {
       // Get auth headers from OS keyring (async)
       const headers = await getAuthHeaders();
-      
+
       // Anonymous users can use the API without auth headers
       // The backend will handle rate limiting by IP address
       // Only authenticated users need Authorization header
-      
+
       // Get the agent server URL dynamically from port file
       const baseUrl = await getAgentBaseUrl();
+      console.log("Base uRL", baseUrl);
       
       const res = await fetch(`${baseUrl}/agent`, {
         method: "POST",

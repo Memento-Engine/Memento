@@ -1,94 +1,87 @@
 import { AgentStateType } from "../agentState";
-import { Plan, PlanStep,  } from "../planner/plan.schema";
+import { Plan, PlanStep } from "../planner/plan.schema";
 import { buildSchedule } from "../scheduler/scheduler";
 import { getConfig } from "../config/config";
 import { createContextLogger } from "../utils/logger";
-import { ErrorHandler, withTimeout } from "../utils/parser";
-import {
-  ExecutorError,
-  ToolError,
-  ErrorCode,
-} from "../types/errors";
+import { ErrorHandler } from "../utils/parser";
+import { ExecutorError, ToolError, ErrorCode } from "../types/errors";
 import { emitStepEvent, emitError } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { captureAgentException } from "../telemetry/sentry";
-
 import { reactExecutorNode } from "./react.node";
-import { 
-  getProvenanceRegistry,
-  ProvenanceSummary,
-  formatSummariesForContext,
-} from "../provenance";
+import { StepResult, buildStepBrief } from "../types/stepResult";
 
-/*
-============================================================
-EXECUTOR NODE (v2)
-============================================================
+/**
+ * Build dependency context for a step using DAG-scoped rules:
+ * - Direct dependencies: full StepResult
+ * - Transitive ancestors: one-line brief
+ */
+function buildDepContext(
+  step: PlanStep,
+  allSteps: PlanStep[],
+  stepResults: Record<string, StepResult>,
+): Record<string, unknown> {
+  const directDeps = new Set(step.dependsOn);
+  const context: Record<string, unknown> = {};
 
-Orchestrates step execution using the task scheduler.
-Per-level: runs independent steps in parallel (with concurrency cap).
-Per search step:
-  1. Build concrete DB query (LLM + Zod validation)
-  2. Run search tool
-  3. If empty → retry with relaxed query (model fallback)
-  4. Extract expected output
-  5. Store in global state
+  // Collect all transitive ancestors
+  const transitive = new Set<string>();
+  const queue = [...step.dependsOn];
+  while (queue.length > 0) {
+    const depId = queue.shift()!;
+    const depStep = allSteps.find(s => s.id === depId);
+    if (depStep) {
+      for (const ancestorId of depStep.dependsOn) {
+        if (!transitive.has(ancestorId) && !directDeps.has(ancestorId)) {
+          transitive.add(ancestorId);
+          queue.push(ancestorId);
+        }
+      }
+    }
+  }
 
-Per reason step:
-  1. Gather dependency data
-  2. LLM reasoning call
-  3. Validate output shape
-  4. Store in global state
-============================================================
-*/
+  // Direct deps get full result
+  for (const depId of directDeps) {
+    const result = stepResults[depId];
+    if (result) {
+      context[depId] = result;
+    }
+  }
 
-// ── Helpers ──────────────────────────────────────────────
+  // Transitive ancestors get one-line brief
+  for (const ancestorId of transitive) {
+    const result = stepResults[ancestorId];
+    if (result) {
+      context[ancestorId] = buildStepBrief(result);
+    }
+  }
 
-
-
-
-
-
-// ── Main Executor Node ───────────────────────────────────
+  return context;
+}
 
 export async function executorNodeV2(
   state: AgentStateType,
 ): Promise<AgentStateType> {
   return runWithSpan(
     "agent.node.executor",
-    {
-      request_id: state.requestId,
-      node: "executor",
-    },
+    { request_id: state.requestId, node: "executor" },
     async () => {
-      const logger = await createContextLogger(state.requestId, {
-        node: "executor",
-      });
-
+      const logger = await createContextLogger(state.requestId, { node: "executor" });
       const startMs = Date.now();
       logger.info("Executor node started");
 
       const plan = state.plan as Plan | undefined;
-
       if (!plan?.steps?.length) {
-        throw new ExecutorError("Plan has no steps", {
-          plan: plan ? "empty" : "undefined",
-        });
+        throw new ExecutorError("Plan has no steps", { plan: plan ? "empty" : "undefined" });
       }
 
       const config = await getConfig();
-      const stepResults: Record<string, unknown> = {
-        ...(state.stepResults ?? {}),
-      };
-      const stepErrors: Record<string, string> = {
-        ...(state.stepErrors ?? {}),
-      };
+      const stepResults: Record<string, StepResult> = { ...(state.stepResults ?? {}) };
       let llmCalls = state.llmCalls ?? 0;
       const maxLlmCalls = config.agent.maxLlmCalls;
       const maxRuntimeMs = config.agent.maxRuntimeMs;
-      const maxConcurrency = 3; // Cap parallel execution
+      const maxConcurrency = 3;
 
-      // Build schedule
       const schedule = buildSchedule(plan);
 
       logger.info("Execution schedule built", {
@@ -100,38 +93,18 @@ export async function executorNodeV2(
         for (let levelIdx = 0; levelIdx < schedule.levels.length; levelIdx++) {
           const level = schedule.levels[levelIdx];
 
-          // Budget checks
           if (Date.now() - startMs > maxRuntimeMs) {
-            logger.warn("Runtime budget exceeded — returning partial results", {
-              maxRuntimeMs,
-              elapsedMs: Date.now() - startMs,
-            });
-            // break;
+            logger.warn("Runtime budget exceeded", { maxRuntimeMs, elapsedMs: Date.now() - startMs });
           }
-
           if (llmCalls >= maxLlmCalls) {
-            logger.warn(
-              "LLM call budget exceeded — returning partial results",
-              {
-                maxLlmCalls,
-                llmCalls,
-              },
-            );
-            // break;
+            logger.warn("LLM call budget exceeded", { maxLlmCalls, llmCalls });
           }
 
-          // Skip the "final" step — that's handled by finalAnswerNode
-          const executableSteps = level.filter((s) => s.kind !== "final");
-
+          const executableSteps = level.filter(s => s.kind !== "final");
           if (executableSteps.length === 0) continue;
 
-          logger.info("Executing level", {
-            level: levelIdx,
-            stepCount: executableSteps.length,
-            stepIds: executableSteps.map((s) => s.id),
-          });
 
-          // Run steps in this level concurrently (with cap)
+          // Run steps in batches with concurrency cap
           const batches: PlanStep[][] = [];
           for (let i = 0; i < executableSteps.length; i += maxConcurrency) {
             batches.push(executableSteps.slice(i, i + maxConcurrency));
@@ -139,161 +112,88 @@ export async function executorNodeV2(
 
           for (const batch of batches) {
             const promises = batch.map(async (step) => {
-              // Verify dependencies are resolved
+              // Verify dependencies resolved
               for (const dep of step.dependsOn) {
                 if (!(dep in stepResults)) {
                   throw new ExecutorError(
                     `Step "${step.id}" dependency not resolved: "${dep}"`,
-                    {
-                      stepId: step.id,
-                      missingDependency: dep,
-                    },
+                    { stepId: step.id, missingDependency: dep },
                   );
                 }
               }
 
-              // Build depContext from provenance summaries (not raw data!)
-              const depContext: Record<string, any> = {};
-              const registry = getProvenanceRegistry(state.requestId);
-              
-              for (const depId of step.dependsOn) {
-                const depResult = stepResults[depId] as Record<string, any> | undefined;
-                if (depResult && typeof depResult === 'object') {
-                  // Get compressed summary from step result
-                  const summary = depResult.compressed_summary as ProvenanceSummary | undefined;
-                  
-                  if (summary) {
-                    // Pass compressed summary, not raw data
-                    const chunkIds = depResult.chunk_ids as string[] | undefined;
-                    depContext[depId] = {
-                      provenance_id: depResult.provenance_id,
-                      summary: summary.summary,
-                      record_count: summary.record_count,
-                      by_app: summary.by_app,
-                      time_range: summary.time_range,
-                      topics: summary.topics,
-                      // Flag that raw data is available if needed
-                      chunk_ids_available: chunkIds && chunkIds.length > 0,
-                    };
-                  } else {
-                    // Fallback for backward compatibility
-                    depContext[depId] = depResult.react_summary ?? depResult;
-                  }
-                }
-              }
+              // DAG-scoped context
+              const depContext = buildDepContext(step, plan.steps, stepResults);
 
               try {
-                const stepResult = await reactExecutorNode(state, step, depContext);
+                const { stepResult, llmCalls: stepLlmCalls } = await reactExecutorNode(
+                  state,
+                  step,
+                  depContext,
+                  stepResults,
+                );
 
-                logger.info("Got Result from Execution Node", {
-                  stepGoal: step.stepGoal,
-                  provenanceId: stepResult.stepResults?.provenance_id,
-                  recordCount: stepResult.stepResults?.compressed_summary?.record_count,
+                logger.info("Step completed", {
+                  stepId: step.id,
+                  status: stepResult.status,
+                  evidenceCount: stepResult.evidenceChunkIds.length,
+                  confidence: stepResult.confidence,
                 });
 
-                // Store compressed results - final LLM will synthesize answer
-                stepResults[step.id] = stepResult.stepResults ?? null;
-                llmCalls += stepResult.llmCalls ?? 0;
+                stepResults[step.id] = stepResult;
+                llmCalls += stepLlmCalls;
 
                 return { stepId: step.id, success: true as const };
               } catch (error) {
                 const errMsg = ErrorHandler.getSafeMessage(error);
-                stepErrors[step.id] = errMsg;
 
                 captureAgentException(error, {
                   message: "Agent step execution failed",
                   level: "error",
-                  tags: {
-                    area: "executor",
-                    stepId: step.id,
-                    stepKind: step.kind,
-                  },
-                  extra: {
-                    stepGoal: step.stepGoal,
-                    requestId: state.requestId,
-                  },
+                  tags: { area: "executor", stepId: step.id, stepKind: step.kind },
+                  extra: { stepGoal: step.stepGoal, requestId: state.requestId },
                 });
 
-                logger.error("Step failed", error, {
-                  stepId: step.id,
-                });
+                logger.error("Step failed", error, { stepId: step.id });
 
-                // Emit step failure event with clear message
                 emitStepEvent(state.requestId, {
                   stepType: step.kind === "search" ? "searching" : "reasoning",
                   stepId: step.id,
-                  title: "I'm having trouble with this step. I'll keep trying.",
+                  title: "Step encountered an issue",
                   status: "failed",
                 });
 
-                return {
-                  stepId: step.id,
-                  success: false as const,
-                  error: errMsg,
-                };
+                return { stepId: step.id, success: false as const, error: errMsg };
               }
             });
 
             const results = await Promise.allSettled(promises);
 
-            // Check if any critical step failed (one with dependents)
             for (const settled of results) {
               if (settled.status === "rejected") {
-                const failMsg =
-                  settled.reason instanceof Error
-                    ? settled.reason.message
-                    : String(settled.reason);
-                logger.error("Step promise rejected", undefined, {
-                  error: failMsg,
-                });
-                // Emit error for rejected promises
-                emitError(
-                  failMsg,
-                  ErrorCode.EXECUTOR_FAILED,
-                  state.requestId,
-                  true,
-                );
+                const failMsg = settled.reason instanceof Error
+                  ? settled.reason.message
+                  : String(settled.reason);
+                logger.error("Step promise rejected", undefined, { error: failMsg });
+                emitError(failMsg, ErrorCode.EXECUTOR_FAILED, state.requestId, true);
               } else if (!settled.value.success) {
                 const failedId = settled.value.stepId;
-                const hasDependents = plan.steps.some((s) =>
-                  s.dependsOn.includes(failedId),
-                );
+                const hasDependents = plan.steps.some(s => s.dependsOn.includes(failedId));
 
                 if (hasDependents) {
-                  logger.warn("Critical step failed — triggering replan", {
-                    stepId: failedId,
-                  });
-
-                  // Emit error event for critical failures
+                  logger.warn("Critical step failed", { stepId: failedId });
                   emitError(
                     `Step "${failedId}" failed: ${settled.value.error}`,
                     ErrorCode.EXECUTOR_FAILED,
                     state.requestId,
-                    false, // Not a system error - could be retried
+                    false,
                   );
-
-                  return {
-                    ...state,
-                    stepResults,
-                    stepErrors:
-                      Object.keys(stepErrors).length > 0
-                        ? stepErrors
-                        : undefined,
-                    shouldReplan: true,
-                    lastFailedStepId: failedId,
-                    failureReason: `Step "${failedId}" failed: ${settled.value.error}`,
-                    llmCalls,
-                  };
+                  // Continue with partial results rather than blocking
                 }
               }
             }
           }
         }
-
-        // Check if any search returned data
-        const hasAnyResults = Object.values(stepResults).some(
-          (r) => r && (!Array.isArray(r) || r.length > 0),
-        );
 
         const durationMs = Date.now() - startMs;
         logger.info("Executor completed", {
@@ -305,11 +205,7 @@ export async function executorNodeV2(
 
         return {
           ...state,
-          stepResults: stepResults as Record<string, any>,
-          stepErrors:
-            Object.keys(stepErrors).length > 0 ? stepErrors : undefined,
-          currentStep: plan.steps.length,
-          hasSearchResults: hasAnyResults,
+          stepResults,
           llmCalls,
         };
       } catch (error) {
@@ -317,13 +213,10 @@ export async function executorNodeV2(
           captureAgentException(error, {
             message: "Tool error during executor run",
             level: "error",
-            tags: {
-              area: "executor",
-              type: "tool",
-            },
+            tags: { area: "executor", type: "tool" },
           });
           logger.error("Tool error during execution", error);
-          throw error; // rethrow known tool errors for specific handling
+          throw error;
         }
 
         const agentError = ErrorHandler.toAgentError(
@@ -338,10 +231,7 @@ export async function executorNodeV2(
         captureAgentException(error, {
           message: "Executor node failed",
           level: "fatal",
-          tags: {
-            area: "executor",
-            type: "unhandled",
-          },
+          tags: { area: "executor", type: "unhandled" },
           extra: {
             completedSteps: Object.keys(stepResults).length,
             totalSteps: plan.steps.length,

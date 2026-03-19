@@ -27,7 +27,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content
+  SUBSTR(c.text_content, 1, 150) as preview
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE f.captured_at BETWEEN '2026-03-11 15:00:00' AND '2026-03-11 15:30:00'
@@ -44,7 +44,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content
+  SUBSTR(c.text_content, 1, 150) as preview
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE date(f.captured_at) = date('now', '-1 day')
@@ -73,7 +73,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content
+  SUBSTR(c.text_content, 1, 150) as preview
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 CROSS JOIN anchor
@@ -101,7 +101,7 @@ SELECT
   f.window_title,
   f.browser_url,
   f.image_path,
-  c.text_content
+  SUBSTR(c.text_content, 1, 150) as preview
 FROM frames f
 LEFT JOIN chunks c ON c.frame_id = f.id
 CROSS JOIN anchor
