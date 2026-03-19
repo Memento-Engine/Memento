@@ -289,6 +289,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -305,6 +312,9 @@ jobs:
           name: frontend-out
           path: app/frontend/out
 
+      - name: Install app dependencies
+        run: cd app && npm ci
+
       - name: Download agents artifact
         uses: actions/download-artifact@v4
         with:
@@ -318,7 +328,7 @@ jobs:
           Copy-Item "artifacts/agents/memento-agents.exe" "app/agents/dist/memento-agents-x86_64-pc-windows-msvc.exe"
 
       - name: Build Tauri app (Release)
-        run: cd app/src-tauri && cargo build --release
+        run: cd app && npm exec tauri build -- --no-bundle
 
       - name: Upload Tauri artifact
         uses: actions/upload-artifact@v4
