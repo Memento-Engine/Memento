@@ -8,6 +8,10 @@ tools: sql_execute
 
 Generate summaries, statistics, and aggregated views of screen activity.
 
+## ReAct Executor Note
+- This is a reference skill, not an executor action.
+- When following this skill inside the ReAct loop, emit action `sql`, never `aggregation-digest`.
+
 ## When to Use
 - User asks for summaries ("What did I work on today?")
 - User wants statistics ("How much time on X?")

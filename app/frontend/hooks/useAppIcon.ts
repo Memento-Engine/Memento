@@ -64,14 +64,14 @@ function getIconCacheKey(appName: string, browserUrl?: string): string {
 }
 
 // ─── module-level singletons ────────────────────────────────────────────────
-// Resolved icons (appName.toLowerCase() → data URL)
 const iconCache = new Map<string, string>();
-// In-flight deduplication (appName.toLowerCase() → Promise<string>)
 const inflight = new Map<string, Promise<string>>();
+
+// ✅ NEW: cache failed domains to avoid retry spam
+const failedFavicons = new Set<string>();
 // ─────────────────────────────────────────────────────────────────────────────
 
 function uint8ToBase64(bytes: number[]): string {
-  // Process in chunks to avoid call-stack overflow on large icons
   const CHUNK = 8192;
   let binary = "";
   for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -80,21 +80,25 @@ function uint8ToBase64(bytes: number[]): string {
   return btoa(binary);
 }
 
-async function checkImage(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, {
-      method: "HEAD",
-      mode: "no-cors",
-    });
+// ✅ FIXED: reliable image check (handles 403/404 correctly)
+function checkImage(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image();
 
-    return res.ok || res.type === "opaque";
-  } catch {
-    return false;
-  }
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+
+    img.src = url;
+  });
 }
 
 export async function fetchFavicon(domain: string): Promise<string> {
   console.log("Fetching favicon for domain:", domain);
+
+  if (failedFavicons.has(domain)) {
+    return "https://www.google.com/s2/favicons?domain=chrome&sz=64";
+  }
+
   const candidates = [
     `https://${domain}/favicon.ico`,
     `https://${domain}/favicon.png`,
@@ -111,6 +115,7 @@ export async function fetchFavicon(domain: string): Promise<string> {
     }
   }
 
+  failedFavicons.add(domain);
   return "https://www.google.com/s2/favicons?domain=chrome&sz=64";
 }
 
@@ -130,9 +135,10 @@ async function fetchIconOnce(
   const promise = (async (): Promise<string> => {
     try {
       if (browserUrl) {
-        // Extract domain and fetch favicon
         const url = new URL(browserUrl);
-        return await fetchFavicon(url.hostname);
+        const favicon = await fetchFavicon(url.hostname);
+        iconCache.set(key, favicon);
+        return favicon;
       }
 
       const result = await invoke<AppIconResult | null>("get_app_icon_ipc", {
@@ -148,7 +154,7 @@ async function fetchIconOnce(
         return url;
       }
     } catch {
-      // IPC error or running outside Tauri – fall through to placeholder
+      // ignore
     }
 
     iconCache.set(key, PLACEHOLDER_ICON);
@@ -169,12 +175,10 @@ export function useAppIcon(
   src: string;
   loading: boolean;
 } {
+  console.log("APPNAME", appName);
 
-
-  console.log('APPNAME', appName);
   const key = appName ? getIconCacheKey(appName, browserUrl) : "";
 
-  // Initialise synchronously from cache to avoid single-frame flicker
   const [src, setSrc] = useState<string>(() => {
     if (!key) return PLACEHOLDER_ICON;
     return iconCache.get(key) ?? "";
@@ -193,6 +197,7 @@ export function useAppIcon(
     }
 
     let cancelled = false;
+
     fetchIconOnce(appName, browserUrl).then((url) => {
       if (!cancelled) setSrc(url);
     });

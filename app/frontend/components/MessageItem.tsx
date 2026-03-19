@@ -68,7 +68,9 @@ function MessageItem({
       }
     }
   }
+
   const sourceList = Array.from(sourceMap.values());
+  console.log("Extracted sources from message parts:", sourceList);
   const messageSearchMode = getMessageSearchMode(message);
 
   // Get full text content for copy button
@@ -122,16 +124,16 @@ function MessageItem({
       <div key={`${message.id}-${partIndex}`} className="w-full">
         {message.role === "user" ? (
     <div className="flex w-full justify-end mb-4">
-  <div className="bg-secondary text-secondary-foreground px-4 py-3 rounded-2xl inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
+  <div className="bg-secondary text-secondary-foreground px-4 py-2 rounded-2xl inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
     
-    {messageSearchMode && (
+    {/* {messageSearchMode && (
       <div className="mb-3">
         <span className="inline-flex items-center gap-1.5 rounded-md bg-background/50 px-2 py-1 text-xs font-medium text-muted-foreground">
           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
           {messageSearchMode === "accurateSearch" ? "Accurate Search" : "Search"}
         </span>
       </div>
-    )}
+    )} */}
 
     <div className="select-text text-[15px] whitespace-pre-wrap leading-relaxed break-words">
       {part.text}

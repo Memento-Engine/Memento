@@ -26,9 +26,28 @@ import {
 
 export type ReActActionType = "sql" | "semantic" | "hybrid" | "readMore" | "getStepResult" | "currentDateTime" | "think" | "done";
 
+const VALID_REACT_ACTIONS: ReActActionType[] = [
+  "sql",
+  "semantic",
+  "hybrid",
+  "readMore",
+  "getStepResult",
+  "currentDateTime",
+  "think",
+  "done",
+];
+
+const SKILL_ACTION_ALIASES: Record<string, ReActActionType> = {
+  "aggregation-digest": "sql",
+  "fts-search": "sql",
+  "temporal-query": "sql",
+  "semantic-search": "semantic",
+  "hybrid-search": "hybrid",
+};
+
 export const ReActActionSchema = z.object({
   thought: z.string().describe("Reasoning about current state and what to do next"),
-  action: z.enum(["sql", "semantic", "hybrid", "readMore", "getStepResult", "currentDateTime", "think", "done"]),
+  action: z.enum(VALID_REACT_ACTIONS),
 
   // For sql action
   sql: z.string().optional(),
@@ -80,6 +99,34 @@ export interface ReActResult {
   stepResult: StepResult;
   turns: ReActTurn[];
   totalTimeMs: number;
+}
+
+function normalizeReActActionPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const normalized = { ...(payload as Record<string, unknown>) };
+  const rawAction = typeof normalized.action === "string" ? normalized.action.trim() : null;
+
+  if (!rawAction || VALID_REACT_ACTIONS.includes(rawAction as ReActActionType)) {
+    return normalized;
+  }
+
+  const mappedAction = SKILL_ACTION_ALIASES[rawAction];
+  if (!mappedAction) {
+    return normalized;
+  }
+
+  normalized.action = mappedAction;
+
+  if (typeof normalized.thought === "string" && normalized.thought.trim().length > 0) {
+    normalized.thought = `${normalized.thought} [normalized from skill alias '${rawAction}']`;
+  } else {
+    normalized.thought = `Recovered invalid action '${rawAction}' by mapping it to '${mappedAction}'.`;
+  }
+
+  return normalized;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -292,7 +339,7 @@ function buildSkillReferences(
   for (const skillName of skillOrder) {
     const skill = skills.get(skillName);
     if (skill) {
-      sections.push(`### ${skill.metadata.name}\n${skill.content}`);
+      sections.push(`### Reference Skill: ${skill.metadata.name}\n${skill.content}`);
     }
   }
 
@@ -320,6 +367,13 @@ ${schemaContext}
 ${skillReferences}
 
 ${buildCompactAppAliasSection()}
+
+## Critical Action Rule
+- The reference skills above are guidance only. Skill names such as "aggregation-digest", "fts-search", "semantic-search", "hybrid-search", and "temporal-query" are NOT valid action values.
+- Your JSON "action" field must be exactly one of: ${VALID_REACT_ACTIONS.join(", ")}.
+- If a reference skill suggests an aggregation query, emit action "sql" with the SQL in the "sql" field.
+- If a reference skill suggests semantic search, emit action "semantic".
+- If a reference skill suggests hybrid search, emit action "hybrid".
 
 ## Available Actions
 
@@ -491,7 +545,7 @@ export async function executeReActLoop(
 
   // Track for StepResult
   const searchesPerformed: SearchPerformed[] = [];
-  const allChunkIds = new Set<number>();
+  const allChunkIds = new Map<number, unknown>();
   const chunksRead = new Set<number>();
   let searchCallCount = 0;
 
@@ -508,14 +562,8 @@ export async function executeReActLoop(
     observation: currentDateTimeObservation,
   });
 
-
-
   for (let turn = 1; turn <= modeConfig.maxReactTurns; turn++) {
-
     const turnPrompt = buildTurnPrompt(currentPlanStep.stepGoal, history, depContext);
-
-
-
     const { response } = await invokeRoleLlm({
       role: "executor",
       prompt: [
@@ -540,7 +588,7 @@ export async function executeReActLoop(
     let action: ReActAction;
     try {
       const parsed = await SafeJsonParser.parseContent(content);
-      action = ReActActionSchema.parse(parsed);
+      action = ReActActionSchema.parse(normalizeReActActionPayload(parsed));
     } catch (error) {
       logger.error({ content, error }, "Failed to parse ReAct action");
       action = {
@@ -563,19 +611,17 @@ export async function executeReActLoop(
     // Handle done action
     if (action.action === "done") {
       // Collect all evidence chunk_ids from successful turns
-      let stepObservedData;
       for (const t of history) {
         if (t.observation.success && Array.isArray(t.observation.data)) {
           for (const row of t.observation.data as Record<string, unknown>[]) {
             const chunkId = row?.chunk_id ?? row?.id;
-            if (typeof chunkId === "number") allChunkIds.add(chunkId);
+            if (typeof chunkId === "number") allChunkIds.set(chunkId, row);
           }
-          stepObservedData = t.observation.data;
         }
       }
 
       // Emit search results for UI
-      const evidenceIds = Array.from(allChunkIds);
+      const evidenceIds = Array.from(allChunkIds.keys());
       if (evidenceIds.length > 0) {
         const searchResults = await getSearchResultsByChunkIds(evidenceIds, requestId);
         emitStepEvent(requestId, {
@@ -601,7 +647,7 @@ export async function executeReActLoop(
         status: evidenceIds.length > 0 ? (action.confidence === "high" ? "complete" : "partial") : "empty",
         summary: action.summary ?? "No summary provided",
         evidenceChunkIds: evidenceIds,
-        evidence: stepObservedData ?? null,
+        evidence: Array.from(allChunkIds.values()),
         gaps: action.gaps ?? [],
         searchesPerformed,
         chunksRead: Array.from(chunksRead),
@@ -626,8 +672,8 @@ export async function executeReActLoop(
           stepType: "searching",
           actionType: "sql",
           stepId: currentPlanStep.id,
+          description: action.thought,
           title: `Searching your data...`,
-          queries: uiQueries?.slice(0, 3),
           status: "running",
         });
         logSectionLine(logger, "CALLED ACTION sql", {
@@ -703,6 +749,7 @@ export async function executeReActLoop(
           stepId: currentPlanStep.id,
           title: `Searching across all sources...`,
           queries: uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined),
+
           status: "running",
         });
         logSectionLine(logger, "CALLED ACTION hybrid", {
@@ -815,7 +862,7 @@ export async function executeReActLoop(
           stepType: "reasoning",
           actionType: "thinking",
           stepId: currentPlanStep.id,
-          title: "Analyzing findings...",
+          title: action.thought ?? action.analysis ?? "Thinking...",
           reasoning: action.analysis,
           status: "running",
         });
@@ -836,7 +883,7 @@ export async function executeReActLoop(
     if (observation.success && Array.isArray(observation.data)) {
       for (const row of observation.data as Record<string, unknown>[]) {
         const chunkId = row?.chunk_id ?? row?.id;
-        if (typeof chunkId === "number") allChunkIds.add(chunkId);
+        if (typeof chunkId === "number") allChunkIds.set(chunkId, row);
       }
     }
 
@@ -855,14 +902,15 @@ export async function executeReActLoop(
   // Max turns reached — produce step result with what we have
   logger.warn({ turns: modeConfig.maxReactTurns }, "ReAct loop hit max turns");
 
-  const evidenceIds = Array.from(allChunkIds);
+  const evidenceIds = Array.from(allChunkIds.keys());
 
   const stepResult: StepResult = {
     stepId: currentPlanStep.id,
     goal: currentPlanStep.stepGoal,
     status: evidenceIds.length > 0 ? "partial" : "empty",
     summary: "Max turns reached. " + (evidenceIds.length > 0 ? `Found ${evidenceIds.length} potentially relevant chunks.` : "No relevant results found."),
-    evidenceChunkIds: evidenceIds,
+    evidenceChunkIds: Array.from(allChunkIds.keys()),
+    evidence: Array.from(allChunkIds.values()),
     gaps: ["Step terminated early — turn limit reached"],
     searchesPerformed,
     chunksRead: Array.from(chunksRead),

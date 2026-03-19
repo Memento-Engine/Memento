@@ -12,7 +12,26 @@ import {
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlmStreaming } from "../llm/routing";
 import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
-import { StepResult, buildStepBrief } from "../types/stepResult";
+import { StepResult } from "../types/stepResult";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CITATION EXTRACTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Parse all [[chunk_N]] citation IDs from the LLM response text.
+ * This covers any chunk the model decided to cite, regardless of whether
+ * the pre-computed allChunkIds set already contains it.
+ */
+function extractCitedChunkIds(text: string): number[] {
+  const ids = new Set<number>();
+  const re = /\[\[chunk_(\d+)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    ids.add(Number(m[1]));
+  }
+  return Array.from(ids);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -51,7 +70,19 @@ function formatStepBriefs(stepResults: Record<string, StepResult>): string {
 function collectAllChunkIds(stepResults: Record<string, StepResult>): number[] {
   const ids = new Set<number>();
   for (const result of Object.values(stepResults)) {
+    // Primary source: evidenceChunkIds built by the executor
     for (const id of result.evidenceChunkIds) {
+      ids.add(id);
+    }
+    // Defensive: also scan the evidence rows directly to catch any divergence
+    if (Array.isArray(result.evidence)) {
+      for (const row of result.evidence as Record<string, unknown>[]) {
+        const chunkId = (row?.chunk_id ?? row?.id);
+        if (typeof chunkId === "number") ids.add(chunkId);
+      }
+    }
+    // Include explicitly-read chunks
+    for (const id of result.chunksRead ?? []) {
       ids.add(id);
     }
   }
@@ -90,8 +121,8 @@ ${rewrittenQuery ?? goal}
 ${stepBriefs}
 
 ## Citation Rules
-- Cite evidence using chunk_ids: [[chunk_42]], [[chunk_45]]
-- Multiple sources: [[chunk_42]][[chunk_45]]
+- Cite evidence using chunk_ids: [chunk_42], [chunk_45]
+- Multiple sources: [[chunk_42][chunk_45]]
 - Only cite chunks mentioned in step results
 - If a step found nothing, say so honestly
 
@@ -132,31 +163,30 @@ export async function finalAnswerNodeV2(
 
       // Check if we have any results
       const allChunkIds = collectAllChunkIds(stepResults);
-      const hasResults = allChunkIds.length > 0;
-
-      // if (!hasResults) {
-      //   const noMsg = `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
-      //   emitCompletion(noMsg, state.requestId);
-      //   emitStepEvent(state.requestId, {
-      //     stepId: "finalize_0",
-      //     stepType: "completion",
-      //     actionType: "summarizing",
-      //     title: "Generating your answer...",
-      //     status: "completed",
-      //   });
-      //   return {
-      //     ...state,
-      //     finalResult: noMsg,
-      //     endTime: Date.now(),
-      //   };
-      // }
 
       try {
+        // Fetch sources for UI panel
+        const searchResults = await getSearchResultsByChunkIds(allChunkIds, state.requestId);
+
+        // Emit sources for UI
+        emitSources(state.requestId, {
+          includeImages: false,
+          sources: searchResults.map(s => ({
+            chunkId: s.chunk_id,
+            appName: s.app_name,
+            windowTitle: s.window_name,
+            capturedAt: s.captured_at,
+            browserUrl: s.browser_url,
+            textContent: s.text_content,
+            textJson: s.text_json,
+            imagePath: s.image_path,
+          })),
+        });
         const stepBriefs = formatStepBriefs(stepResults);
 
 
-        console.log("Formatted step briefs for final LLM:", JSON.stringify(stepBriefs, null, 2));
-
+        console.log("Formatted step briefs for final LLM prompt:\n");
+        console.dir(stepBriefs, { depth: null, colors: true });
 
         const recentChat = formatRecentChat(state.chatHistory ?? [], 3);
 
@@ -229,42 +259,12 @@ export async function finalAnswerNodeV2(
 
         if (!rawResponse) throw new Error("Final answer is empty");
 
-        // Fetch sources for UI panel
-        const searchResults = await getSearchResultsByChunkIds(
-          allChunkIds.slice(0, 50),
-          state.requestId,
-        );
-
-        const retrievedSources = searchResults.map(s => ({
-          chunk_id: `chunk_${s.chunk_id}`,
-          text_content: s.text_content ?? "",
-          app_name: s.app_name ?? "",
-          window_title: s.window_name ?? "",
-          browser_url: s.browser_url ?? "",
-          captured_at: s.captured_at ?? "",
-          image_path: s.image_path ?? "",
-        }));
-
-        // Emit sources for UI
-        emitSources(state.requestId, {
-          includeImages: false,
-          sources: searchResults.map(s => ({
-            chunkId: s.chunk_id,
-            appName: s.app_name,
-            windowTitle: s.window_name,
-            capturedAt: s.captured_at,
-            browserUrl: s.browser_url,
-            textContent: s.text_content,
-            textJson: s.text_json,
-            imagePath: s.image_path,
-          })),
-        });
 
         const durationMs = Date.now() - startMs;
         logger.info("Final answer generated", {
           resultLength: rawResponse.length,
           durationMs,
-          sourceCount: retrievedSources.length,
+          sourceCount: searchResults.length,
         });
 
         emitCompletion(rawResponse, state.requestId);

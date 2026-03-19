@@ -77,7 +77,7 @@ export function SourceBadge({
     domain = null;
   }
 
-  const priorityName = domain ? domain : normalizedAppName || "Unknown App";
+  const priorityName = domain ? domain : normalizedAppName || "Unnamed Application";
 
   const newLabel = sources && sources.length > 1 ? `${priorityName} +${sources.length - 1}` : priorityName;
 

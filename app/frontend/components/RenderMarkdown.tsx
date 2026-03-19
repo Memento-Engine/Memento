@@ -199,6 +199,7 @@ function RenderMarkdownComponent({
             });
 
           console.log("chunkIds", chunkIds);
+          console.log("sourceMap", sourceMap);
           const citation = getCitationSummary(chunkIds, sourceMap);
 
           return (
