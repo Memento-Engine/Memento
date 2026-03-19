@@ -33,7 +33,7 @@ function formatStepBriefs(stepResults: Record<string, StepResult>): string {
     parts.push(`**Goal:** ${result.goal}`);
     parts.push(`**Status:** ${result.status} (${result.confidence} confidence)`);
     parts.push(`**Summary:** ${result.summary}`);
-    parts.push(`**Evidence:** ${result.evidenceChunkIds.length}`);
+    parts.push(`**Evidence:**\n\`\`\`json\n${JSON.stringify(result.evidence, null, 2)}\n\`\`\``);
 
     if (result.gaps.length > 0) {
       parts.push(`**Gaps:** ${result.gaps.join("; ")}`);
@@ -73,10 +73,15 @@ function buildFinalPrompt(
   rewrittenQuery: string | undefined,
   stepBriefs: string,
   recentChat: string,
+  currentDateTime: string,
 ): string {
   return `You are the final response generator for a personal memory search agent.
 
 Your task: synthesize search step results into a clear, direct answer for the user.
+
+## Current Date/Time
+${currentDateTime}
+Use this as reference for any temporal language like "today", "yesterday", "this week", etc.
 
 ## User Goal
 ${rewrittenQuery ?? goal}
@@ -129,30 +134,54 @@ export async function finalAnswerNodeV2(
       const allChunkIds = collectAllChunkIds(stepResults);
       const hasResults = allChunkIds.length > 0;
 
-      if (!hasResults) {
-        const noMsg = `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
-        emitCompletion(noMsg, state.requestId);
-        return {
-          ...state,
-          finalResult: noMsg,
-          endTime: Date.now(),
-        };
-      }
+      // if (!hasResults) {
+      //   const noMsg = `I could not find relevant information for: "${goal}". Try rephrasing your query or providing more specific details.`;
+      //   emitCompletion(noMsg, state.requestId);
+      //   emitStepEvent(state.requestId, {
+      //     stepId: "finalize_0",
+      //     stepType: "completion",
+      //     actionType: "summarizing",
+      //     title: "Generating your answer...",
+      //     status: "completed",
+      //   });
+      //   return {
+      //     ...state,
+      //     finalResult: noMsg,
+      //     endTime: Date.now(),
+      //   };
+      // }
 
       try {
         const stepBriefs = formatStepBriefs(stepResults);
+
+
+        console.log("Formatted step briefs for final LLM:", JSON.stringify(stepBriefs, null, 2));
+
+
         const recentChat = formatRecentChat(state.chatHistory ?? [], 3);
+
+        // Get current date/time for temporal grounding
+        const now = new Date();
+        const currentDateTime = `${now.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })} at ${now.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZoneName: "short",
+        })}`;
 
         const prompt = buildFinalPrompt(
           goal,
           state.rewrittenQuery,
           stepBriefs,
           recentChat,
+          currentDateTime,
         );
 
-        logger.info("Final prompt built", {
-          promptChars: prompt
-        });
+        console.log("Final CuSTOME LLM prompt:", JSON.stringify(prompt, null, 2));
 
         logger.info("Final LLM context", {
           promptChars: prompt.length,
@@ -163,7 +192,8 @@ export async function finalAnswerNodeV2(
         emitStepEvent(state.requestId, {
           stepId: "finalize_0",
           stepType: "completion",
-          title: "Putting it all together...",
+          actionType: "summarizing",
+          title: "Generating your answer...",
           status: "completed",
         });
 

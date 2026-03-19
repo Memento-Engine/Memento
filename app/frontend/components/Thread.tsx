@@ -2,6 +2,7 @@
 import React, { useCallback, useLayoutEffect, useRef } from "react";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import ChatInput from "./ChatInput";
+import type { SearchMode } from "./types";
 import {
   Conversation,
   ConversationContent,
@@ -18,9 +19,9 @@ function Thread(): React.ReactElement {
   const lastAnchoredUserMessageIdRef = useRef<string | null>(null);
 
   const handleSend = useCallback(
-    async (query: string) => {
+    async (query: string, searchMode: SearchMode) => {
       if (!query.trim()) return;
-      await sendMessage(query);
+      await sendMessage(query, undefined, false, searchMode);
     },
     [sendMessage]
   );

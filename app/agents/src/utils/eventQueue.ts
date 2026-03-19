@@ -86,9 +86,23 @@ class EventQueue {
   }
 }
 
+type StepTimingState = {
+  startedAtMs: number;
+};
+
 // Global map to track event queues by request ID
 // This replaces the AsyncLocalStorage approach which doesn't work well with LangGraph
 const globalEventQueues = new Map<string, EventQueue>();
+const globalStepTimings = new Map<string, Map<string, StepTimingState>>();
+
+function getStepTimingMap(requestId: string): Map<string, StepTimingState> {
+  let timings = globalStepTimings.get(requestId);
+  if (!timings) {
+    timings = new Map<string, StepTimingState>();
+    globalStepTimings.set(requestId, timings);
+  }
+  return timings;
+}
 
 /**
  * Initialize event queue for a request context.
@@ -127,6 +141,7 @@ export function getEventQueue(requestId: string): EventQueue | undefined {
 export function cleanupEventQueue(requestId: string): void {
   logQueue("debug", "Cleaning up event queue", { requestId });
   globalEventQueues.delete(requestId);
+  globalStepTimings.delete(requestId);
 }
 
 // AsyncLocalStorage to maintain event queue per request context (legacy, kept for compatibility)
@@ -176,10 +191,33 @@ export function emitStepEvent(requestId: string, data: ThinkingStep): void {
     return;
   }
 
+  const emittedAt = new Date();
+  const emittedTimestamp = formatLocalTimestamp(emittedAt);
+  const timings = getStepTimingMap(requestId);
+  const timingKey = `${data.stepType}:${data.stepId}`;
+  const existingTiming = timings.get(timingKey);
+
+  if (!existingTiming) {
+    timings.set(timingKey, { startedAtMs: emittedAt.getTime() });
+  }
+
+  const startedAtMs = existingTiming?.startedAtMs ?? emittedAt.getTime();
+  const computedDuration = Math.max(0, emittedAt.getTime() - startedAtMs);
+
+  if (data.status === "completed" || data.status === "failed" || data.status === "final") {
+    timings.delete(timingKey);
+  }
+
+  const enrichedData: ThinkingStep = {
+    ...data,
+    timestamp: data.timestamp ?? emittedTimestamp,
+    duration: data.duration ?? computedDuration,
+  };
+
   const event: QueuedEvent = {
     type: "thinking",
-    data: data,
-    timestamp: formatLocalTimestamp(),
+    data: enrichedData,
+    timestamp: emittedTimestamp,
   };
 
   queue.add(event);

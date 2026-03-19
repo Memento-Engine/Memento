@@ -3,13 +3,19 @@ import { z } from "zod";
 import {
   normalizedOcrLayoutSchema,
   normalizedOcrTokenSchema,
+  messageSearchModeSchema,
+  MessageSearchMode,
   sourceSchema,
   SourceRecord,
+  SearchMode,
+  SearchModeEnum,
   sourcesPayloadSchema,
   SourcesPayload,
   StepSearchResultsSchema,
   thinkingSchema,
   ThinkingStep,
+  ActionType,
+  ActionTypeEnum,
 } from "@shared/types/frontend";
 
 export {
@@ -19,8 +25,18 @@ export {
   sourcesPayloadSchema,
   StepSearchResultsSchema,
   thinkingSchema,
+  ActionTypeEnum,
+  messageSearchModeSchema,
+  SearchModeEnum,
 };
-export type { SourceRecord, SourcesPayload, ThinkingStep };
+export type {
+  SourceRecord,
+  SourcesPayload,
+  ThinkingStep,
+  ActionType,
+  SearchMode,
+  MessageSearchMode,
+};
 
 // Citation schema
 export const citationSchema = z.object({
@@ -49,6 +65,7 @@ export type Citations = z.infer<typeof citationsSchema>;
 
 const dataSchemas = {
   thinking: thinkingSchema,
+  searchMode: messageSearchModeSchema,
   citations: citationsSchema, // plural
   sources: sourcesPayloadSchema,
 };

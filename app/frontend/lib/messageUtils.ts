@@ -1,4 +1,13 @@
-import { MementoUIMessage, ThinkingStep, SourcesPayload } from "@/components/types";
+import {
+  MementoUIMessage,
+  SearchMode,
+  ThinkingStep,
+  SourcesPayload,
+} from "@/components/types";
+
+function getSearchModeLabel(searchMode: SearchMode): string {
+  return searchMode === "accurateSearch" ? "Accurate Search" : "Search";
+}
 
 // Generate a unique message ID
 export function createMessageId(): string {
@@ -19,12 +28,38 @@ export function createAssistantMessage(
 }
 
 // Create a new user message
-export function createUserMessage(text: string): MementoUIMessage {
+export function createUserMessage(
+  text: string,
+  searchMode: SearchMode = "search"
+): MementoUIMessage {
   return {
     id: createMessageId(),
     role: "user",
-    parts: [{ type: "text", text }],
+    parts: [
+      { type: "text", text },
+      {
+        type: "data-searchMode",
+        data: {
+          mode: searchMode,
+          label: getSearchModeLabel(searchMode),
+        },
+      },
+    ],
   };
+}
+
+export function getMessageSearchMode(
+  message: MementoUIMessage,
+): SearchMode | undefined {
+  const searchModePart = message.parts.find(
+    (part) => part.type === "data-searchMode",
+  );
+
+  if (!searchModePart || searchModePart.type !== "data-searchMode") {
+    return undefined;
+  }
+
+  return searchModePart.data.mode;
 }
 
 // Get or create the last assistant message

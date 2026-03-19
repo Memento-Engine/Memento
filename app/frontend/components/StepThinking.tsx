@@ -6,8 +6,13 @@ import {
   Check,
   X,
   Loader2,
+  Brain,
+  BookOpen,
+  Sparkles,
+  Database,
+  Lightbulb,
 } from "lucide-react";
-import { ThinkingStep } from "./types";
+import { ThinkingStep, ActionType } from "./types";
 import { SearchQueryData, SourceReviewData } from "@/contexts/chatContext";
 import useReferenceContext from "@/hooks/useReferenceContext";
 import { cn, renderDate } from "@/lib/utils";
@@ -17,6 +22,92 @@ import { StepSearchResult } from "@shared/types/frontend";
 type Props = {
   steps: ThinkingStep[];
 };
+
+function getCompletedDurationSeconds(steps: ThinkingStep[]): number {
+  const durationFromSteps = steps.reduce((maxDuration, step) => {
+    if (typeof step.duration === "number" && step.duration > maxDuration) {
+      return step.duration;
+    }
+    return maxDuration;
+  }, 0);
+
+  const parsedTimes = steps
+    .map((step) => step.timestamp)
+    .filter((timestamp): timestamp is string => Boolean(timestamp))
+    .map((timestamp) => Date.parse(timestamp))
+    .filter((value) => Number.isFinite(value));
+
+  const durationFromTimestamps =
+    parsedTimes.length >= 2
+      ? Math.max(...parsedTimes) - Math.min(...parsedTimes)
+      : 0;
+
+  const durationMs = Math.max(durationFromSteps, durationFromTimestamps);
+  return Math.max(1, Math.round(durationMs / 1000));
+}
+
+/**
+ * Get the appropriate icon component based on actionType or stepType.
+ */
+function getStepIcon(step: ThinkingStep, isActive: boolean, hasCompleted: boolean) {
+  const actionType = step.actionType;
+  const stepType = step.stepType;
+  
+  // Base icon class - match component styling
+  const iconClass = cn(
+    "h-3 w-3",
+    isActive && "text-foreground",
+    hasCompleted && !isActive && "text-foreground/60",
+    !hasCompleted && !isActive && "text-muted-foreground",
+  );
+  
+  // If running, show loader
+  if (isActive && step.status === "running") {
+    return <Loader2 className={cn(iconClass, "animate-spin")} />;
+  }
+  
+  // Completed/failed status icons
+  if (step.status === "completed" || step.status === "final") {
+    return <Check className={iconClass} />;
+  }
+  if (step.status === "failed") {
+    return <X className="h-3 w-3 text-destructive" />;
+  }
+  
+  // Action-specific icons (all use same color scheme)
+  if (actionType) {
+    switch (actionType) {
+      case "planning":
+        return <Lightbulb className={iconClass} />;
+      case "sql":
+        return <Database className={iconClass} />;
+      case "semantic":
+        return <Search className={iconClass} />;
+      case "hybrid":
+        return <Search className={iconClass} />;
+      case "readMore":
+        return <BookOpen className={iconClass} />;
+      case "thinking":
+        return <Brain className={iconClass} />;
+      case "summarizing":
+        return <Sparkles className={iconClass} />;
+    }
+  }
+  
+  // Fallback based on stepType
+  switch (stepType) {
+    case "planning":
+      return <Lightbulb className={iconClass} />;
+    case "searching":
+      return <Search className={iconClass} />;
+    case "reasoning":
+      return <Brain className={iconClass} />;
+    case "completion":
+      return <Sparkles className={iconClass} />;
+    default:
+      return <Loader2 className={cn(iconClass, "animate-spin")} />;
+  }
+}
 
 // Component for rendering app icon in results
 export function AppIconDisplay({
@@ -44,10 +135,7 @@ export function StepThinking({ steps }: Props) {
     steps.length > 0 &&
     ["completed", "final"].includes(steps[steps.length - 1].status);
 
-  const completedDuration =
-    steps
-      .map((step) => step.duration)
-      .find((value) => typeof value === "number" && value > 0) ?? 2;
+  const completedDuration = getCompletedDurationSeconds(steps);
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
@@ -154,9 +242,9 @@ export function StepThinking({ steps }: Props) {
                         <div className="absolute left-[7.5px] top-[10px] bottom-[-10px] w-px bg-border z-0" />
                       )}
 
-                      {/* Row with dot and content */}
+                      {/* Row with icon and content */}
                       <div className="relative flex items-start gap-3 z-10">
-                        {/* Dot - centered inside a strict bounding box to perfectly align with text line-height */}
+                        {/* Icon container - centered inside a strict bounding box */}
                         <div className="flex h-5 w-4 shrink-0 items-center justify-center bg-background">
                           <motion.div
                             initial={{ scale: 0 }}
@@ -167,15 +255,10 @@ export function StepThinking({ steps }: Props) {
                               damping: 30,
                               delay: index * 0.05,
                             }}
-                            className={cn(
-                              "h-2 w-2 rounded-full transition-colors duration-200 z-10",
-                              isActive && "bg-primary ring-2 ring-primary/20",
-                              hasCompleted && !isActive && "bg-foreground/60",
-                              !hasCompleted &&
-                                !isActive &&
-                                "bg-muted-foreground/40",
-                            )}
-                          />
+                            className="z-10"
+                          >
+                            {getStepIcon(step, isActive, hasCompleted)}
+                          </motion.div>
                         </div>
 
                         {/* Content */}

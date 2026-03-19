@@ -16,6 +16,7 @@ import ImageSearchGrid from "./ImageSearchGrid";
 import useReferenceContext from "@/hooks/useReferenceContext";
 import { notify } from "@/lib/notify";
 import SourcesButton from "./SourcesButton";
+import { getMessageSearchMode } from "@/lib/messageUtils";
 
 export type MessageItemProps = {
   message: MementoUIMessage;
@@ -68,6 +69,7 @@ function MessageItem({
     }
   }
   const sourceList = Array.from(sourceMap.values());
+  const messageSearchMode = getMessageSearchMode(message);
 
   // Get full text content for copy button
   const getFullTextContent = useCallback(() => {
@@ -119,13 +121,24 @@ function MessageItem({
     return (
       <div key={`${message.id}-${partIndex}`} className="w-full">
         {message.role === "user" ? (
-          <div className="flex justify-end w-full h-full text-start wrap-break-word whitespace-normal">
-            <div className="bg-secondary relative text-foreground p-2 rounded-md inline-block max-w-[80%]">
-              <div className="select-text text-sm whitespace-pre-wrap">
-                {part.text}
-              </div>
-            </div>
-          </div>
+    <div className="flex w-full justify-end mb-4">
+  <div className="bg-secondary text-secondary-foreground px-4 py-3 rounded-2xl inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
+    
+    {messageSearchMode && (
+      <div className="mb-3">
+        <span className="inline-flex items-center gap-1.5 rounded-md bg-background/50 px-2 py-1 text-xs font-medium text-muted-foreground">
+          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+          {messageSearchMode === "accurateSearch" ? "Accurate Search" : "Search"}
+        </span>
+      </div>
+    )}
+
+    <div className="select-text text-[15px] whitespace-pre-wrap leading-relaxed break-words">
+      {part.text}
+    </div>
+
+  </div>
+</div>
         ) : (
           <RenderMarkdown
             sourceMap={sourceMap}

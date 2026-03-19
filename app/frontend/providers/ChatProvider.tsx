@@ -5,10 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import * as Sentry from "@sentry/nextjs";
 import { isDesktopProductionMode } from "../lib/runtimeMode";
 
-import { MementoUIMessage, ThinkingStep } from "@/components/types";
+import { MementoUIMessage, SearchMode, ThinkingStep } from "@/components/types";
 import { AssistantStatus, ChatContext, TRANSITIONS } from "@/contexts/chatContext";
 import { useStreaming } from "@/hooks/useStreaming";
-import { createUserMessage, truncateBeforeMessage } from "@/lib/messageUtils";
+import {
+  createUserMessage,
+  getMessageSearchMode,
+  truncateBeforeMessage,
+} from "@/lib/messageUtils";
 import { notify } from "@/lib/notify";
 import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 import { USE_MOCK_DATA, getMockResponse, MOCK_THINKING_STEPS } from "@/mock";
@@ -76,6 +80,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     message: string,
     rewriteTargetId?: string,
     isRewrite: boolean = false,
+    searchMode: SearchMode = "search",
   ): Promise<void> => {
     // Abort any existing request
     abort();
@@ -98,7 +103,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       if (isRewrite && rewriteTargetId) {
         setMessages((prev) => truncateBeforeMessage(prev, rewriteTargetId));
       } else {
-        setMessages((prev) => [...prev, createUserMessage(message)]);
+        setMessages((prev) => [...prev, createUserMessage(message, searchMode)]);
       }
 
       // ========== MOCK MODE ==========
@@ -154,7 +159,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       }
       // ========== END MOCK MODE ==========
 
-      await streamMessage(message, abortController.signal);
+      await streamMessage(message, abortController.signal, searchMode);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
         console.log("Streaming aborted by user");
@@ -218,7 +223,14 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       return;
     }
 
-    await sendMessage(userPrompt, messageId, true);
+    await sendMessage(
+      userPrompt,
+      messageId,
+      true,
+      (userBeforeAssistant
+        ? getMessageSearchMode(userBeforeAssistant)
+        : undefined) ?? "search",
+    );
   }, [messages, sendMessage]);
 
   const contextValue = {

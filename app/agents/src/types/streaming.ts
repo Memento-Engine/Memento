@@ -6,6 +6,20 @@
 import { z } from "zod";
 
 // ThinkingStep schema and type
+
+// Available action types for UI display
+export const ActionTypeEnum = z.enum([
+  "planning",     // Agent is creating a plan
+  "sql",          // Running SQL/FTS query
+  "semantic",     // Vector semantic search
+  "hybrid",       // Combined FTS + semantic
+  "readMore",     // Reading full content of chunks
+  "thinking",     // Agent is analyzing/reasoning
+  "summarizing",  // Generating final answer
+]);
+
+export type ActionType = z.infer<typeof ActionTypeEnum>;
+
 export const StepSearchResultsSchema = z.object({
   chunk_id: z.number(),
   app_name: z.string(),
@@ -20,6 +34,7 @@ export const StepSearchResultsSchema = z.object({
 export const thinkingSchema = z.object({
   stepId: z.string(),
   stepType: z.enum(["planning", "searching", "reasoning", "completion"]),
+  actionType: ActionTypeEnum.optional(), // Specific action being performed
   status: z.enum(["running", "completed", "failed", "final"]),
   title: z.string(),
   description: z.string().optional(),

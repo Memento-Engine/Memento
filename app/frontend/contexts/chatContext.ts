@@ -1,4 +1,4 @@
-import { MementoUIMessage, ThinkingStep } from "@/components/types";
+import { MementoUIMessage, SearchMode, ThinkingStep } from "@/components/types";
 import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 import { createContext } from "react";
 
@@ -33,6 +33,7 @@ type ChatContext = {
     message: string,
     messageId?: string,
     rewrite?: boolean,
+    searchMode?: SearchMode,
   ) => Promise<void>;
   rewrite: (messageId: string) => Promise<void>;
   stopMessage: () => void;

@@ -13,8 +13,8 @@ export default function Home() {
       {/* <ParticleBackground /> */}
 
       <ChatHome
-        handleSend={(query: string): void => {
-          sendMessage(query);
+        handleSend={(query, searchMode): void => {
+          sendMessage(query, undefined, false, searchMode);
         }}
       />
     </div>

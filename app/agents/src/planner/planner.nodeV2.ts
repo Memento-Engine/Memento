@@ -83,9 +83,9 @@ export async function plannerNodeV2(
       emitStepEvent(state.requestId, {
         stepId: "plan_0",
         stepType: "planning",
-        title: "Figuring out how to answer your question...",
+        actionType: "planning",
+        title: "Understanding your question...",
         status: "running",
-        message: "I'm analyzing your request to determine the best way to find the information you need.",
       });
 
       try {
@@ -145,9 +145,9 @@ export async function plannerNodeV2(
                 emitStepEvent(state.requestId, {
                   stepId: "plan_0",
                   stepType: "planning",
-                  title: "Refining my approach...",
+                  actionType: "planning",
+                  title: "Refining search strategy...",
                   status: "running",
-                  message: "I'm adjusting my strategy to better find the answer.",
                 });
               }
               continue;
@@ -187,9 +187,9 @@ export async function plannerNodeV2(
         emitStepEvent(state.requestId, {
           stepId: "plan_0",
           stepType: "planning",
-          title: "Couldn't find a starting point",
+          actionType: "planning",
+          title: "Having trouble understanding the request",
           status: "failed",
-          message: "I'm having trouble understanding how to begin. I'll try a different approach.",
         });
 
         return {

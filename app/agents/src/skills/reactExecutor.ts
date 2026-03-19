@@ -486,6 +486,9 @@ export async function executeReActLoop(
   const history: ReActTurn[] = [];
   const previewLength = config.agent.previewLength;
 
+  // Extract UI-friendly search queries from plan step (if available)
+  const uiQueries = (currentPlanStep as any).uiSearchQueries as string[] | undefined;
+
   // Track for StepResult
   const searchesPerformed: SearchPerformed[] = [];
   const allChunkIds = new Set<number>();
@@ -578,7 +581,7 @@ export async function executeReActLoop(
         emitStepEvent(requestId, {
           stepType: "searching",
           stepId: currentPlanStep.id,
-          title: "Found relevant information",
+          title: `Found ${searchResults.length} relevant result${searchResults.length === 1 ? "" : "s"}`,
           resultCount: searchResults.length,
           results: searchResults,
           status: "completed",
@@ -587,7 +590,7 @@ export async function executeReActLoop(
         emitStepEvent(requestId, {
           stepType: "searching",
           stepId: currentPlanStep.id,
-          title: action.summary ?? "Step complete",
+          title: action.summary ?? "Completed search",
           status: "completed",
         });
       }
@@ -617,18 +620,16 @@ export async function executeReActLoop(
     // Execute action
     let observation: ReActTurn["observation"];
 
-    if (turn > 1) {
-      emitStepEvent(requestId, {
-        stepType: "searching",
-        stepId: currentPlanStep.id,
-        title: "Analyzing...",
-        message: action.thought,
-        status: "running",
-      });
-    }
-
     switch (action.action) {
       case "sql":
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          actionType: "sql",
+          stepId: currentPlanStep.id,
+          title: `Searching your data...`,
+          queries: uiQueries?.slice(0, 3),
+          status: "running",
+        });
         logSectionLine(logger, "CALLED ACTION sql", {
           requestId,
           stepId: currentPlanStep.id,
@@ -658,6 +659,14 @@ export async function executeReActLoop(
         break;
 
       case "semantic":
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          actionType: "semantic",
+          stepId: currentPlanStep.id,
+          title: `Finding similar content...`,
+          queries: uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined),
+          status: "running",
+        });
         logSectionLine(logger, "CALLED ACTION semantic", {
           requestId,
           stepId: currentPlanStep.id,
@@ -688,6 +697,14 @@ export async function executeReActLoop(
         break;
 
       case "hybrid":
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          actionType: "hybrid",
+          stepId: currentPlanStep.id,
+          title: `Searching across all sources...`,
+          queries: uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined),
+          status: "running",
+        });
         logSectionLine(logger, "CALLED ACTION hybrid", {
           requestId,
           stepId: currentPlanStep.id,
@@ -719,18 +736,21 @@ export async function executeReActLoop(
         break;
 
       case "readMore":
+        {
+          const chunkCount = (action.chunkIds ?? []).slice(0, modeConfig.maxReadMoreChunks).length;
+          emitStepEvent(requestId, {
+            stepType: "searching",
+            actionType: "readMore",
+            stepId: currentPlanStep.id,
+            title: `Reading ${chunkCount} result${chunkCount === 1 ? "" : "s"} in detail...`,
+            status: "running",
+          });
+        }
         logSectionLine(logger, "CALLED ACTION readMore", {
           requestId,
           stepId: currentPlanStep.id,
           turn,
           chunkIds: action.chunkIds,
-        });
-        emitStepEvent(requestId, {
-          stepType: "searching",
-          stepId: currentPlanStep.id,
-          title: "Reading full content...",
-          message: `Reading chunks: ${(action.chunkIds ?? []).slice(0, modeConfig.maxReadMoreChunks).join(", ")}`,
-          status: "running",
         });
         observation = await executeReadMoreAction(action, requestId, modeConfig.maxReadMoreChunks);
         // Track which chunks were fully read
@@ -791,6 +811,14 @@ export async function executeReActLoop(
         break;
 
       case "think":
+        emitStepEvent(requestId, {
+          stepType: "reasoning",
+          actionType: "thinking",
+          stepId: currentPlanStep.id,
+          title: "Analyzing findings...",
+          reasoning: action.analysis,
+          status: "running",
+        });
         observation = { success: true, data: { analysis: action.analysis } };
         logSectionLine(logger, "RESULT ACTION think", {
           requestId,

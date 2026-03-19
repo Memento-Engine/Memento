@@ -125,6 +125,16 @@ export async function executorNodeV2(
               // DAG-scoped context
               const depContext = buildDepContext(step, plan.steps, stepResults);
 
+              // Emit step start event
+              const uiQueries = (step as any).uiSearchQueries;
+              emitStepEvent(state.requestId, {
+                stepType: step.kind === "search" ? "searching" : "reasoning",
+                stepId: step.id,
+                title: step.kind === "search" ? "Searching for information..." : "Analyzing data...",
+                queries: Array.isArray(uiQueries) ? uiQueries.slice(0, 3) : undefined,
+                status: "running",
+              });
+
               try {
                 const { stepResult, llmCalls: stepLlmCalls } = await reactExecutorNode(
                   state,

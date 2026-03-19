@@ -11,9 +11,34 @@ export const StepSearchResultsSchema = z.object({
   text_json: z.string().optional(),
 });
 
+// Available action types for UI display
+export const ActionTypeEnum = z.enum([
+  "planning",     // Agent is creating a plan
+  "sql",          // Running SQL/FTS query
+  "semantic",     // Vector semantic search
+  "hybrid",       // Combined FTS + semantic
+  "readMore",     // Reading full content of chunks
+  "thinking",     // Agent is analyzing/reasoning
+  "summarizing",  // Generating final answer
+]);
+
+export type ActionType = z.infer<typeof ActionTypeEnum>;
+
+export const SearchModeEnum = z.enum(["search", "accurateSearch"]);
+
+export type SearchMode = z.infer<typeof SearchModeEnum>;
+
+export const messageSearchModeSchema = z.object({
+  mode: SearchModeEnum,
+  label: z.string(),
+});
+
+export type MessageSearchMode = z.infer<typeof messageSearchModeSchema>;
+
 export const thinkingSchema = z.object({
   stepId: z.string(),
   stepType: z.enum(["planning", "searching", "reasoning", "completion"]),
+  actionType: ActionTypeEnum.optional(), // Specific action being performed
   status: z.enum(["running", "completed", "failed", "final"]),
   title: z.string(),
   description: z.string().optional(),

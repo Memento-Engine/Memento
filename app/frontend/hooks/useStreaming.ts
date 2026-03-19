@@ -1,7 +1,7 @@
 import { useRef, useCallback } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { isDesktopProductionMode } from "../lib/runtimeMode";
-import { MementoUIMessage, ThinkingStep } from "@/components/types";
+import { MementoUIMessage, SearchMode, ThinkingStep } from "@/components/types";
 import {
   AssistantStatus,
   SearchQueryData,
@@ -37,7 +37,11 @@ interface StreamHandlerCallbacks {
 
 interface UseStreamingResult {
   activeRequestRef: React.RefObject<AbortController | null>;
-  streamMessage: (goal: string, signal: AbortSignal) => Promise<void>;
+  streamMessage: (
+    goal: string,
+    signal: AbortSignal,
+    searchMode?: SearchMode,
+  ) => Promise<void>;
   abort: () => void;
 }
 
@@ -294,7 +298,7 @@ export function useStreaming(
 
   // Main streaming function
   const streamMessage = useCallback(
-    async (goal: string, signal: AbortSignal) => {
+    async (goal: string, signal: AbortSignal, searchMode: SearchMode = "search") => {
       // Get auth headers from OS keyring (async)
       const headers = await getAuthHeaders();
 
@@ -310,7 +314,7 @@ export function useStreaming(
         method: "POST",
         headers,
         signal,
-        body: JSON.stringify({ goal }),
+        body: JSON.stringify({ goal, mode: searchMode }),
       });
 
       if (!res.ok) {
