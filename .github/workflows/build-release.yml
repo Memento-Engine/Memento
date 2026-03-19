@@ -179,6 +179,7 @@ jobs:
         with:
           name: frontend-out
           path: app/frontend/out/
+          if-no-files-found: error
           retention-days: 5
 
   build-agents:
