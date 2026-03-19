@@ -75,6 +75,7 @@ if (Test-Path "app/src-tauri/icons") {
 
 # Pack with Velopack
 Write-Host "Packing with Velopack..." -ForegroundColor Yellow
+$deltaMode = if ($NoDelta) { "None" } else { "BestSpeed" }
 $packArgs = @(
     "pack",
     "--packId", "Memento",
@@ -82,19 +83,26 @@ $packArgs = @(
     "--packDir", $stagingDir,
     "--mainExe", "memento.exe",
     "--outputDir", $OutputDir,
-    "--installDir", "%LOCALAPPDATA%/Programs/Memento"
+    "--delta", $deltaMode
 )
 
-# Add delta base if previous release exists and not skipped
+vpk @packArgs
+
+# If a previous full package is available, create an explicit delta package.
 if (-not $NoDelta -and (Test-Path "previous-release/*.nupkg")) {
-    $prevPkg = Get-ChildItem "previous-release/*.nupkg" | Select-Object -First 1
-    if ($prevPkg) {
-        Write-Host "Including delta from: $($prevPkg.Name)" -ForegroundColor Gray
-        $packArgs += @("--delta", $prevPkg.FullName)
+    $prevPkg = Get-ChildItem "previous-release/*-full.nupkg" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    $newPkg = Get-ChildItem "$OutputDir/*-full.nupkg" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($prevPkg -and $newPkg) {
+        $deltaFileName = $newPkg.Name -replace "-full\.nupkg$", "-delta.nupkg"
+        $deltaPath = Join-Path $OutputDir $deltaFileName
+        Write-Host "Generating delta package from: $($prevPkg.Name)" -ForegroundColor Gray
+        vpk delta generate --mode BestSpeed --base $prevPkg.FullName --new $newPkg.FullName --output $deltaPath
     }
 }
-
-vpk @packArgs
 
 Write-Host "Done! Output in: $OutputDir" -ForegroundColor Green
 Write-Host ""

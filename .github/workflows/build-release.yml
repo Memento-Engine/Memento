@@ -417,6 +417,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.validate-policy.outputs.version }}"
+          $createDelta = "${{ github.event.inputs.create_delta }}" -ne "false"
           $packArgs = @(
             "pack",
             "--packId",      "Memento",
@@ -424,17 +425,26 @@ jobs:
             "--packDir",     "release-staging",
             "--mainExe",     "memento.exe",
             "--outputDir",   "velopack-output",
-            "--installDir",  "%LOCALAPPDATA%/Programs/Memento"
+            "--delta",       $(if ($createDelta) { "BestSpeed" } else { "None" })
           )
 
-          $prevPkg = Get-ChildItem "previous-release/*.nupkg" -ErrorAction SilentlyContinue |
+          $prevPkg = Get-ChildItem "previous-release/*-full.nupkg" -ErrorAction SilentlyContinue |
                      Select-Object -First 1
-          if ($prevPkg) {
-            Write-Host "Delta source: $($prevPkg.FullName)"
-            $packArgs += @("--delta", $prevPkg.FullName)
-          }
 
           vpk @packArgs
+
+          # Generate explicit delta package when a previous full package exists.
+          if ($createDelta -and $prevPkg) {
+            $newPkg = Get-ChildItem "velopack-output/*-full.nupkg" -ErrorAction SilentlyContinue |
+                      Sort-Object LastWriteTime -Descending |
+                      Select-Object -First 1
+            if ($newPkg) {
+              Write-Host "Delta source: $($prevPkg.FullName)"
+              $deltaName = $newPkg.Name -replace "-full\.nupkg$", "-delta.nupkg"
+              $deltaPath = Join-Path "velopack-output" $deltaName
+              vpk delta generate --mode BestSpeed --base $prevPkg.FullName --new $newPkg.FullName --output $deltaPath
+            }
+          }
 
       - name: Guard — ensure output files exist
         shell: pwsh
