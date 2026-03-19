@@ -83,8 +83,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     const abortController = new AbortController();
     activeRequestRef.current = abortController;
 
-    if (pathname !== "/chat/123") {
-      router.push("/chat/123", { scroll: false });
+    if (pathname !== "/chat") {
+      router.push("/chat", { scroll: false });
     }
     console.log("Message from chat input", message);
 
