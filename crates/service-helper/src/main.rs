@@ -6,7 +6,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use std::process::{Command, ExitCode};
+use std::{path::PathBuf, process::{Command, ExitCode}};
 
 /// Service name constants
 const SERVICE_NAME: &str = "SearchEngineDaemon";
@@ -63,18 +63,26 @@ fn main() -> ExitCode {
     }
 }
 
-/// Shared directory path for cross-process communication
-/// Windows: C:\ProgramData\Memento\
-const SHARED_DIR: &str = r"C:\ProgramData\Memento";
+/// Resolve shared directory path for cross-process communication.
+/// Uses PROGRAMDATA when available to avoid brittle hardcoded absolute paths.
+fn shared_dir() -> PathBuf {
+    if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+        PathBuf::from(program_data).join("Memento")
+    } else {
+        // Safe Windows fallback if env var is unexpectedly missing
+        PathBuf::from(r"C:\ProgramData").join("Memento")
+    }
+}
 
 /// Create shared directory with proper permissions for all users
 /// This allows the service (SYSTEM) and user apps to communicate via port files
 fn create_shared_directory() -> Result<()> {
-    println!("Creating shared directory: {}", SHARED_DIR);
+    let shared_dir = shared_dir();
+    println!("Creating shared directory: {}", shared_dir.display());
     
     // Create the directory structure
-    let ports_dir = format!("{}\\ports", SHARED_DIR);
-    let runtime_dir = format!("{}\\runtime", SHARED_DIR);
+    let ports_dir = shared_dir.join("ports");
+    let runtime_dir = shared_dir.join("runtime");
     
     std::fs::create_dir_all(&ports_dir)
         .context("Failed to create ports directory")?;
@@ -85,7 +93,7 @@ fn create_shared_directory() -> Result<()> {
     // This allows non-admin users to read/write port files
     let output = Command::new("icacls")
         .args([
-            SHARED_DIR,
+            &shared_dir.to_string_lossy(),
             "/grant", "Users:(OI)(CI)M",      // Modify for all users (inherited)
             "/grant", "SYSTEM:(OI)(CI)F",     // Full control for SYSTEM (service)
             "/T",                              // Apply recursively

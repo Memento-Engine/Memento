@@ -128,13 +128,19 @@ fn get_base_dir() -> PathBuf {
 }
 
 /// Get the shared directory for Memento (accessible by service and user apps)
-/// In production: C:\ProgramData\Memento (written by service, read by apps)
+/// In production: %PROGRAMDATA%\Memento (written by service, read by apps)
 /// In development: Same as base_dir (no service involvement)
 fn get_shared_dir() -> PathBuf {
     if cfg!(debug_assertions) {
         get_base_dir()
     } else {
-        PathBuf::from(r"C:\ProgramData\Memento")
+        // Use PROGRAMDATA env var with fallback
+        if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+            PathBuf::from(program_data).join("Memento")
+        } else {
+            // Fallback for edge cases where env var is missing
+            PathBuf::from(r"C:\ProgramData").join("Memento")
+        }
     }
 }
 
@@ -248,9 +254,11 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
             })?;
     } else {
         info!("Starting daemon via Windows Service");
-        Command::new("sc")
+        // Use status() not spawn() - we need to wait for sc.exe to submit the
+        // start request to SCM before polling service state in wait_until_healthy()
+        let sc_result = Command::new("sc")
             .args(["start", "SearchEngineDaemon"])
-            .spawn()
+            .status()
             .map_err(|e| {
                 let message = format!("Failed to start service: {}", e);
                 error!("{}", message);
@@ -265,6 +273,14 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
                 });
                 message
             })?;
+        // Exit code 0 = started, 1056 = already running (both are fine)
+        if !sc_result.success() {
+            let code = sc_result.code().unwrap_or(-1);
+            // 1056 = ERROR_SERVICE_ALREADY_RUNNING
+            if code != 1056 {
+                info!("sc start exited with code {} (service may already be running)", code);
+            }
+        }
     }
 
     info!("Waiting for daemon to become healthy...");
@@ -387,6 +403,12 @@ fn wait_until_healthy() -> Result<(), String> {
     if !cfg!(debug_assertions) {
         info!("Waiting for Windows service to reach RUNNING state...");
         let service_timeout = Duration::from_secs(30);
+        // Track whether we've seen the service leave STOPPED at least once.
+        // STOPPED is the normal initial state — only treat it as failure after
+        // the service has started transitioning (i.e. we've seen START_PENDING
+        // or RUNNING) and then falls back to STOPPED/FAILED.
+        let mut seen_start_pending = false;
+
         while start.elapsed() < service_timeout {
             let output = Command::new("sc")
                 .args(["query", SERVICE_NAME])
@@ -398,7 +420,13 @@ fn wait_until_healthy() -> Result<(), String> {
                     if stdout.contains("RUNNING") {
                         info!("Service is RUNNING, proceeding with health checks");
                         break;
-                    } else if stdout.contains("STOPPED") || stdout.contains("FAILED") {
+                    } else if stdout.contains("START_PENDING") {
+                        seen_start_pending = true;
+                        // Still starting, keep waiting
+                    } else if stdout.contains("FAILED") || (seen_start_pending && stdout.contains("STOPPED")) {
+                        // Only abort on STOPPED if we've already seen it trying to start.
+                        // Pure STOPPED before any START_PENDING just means SCM hasn't
+                        // acknowledged the start request yet — keep polling.
                         let msg = "Service failed to start";
                         error!("{}", msg);
                         sentry::with_scope(|scope| {
@@ -410,7 +438,7 @@ fn wait_until_healthy() -> Result<(), String> {
                         });
                         return Err(msg.to_string());
                     }
-                    // START_PENDING - keep waiting
+                    // STOPPED (before START_PENDING) or other transient states — keep waiting
                 }
                 Err(e) => {
                     warn!("Failed to query service status: {}", e);

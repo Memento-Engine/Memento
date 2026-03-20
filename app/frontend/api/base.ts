@@ -20,7 +20,9 @@ class TauriPortReaderImpl implements PortReader {
     const isWindows = navigator.platform.toLowerCase().includes("win");
     
     if (isProduction && isWindows) {
-      // Read from C:\ProgramData\Memento\ports\<portFile>
+      // Read from %PROGRAMDATA%\Memento\ports\<portFile>
+      // In Tauri context, we use the known Windows path since browser env vars aren't available
+      // The service-helper ensures this directory exists with proper permissions
       const sharedPath = `C:\\ProgramData\\Memento\\ports\\${this.portFileName}`;
       content = await readTextFile(sharedPath);
     } else {

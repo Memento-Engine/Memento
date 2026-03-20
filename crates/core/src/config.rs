@@ -71,7 +71,11 @@ pub fn shared_dir() -> PathBuf {
         // Production mode: use system-wide shared directory
         #[cfg(windows)]
         {
-            PathBuf::from(r"C:\ProgramData\Memento")
+            if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+                PathBuf::from(program_data).join("Memento")
+            } else {
+                PathBuf::from(r"C:\ProgramData").join("Memento")
+            }
         }
         #[cfg(not(windows))]
         {

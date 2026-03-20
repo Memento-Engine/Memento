@@ -26,6 +26,13 @@ Write-Host "Building service-helper..." -ForegroundColor Yellow
 cargo build --release -p service-helper
 if ($LASTEXITCODE -ne 0) { throw "Service helper build failed" }
 
+Write-Host "Building agents server..." -ForegroundColor Yellow
+Push-Location app/agents
+npm ci
+npm run build:exe
+Pop-Location
+if ($LASTEXITCODE -ne 0) { throw "Agents build failed" }
+
 Write-Host "Building frontend..." -ForegroundColor Yellow
 Push-Location app/frontend
 npm ci
@@ -52,6 +59,7 @@ New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 Copy-Item "target/release/tauri-app.exe" "$stagingDir/memento.exe"
 Copy-Item "target/release/memento-daemon.exe" "$stagingDir/"
 Copy-Item "target/release/service-helper.exe" "$stagingDir/"
+Copy-Item "app/agents/dist/memento-agents.exe" "$stagingDir/"
 
 # Copy ONNX Runtime DirectML.dll
 # The ort crate downloads prebuilt binaries to AppData\Local\ort.pyke.io
