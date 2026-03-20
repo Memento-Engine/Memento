@@ -2,6 +2,7 @@ import axios from "axios";
 import { getChatMessagesListUrl, getChatMessagesUrl } from "../config/daemon";
 import { getLogger } from "../utils/logger";
 import { StepResult } from "../types/stepResult";
+import { ThinkingStep } from "../types/streaming";
 
 interface MessageSourceInput {
   chunk_id: number;
@@ -13,6 +14,7 @@ interface SaveMessagePayload {
   session_id: string;
   role: "user" | "assistant";
   content: string;
+  thinking_steps: ThinkingStep[];
   sources: MessageSourceInput[];
 }
 
@@ -41,18 +43,25 @@ export async function saveMessage(
   role: "user" | "assistant",
   content: string,
   sources: MessageSourceInput[],
+  thinkingSteps: ThinkingStep[] = [],
 ): Promise<number | null> {
   const logger = await getLogger();
 
   try {
     const response = await axios.post<SaveMessageResponse>(
       await getChatMessagesUrl(),
-      { session_id: sessionId, role, content, sources } satisfies SaveMessagePayload,
+      {
+        session_id: sessionId,
+        role,
+        content,
+        thinking_steps: thinkingSteps,
+        sources,
+      } satisfies SaveMessagePayload,
       { timeout: 10000, headers: { "Content-Type": "application/json" } },
     );
 
     if (response.data?.success) {
-      logger.info({ messageId: response.data.message_id, sessionId, role, sourceCount: sources.length }, "Message saved to DB");
+      logger.info({ messageId: response.data.message_id, sessionId, role, sourceCount: sources.length, thinkingStepCount: thinkingSteps.length }, "Message saved to DB");
       return response.data.message_id;
     }
 

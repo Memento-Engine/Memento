@@ -7,6 +7,7 @@ import {
   waitForDaemonHealthy,
 } from "@/api/base";
 import { invoke } from "@tauri-apps/api/core";
+import { isDesktopProductionMode } from "@/lib/runtimeMode";
 
 interface SystemHealthProviderProps {
   children: React.ReactNode;
@@ -25,7 +26,7 @@ export default function SystemHealthProvider({
   const startMementoDaemon = async (): Promise<void> => {
     try {
       setIsMementoDaemonLoading(true);
-      await invoke("start_daemon", { isDev: true });
+      await invoke("start_daemon", { isDev: !isDesktopProductionMode() });
       await waitForDaemonHealthy(30000);
       setIsError(false);
       setError("");
@@ -42,7 +43,7 @@ export default function SystemHealthProvider({
   const stopMementoDaemon = async (): Promise<void> => {
     try {
       setIsMementoDaemonLoading(true);
-      await invoke("stop_daemon", { isDev: true });
+      await invoke("stop_daemon", { isDev: !isDesktopProductionMode() });
       setIsError(false);
       setError("");
       setIsRunning(false);

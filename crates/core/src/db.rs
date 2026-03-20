@@ -1246,13 +1246,15 @@ SELECT
         session_id: &str,
         role: &str,
         content: &str,
+        thinking_steps: Option<&str>,
     ) -> Result<i64, sqlx::Error> {
         let result = sqlx::query(
-            "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)"
+            "INSERT INTO messages (session_id, role, content, thinking_steps) VALUES (?, ?, ?, ?)"
         )
             .bind(session_id)
             .bind(role)
             .bind(content)
+            .bind(thinking_steps)
             .execute(&self.pool)
             .await?;
 
@@ -1288,14 +1290,14 @@ SELECT
     }
 
     /// Load recent messages for a session.
-    /// Returns (id, role, content, created_at) ordered oldest-first.
+    /// Returns (id, role, content, created_at, thinking_steps) ordered oldest-first.
     pub async fn get_session_messages(
         &self,
         session_id: &str,
         limit: i32,
-    ) -> Result<Vec<(i64, String, String, String)>, sqlx::Error> {
+    ) -> Result<Vec<(i64, String, String, String, Option<String>)>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?"
+            "SELECT id, role, content, created_at, thinking_steps FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC LIMIT ?"
         )
             .bind(session_id)
             .bind(limit)
@@ -1309,6 +1311,7 @@ SELECT
                 r.get::<String, _>("role"),
                 r.get::<String, _>("content"),
                 r.get::<String, _>("created_at"),
+                r.get::<Option<String>, _>("thinking_steps"),
             )
         }).collect())
     }

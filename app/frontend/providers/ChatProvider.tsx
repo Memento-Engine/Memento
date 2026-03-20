@@ -55,7 +55,12 @@ export default function ChatProvider({ children }: ChatProviderProps) {
           parts: [{ type: "text" as const, text: row.content }],
         };
       } else {
-        const parts: MementoUIMessage["parts"] = [{ type: "text" as const, text: row.content }];
+        const parts: MementoUIMessage["parts"] = (row.thinking_steps ?? []).map((step) => ({
+          type: "data-thinking" as const,
+          data: step,
+        }));
+
+        parts.push({ type: "text" as const, text: row.content });
 
         if (row.sources.length > 0) {
           parts.push({
@@ -102,7 +107,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         const rows = await loadSessionMessages(sid, 100);
         if (rows.length > 0) {
           const uiMessages = convertToUIMessages(rows);
-          console.log("UI MESSAGES", uiMessages);
           setMessages(uiMessages);
           console.log(`[ChatProvider] Loaded ${rows.length} messages from DB`);
         }
@@ -333,6 +337,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     try {
       const rows = await loadSessionMessages(targetSessionId, 100);
       const uiMessages = convertToUIMessages(rows);
+      console.log('UI MESSAGES', uiMessages);
       setMessages(uiMessages);
     } catch (error) {
       console.error("[ChatProvider] Failed to open chat session:", error);

@@ -19,7 +19,7 @@ import { Inter } from "next/font/google";
 import React, { useEffect } from "react";
 import useOnboarding from "@/hooks/useOnboarding";
 import OnboardingProvider from "@/providers/OnBoardingProvider";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -71,18 +71,26 @@ function LayoutRoot({ children }: { children: React.ReactNode }) {
 }
 
 function LayoutInner({ children }: { children: React.ReactNode }) {
-  const { isOnboardingComplete } = useOnboarding();
+  const { isOnboardingComplete, isOnboardingResolved } = useOnboarding();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!isOnboardingComplete) {
+    if (!isOnboardingResolved) {
+      return;
+    }
+
+    if (!isOnboardingComplete && pathname !== "/onboarding") {
       router.push("/onboarding");
-    } else {
+      return;
+    }
+
+    if (isOnboardingComplete && pathname === "/onboarding") {
       router.push("/");
     }
-  }, [isOnboardingComplete, router]);
+  }, [isOnboardingComplete, isOnboardingResolved, pathname, router]);
 
-  if (!isOnboardingComplete) {
+  if (!isOnboardingResolved || !isOnboardingComplete) {
     return <>{children}</>;
   }
 

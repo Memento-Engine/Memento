@@ -7,6 +7,8 @@ interface OnBoardingContext {
   isOnboardingComplete: boolean;
   setIsOnboardingComplete: (complete: boolean) => void;
 
+  isOnboardingResolved: boolean;
+
   
 }
 

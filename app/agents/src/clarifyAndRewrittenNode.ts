@@ -15,10 +15,12 @@ export async function clarifyAndRewrittenNode(
 
   logger.info("Starting clarification and query rewriting node.");
   const MAX_TRIES = 1;
+  const currentDate = new Date().toLocaleDateString("en-CA");
 
   // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
   const prompt = await clarifyAndRewritePrompt.invoke({
     userQuery: state.goal,
+    currentDate,
     conversation: (state.chatHistory ?? [])
       .slice(-10)
       .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)

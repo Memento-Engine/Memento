@@ -17,8 +17,7 @@ import { initializeToolRegistry } from "./tools/registry";
 import { AgentRequest, AgentResponse } from "./types/agent";
 import { isAgentError, ErrorCode, RateLimitError } from "./types/errors";
 import {
-  withEventQueue,
-  drainQueuedEvents,
+  getEventQueue,
   initializeEventQueue,
   cleanupEventQueue,
 } from "./utils/eventQueue";
@@ -411,21 +410,29 @@ async function startServer() {
                 return res.end();
               }
 
-              // Sources are already emitted during streaming via emitSources() in finalAnswer
 
-              // Persist messages to DB (fire-and-forget, don't block response)
+              // Persist messages to DB in-order so reload preserves user -> assistant sequence.
               if (sessionId) {
                 const persistSession = sessionId;
                 const finalResult = (result as any)?.finalResult;
                 const stepResults = (result as any)?.stepResults;
+                const persistedThinkingSteps = (getEventQueue(requestId)?.getAll() ?? [])
+                  .filter((event) => event.type === "thinking")
+                  .map((event) => event.data);
 
                 // Save user message (no sources)
-                saveMessage(persistSession, "user", goal, []).catch(() => {});
+                await saveMessage(persistSession, "user", goal, []);
 
                 // Save assistant message with chunk references
                 if (finalResult && stepResults) {
                   const sources = buildSourcesFromStepResults(stepResults);
-                  saveMessage(persistSession, "assistant", finalResult, sources).catch(() => {});
+                  await saveMessage(
+                    persistSession,
+                    "assistant",
+                    finalResult,
+                    sources,
+                    persistedThinkingSteps,
+                  );
                 }
               }
 

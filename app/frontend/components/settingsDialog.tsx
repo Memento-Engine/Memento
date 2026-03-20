@@ -29,6 +29,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import useAuth from "@/hooks/useAuth";
 import { invoke } from "@tauri-apps/api/core";
+import { isDesktopProductionMode } from "@/lib/runtimeMode";
 
 export enum SettingsTabs {
   Profile,
@@ -874,7 +875,7 @@ function BackgroundServiceTab(): React.ReactElement {
     try {
       setIsDaemonActionLoading(true);
       setError(null);
-      await invoke("start_daemon", { isDev: true });
+      await invoke("start_daemon", { isDev: !isDesktopProductionMode() });
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s for daemon to start
       await refreshStatuses();
     } catch (err) {
@@ -892,7 +893,7 @@ function BackgroundServiceTab(): React.ReactElement {
     try {
       setIsDaemonActionLoading(true);
       setError(null);
-      await invoke("stop_daemon", { isDev: true });
+      await invoke("stop_daemon", { isDev: !isDesktopProductionMode() });
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s for daemon to stop
       await refreshStatuses();
     } catch (err) {

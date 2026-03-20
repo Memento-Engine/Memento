@@ -389,18 +389,6 @@ export async function invokeRoleLlmStreaming({
   const messages = await toGatewayMessages(prompt);
   const usePremiumCredits = shouldUsePremiumCredits(role);
 
-  logSeparator(logger, `LLM STREAM START | role=${role}`, {
-    requestId,
-    role,
-    messageCount: messages.length,
-    usePremiumCredits,
-  });
-  logSectionLine(logger, "CALLED ai-gateway /v1/chat/stream", {
-    requestId,
-    role,
-    timeoutMs: config.aiGateway.timeoutMs,
-  });
-
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
     request_id: requestId,

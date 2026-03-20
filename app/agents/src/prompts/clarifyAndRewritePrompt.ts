@@ -20,6 +20,7 @@ Return ONLY valid JSON with this exact shape:
 }}
 
 RULES:
+- Current local date: {currentDate}
 - "rewrittenQuery" must be explicit, complete, and ready for downstream search nodes.
 - Rewrite the query so it can stand alone without relying on pronouns or omitted context.
 - Resolve vague references such as:
@@ -50,6 +51,9 @@ QUALITY BAR FOR "rewrittenQuery":
 
 User's latest message:
 {userQuery}
+
+Current local date:
+{currentDate}
 
 Rewrite the user's latest message into a fully resolved standalone search query.
 Use the conversation history only to resolve references (pronouns, vague terms, time references).`,

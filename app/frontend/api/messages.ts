@@ -1,6 +1,7 @@
 /**
  * API functions for chat message persistence via the daemon.
  */
+import { ThinkingStep } from "@/components/types";
 import { getBaseUrl } from "./base";
 
 export interface MessageRow {
@@ -8,6 +9,7 @@ export interface MessageRow {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  thinking_steps: ThinkingStep[];
   sources: MessageSourceRow[];
 }
 

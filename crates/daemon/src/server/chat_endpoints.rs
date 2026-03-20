@@ -1,6 +1,7 @@
 use axum::{extract::{Json, Path, State}, response::{IntoResponse, Response}};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use tracing::{info, error};
 
@@ -13,6 +14,8 @@ pub struct SaveMessageRequest {
     pub session_id: String,
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub thinking_steps: Vec<Value>,
     /// Chunk references — (chunk_id, usage_type, step_id)
     #[serde(default)]
     pub sources: Vec<MessageSourceInput>,
@@ -52,6 +55,7 @@ pub struct MessageRow {
     pub role: String,
     pub content: String,
     pub created_at: String,
+    pub thinking_steps: Vec<Value>,
     pub sources: Vec<MessageSourceRecord>,
 }
 
@@ -169,7 +173,24 @@ pub async fn save_message(
         }
     }
 
-    match state.db.save_message(&payload.session_id, &payload.role, &payload.content).await {
+    let thinking_steps_json = if payload.thinking_steps.is_empty() {
+        None
+    } else {
+        match serde_json::to_string(&payload.thinking_steps) {
+            Ok(json) => Some(json),
+            Err(e) => {
+                error!("Failed to serialize thinking steps: {:?}", e);
+                return (StatusCode::BAD_REQUEST, "Invalid thinking_steps payload").into_response();
+            }
+        }
+    };
+
+    match state.db.save_message(
+        &payload.session_id,
+        &payload.role,
+        &payload.content,
+        thinking_steps_json.as_deref(),
+    ).await {
         Ok(message_id) => {
             // Save sources if any
             if !payload.sources.is_empty() {
@@ -183,7 +204,7 @@ pub async fn save_message(
                 }
             }
 
-            info!(message_id, session_id = %payload.session_id, role = %payload.role, source_count = payload.sources.len(), "Message saved");
+            info!(message_id, session_id = %payload.session_id, role = %payload.role, source_count = payload.sources.len(), thinking_step_count = payload.thinking_steps.len(), "Message saved");
             (StatusCode::OK, Json(SaveMessageResponse { success: true, message_id })).into_response()
         }
         Err(e) => {
@@ -277,7 +298,17 @@ pub async fn get_messages(
         Ok(rows) => {
             let mut messages = Vec::with_capacity(rows.len());
 
-            for (id, role, content, created_at) in rows {
+            for (id, role, content, created_at, thinking_steps_json) in rows {
+                let thinking_steps = thinking_steps_json
+                    .as_deref()
+                    .map(|json| serde_json::from_str::<Vec<Value>>(json))
+                    .transpose()
+                    .unwrap_or_else(|e| {
+                        error!("Failed to parse thinking steps for message {}: {:?}", id, e);
+                        Some(Vec::new())
+                    })
+                    .unwrap_or_default();
+
                 let sources = match state.db.get_message_source_chunk_ids(id).await {
                     Ok(chunk_ids) if !chunk_ids.is_empty() => {
                         match state.db.get_results_by_chunk_ids(chunk_ids, false).await {
@@ -309,7 +340,7 @@ pub async fn get_messages(
                     }
                 };
 
-                messages.push(MessageRow { id, role, content, created_at, sources });
+                messages.push(MessageRow { id, role, content, created_at, thinking_steps, sources });
             }
 
             (StatusCode::OK, Json(GetMessagesResponse { success: true, messages })).into_response()

@@ -18,15 +18,15 @@ export function MementoLogo({ className, size = 24, ...props }: LogoProps) {
       x="0px"
       y="0px"
       viewBox="0 0 1024 1024"
-      enable-background="new 0 0 1024 1024"
+      enableBackground="new 0 0 1024 1024"
       xmlSpace="preserve"
     >
       <defs>
         <linearGradient id="logoGradient" x1="0%" y1="0%" x2="80%" y2="100%">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
-          <stop offset="40%" stop-color="#a0a0a0" stop-opacity="1" />
-          <stop offset="75%" stop-color="#404040" stop-opacity="1" />
-          <stop offset="100%" stop-color="#111111" stop-opacity="1" />
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+          <stop offset="40%" stopColor="#a0a0a0" stopOpacity="1" />
+          <stop offset="75%" stopColor="#404040" stopOpacity="1" />
+          <stop offset="100%" stopColor="#111111" stopOpacity="1" />
         </linearGradient>
       </defs>
 

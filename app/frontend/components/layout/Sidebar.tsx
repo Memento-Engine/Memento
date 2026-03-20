@@ -264,7 +264,7 @@ function LeftSidebar(): React.ReactElement {
               Your chats
             </p>
             <SidebarMenu>
-              {isLoadingChats && renderSidebarChatSkeletons()}
+              {/* {isLoadingChats && renderSidebarChatSkeletons()} */}
 
               {!isLoadingChats && filteredSessions.length === 0 && (
                 <SidebarMenuItem className="list-none px-3 py-2 text-xs text-muted-foreground/60">

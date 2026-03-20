@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useLayoutEffect, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import ChatInput from "./ChatInput";
 import type { SearchMode } from "./types";
@@ -13,25 +13,32 @@ import useChatContext from "@/hooks/useChatContext";
 import ThinkingBubble from "./ThinkingBubble";
 
 function Thread(): React.ReactElement {
-  const { messages, sendMessage, rewrite, stopMessage, isGenerating, assistantStatus } = useChatContext();
+  const {
+    messages,
+    sendMessage,
+    rewrite,
+    stopMessage,
+    isGenerating,
+    assistantStatus,
+  } = useChatContext();
   const conversationRef = useRef<StickToBottomContext | null>(null);
   const lastSubmittedMessageRef = useRef<HTMLDivElement | null>(null);
   const lastAnchoredUserMessageIdRef = useRef<string | null>(null);
+
 
   const handleSend = useCallback(
     async (query: string, searchMode: SearchMode) => {
       if (!query.trim()) return;
       await sendMessage(query, undefined, false, searchMode);
     },
-    [sendMessage]
+    [sendMessage],
   );
 
   // Show loading bubble when last message is from user and we're waiting for assistant
   // Don't show if we're already streaming text (assistantStatus === "Streaming")
   const lastMessage = messages[messages.length - 1];
   const showPendingBubble =
-    lastMessage?.role === "user" &&
-    (assistantStatus === "LocalPending" || assistantStatus === "Thinking");
+    lastMessage?.role === "user" && assistantStatus === "LocalPending";
 
   useLayoutEffect(() => {
     if (lastMessage?.role !== "user") {
