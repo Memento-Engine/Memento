@@ -328,7 +328,7 @@ jobs:
           Copy-Item "artifacts/agents/memento-agents.exe" "app/agents/dist/memento-agents-x86_64-pc-windows-msvc.exe"
 
       - name: Build Tauri app (Release)
-        run: cd app && npm exec tauri build -- --no-bundle --config "{\"build\":{\"beforeBuildCommand\":\"\"}}"
+        run: cd app && npm exec tauri build -- --no-bundle --config src-tauri/tauri.ci.conf.json
 
       - name: Upload Tauri artifact
         uses: actions/upload-artifact@v4
