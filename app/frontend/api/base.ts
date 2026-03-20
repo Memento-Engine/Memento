@@ -1,5 +1,4 @@
-import { readTextFile } from "@tauri-apps/plugin-fs";
-import { BaseDirectory } from "@tauri-apps/api/path";
+import { readTextFile, BaseDirectory } from "@tauri-apps/plugin-fs";
 import { AGENTS_PORT_FILE, DAEMON_PORT_FILE } from "@shared/config/fileConfig";
 import {
   PortReader,
@@ -7,14 +6,30 @@ import {
   ServiceConnectionState,
   ServiceConnectionStatus,
 } from "@shared/daemon/connection";
+import { isDesktopProductionMode } from "../lib/runtimeMode";
 
 class TauriPortReaderImpl implements PortReader {
   constructor(private readonly portFileName: string) {}
 
   async readPort(): Promise<number> {
-    const content = await readTextFile(`memento/ports/${this.portFileName}`, {
-      baseDir: BaseDirectory.LocalData,
-    });
+    let content: string;
+    
+    // In production on Windows, read from shared ProgramData directory
+    // This is where the Windows service writes the port file
+    const isProduction = isDesktopProductionMode();
+    const isWindows = navigator.platform.toLowerCase().includes("win");
+    
+    if (isProduction && isWindows) {
+      // Read from C:\ProgramData\Memento\ports\<portFile>
+      const sharedPath = `C:\\ProgramData\\Memento\\ports\\${this.portFileName}`;
+      content = await readTextFile(sharedPath);
+    } else {
+      // Development: read from user's local app data
+      content = await readTextFile(`memento/ports/${this.portFileName}`, {
+        baseDir: BaseDirectory.LocalData,
+      });
+    }
+    
     const port = Number.parseInt(content.trim(), 10);
 
     if (Number.isNaN(port)) {
@@ -38,7 +53,7 @@ function createDaemonResolver(): PortUrlResolver {
     initialBackoffMs: 300,
     maxBackoffMs: 5000,
     healthyPollMs: 5000,
-    fallbackUrl: "http://localhost:9090/api/v1",
+    fallbackUrl: "http://localhost:7070/api/v1",
   });
 }
 
@@ -50,7 +65,7 @@ function createAgentResolver(): PortUrlResolver {
     initialBackoffMs: 300,
     maxBackoffMs: 5000,
     healthyPollMs: 5000,
-    fallbackUrl: "http://localhost:4173/api/v1",
+    fallbackUrl: "http://localhost:4170/api/v1",
   });
 }
 

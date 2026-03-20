@@ -120,12 +120,26 @@ fn stop_embedded_agent_server(state: &AgentServerState) {
     }
 }
 
-/// Get the base directory for Memento
+/// Get the base directory for Memento (user-local)
 fn get_base_dir() -> PathBuf {
     dirs::data_local_dir()
         .expect("Cannot find local data directory")
         .join("Memento")
 }
+
+/// Get the shared directory for Memento (accessible by service and user apps)
+/// In production: C:\ProgramData\Memento (written by service, read by apps)
+/// In development: Same as base_dir (no service involvement)
+fn get_shared_dir() -> PathBuf {
+    if cfg!(debug_assertions) {
+        get_base_dir()
+    } else {
+        PathBuf::from(r"C:\ProgramData\Memento")
+    }
+}
+
+/// Preferred port for daemon (try this first before reading port file)
+const PREFERRED_DAEMON_PORT: u16 = 7070;
 
 /// Get the log directory based on build mode (dev/production)
 fn get_log_dir() -> PathBuf {
@@ -318,10 +332,28 @@ fn stop_daemon(is_dev: bool) -> Result<String, String> {
 }
 
 fn daemon_is_running() -> bool {
+    // Create HTTP client with timeout to prevent hangs
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .connect_timeout(Duration::from_secs(2))
+        .build() 
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    // Try preferred port first (fastest path)
+    let preferred_url = format!("http://127.0.0.1:{}/api/v1/healthz", PREFERRED_DAEMON_PORT);
+    if client.get(&preferred_url).send().map(|r| r.status().is_success()).unwrap_or(false) {
+        return true;
+    }
+
+    // Fall back to port file
     if let Some(port) = read_port_file() {
         let url = format!("http://127.0.0.1:{}/api/v1/healthz", port);
-        return reqwest::blocking::get(url).is_ok();
+        return client.get(&url).send().map(|r| r.status().is_success()).unwrap_or(false);
     }
+    
     false
 }
 
@@ -350,7 +382,45 @@ fn wait_until_unhealthy() -> Result<(), String> {
 fn wait_until_healthy() -> Result<(), String> {
     let start = Instant::now();
     let timeout = Duration::from_secs(60);
+    
+    // In production, wait for Windows service to reach RUNNING state first
+    if !cfg!(debug_assertions) {
+        info!("Waiting for Windows service to reach RUNNING state...");
+        let service_timeout = Duration::from_secs(30);
+        while start.elapsed() < service_timeout {
+            let output = Command::new("sc")
+                .args(["query", SERVICE_NAME])
+                .output();
+            
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if stdout.contains("RUNNING") {
+                        info!("Service is RUNNING, proceeding with health checks");
+                        break;
+                    } else if stdout.contains("STOPPED") || stdout.contains("FAILED") {
+                        let msg = "Service failed to start";
+                        error!("{}", msg);
+                        sentry::with_scope(|scope| {
+                            scope.set_tag("environment", "frontend");
+                            scope.set_tag("service", "ui");
+                            scope.set_tag("area", "tauri-start-daemon");
+                        }, || {
+                            sentry::capture_message(msg, sentry::Level::Error);
+                        });
+                        return Err(msg.to_string());
+                    }
+                    // START_PENDING - keep waiting
+                }
+                Err(e) => {
+                    warn!("Failed to query service status: {}", e);
+                }
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
 
+    // Now wait for HTTP health check to pass
     while start.elapsed() < timeout {
         if daemon_is_running() {
             return Ok(());
@@ -370,8 +440,8 @@ fn wait_until_healthy() -> Result<(), String> {
 }
 
 fn read_port_file() -> Option<String> {
-    // Read from standardized ports directory
-    let port_path = get_base_dir().join("ports").join("memento-daemon.port");
+    // Read from shared ports directory (accessible by both service and user apps)
+    let port_path = get_shared_dir().join("ports").join("memento-daemon.port");
 
     std::fs::read_to_string(port_path)
         .ok()
@@ -384,8 +454,8 @@ fn get_daemon_url() -> Result<String, String> {
     if let Some(port) = read_port_file() {
         Ok(format!("http://localhost:{}/api/v1", port))
     } else {
-        // Fallback to default port
-        Ok("http://localhost:9090/api/v1".to_string())
+        // Fallback to preferred port
+        Ok(format!("http://localhost:{}/api/v1", PREFERRED_DAEMON_PORT))
     }
 }
 

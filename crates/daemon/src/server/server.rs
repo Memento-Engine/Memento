@@ -77,6 +77,79 @@ fn api_router() -> Router<Arc<AppState>> {
         .route("/chat/sessions/{session_id}/pin", put(pin_chat))
 }
 
+/// Try to bind to a port in the preferred range (7070-7077)
+/// Falls back to OS-assigned port if all preferred ports are taken
+async fn bind_preferred_port() -> tokio::net::TcpListener {
+    use app_core::config::{PREFERRED_DAEMON_PORT, DAEMON_PORT_RANGE_START, DAEMON_PORT_RANGE_END};
+    
+    // Try preferred port first
+    if let Ok(listener) = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", PREFERRED_DAEMON_PORT)).await {
+        info!("Bound to preferred port {}", PREFERRED_DAEMON_PORT);
+        return listener;
+    }
+    
+    // Try ports in range
+    for port in DAEMON_PORT_RANGE_START..=DAEMON_PORT_RANGE_END {
+        if port == PREFERRED_DAEMON_PORT {
+            continue; // Already tried
+        }
+        if let Ok(listener) = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await {
+            info!("Bound to port {} (preferred {} was taken)", port, PREFERRED_DAEMON_PORT);
+            return listener;
+        }
+    }
+    
+    // Fallback to OS-assigned port with retry
+    warn!("All preferred ports ({}..{}) are taken, using OS-assigned port", 
+          DAEMON_PORT_RANGE_START, DAEMON_PORT_RANGE_END);
+    
+    let mut backoff = Duration::from_secs(1);
+    let max_backoff = Duration::from_secs(64);
+    
+    loop {
+        match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => return listener,
+            Err(e) => {
+                error!("Failed to bind server: {:?}", e);
+                sentry::with_scope(|scope| {
+                    scope.set_tag("environment", "daemon");
+                    scope.set_tag("service", "daemon");
+                    scope.set_tag("area", "server-bind");
+                    scope.set_extra("error", e.to_string().into());
+                }, || {
+                    sentry::capture_message("Daemon server bind failed", sentry::Level::Error);
+                });
+                warn!("Retrying in {:?}...", backoff);
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, max_backoff);
+            }
+        }
+    }
+}
+
+/// Spawn a task to periodically refresh the port file (every 30 seconds)
+/// This recovers from accidental deletion and ensures file is always fresh
+fn spawn_port_file_refresher(port: u16, shutdown: Arc<ShutdownController>) {
+    tokio::spawn(async move {
+        let refresh_interval = Duration::from_secs(30);
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(refresh_interval) => {
+                    write_port_file(port);
+                }
+                _ = shutdown.wait_for_shutdown() => {
+                    info!("Port file refresher stopping");
+                    // Clean up port file on shutdown
+                    if let Err(e) = std::fs::remove_file(app_core::config::port_file_path("daemon")) {
+                        warn!("Failed to remove port file on shutdown: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
 pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownController>) {
     let prefix = "/api/v1";
     
@@ -94,36 +167,19 @@ pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownContro
         .with_state(app_state)
         .layer(cors);
     
-    // Bind with retry
-    let mut backoff = Duration::from_secs(1);
-    let max_backoff = Duration::from_secs(64);
-    
-    let listener = loop {
-        match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-            Ok(l) => break l,
-            Err(e) => {
-                error!("Failed to bind server: {:?}", e);
-                sentry::with_scope(|scope| {
-                    scope.set_tag("environment", "daemon");
-                    scope.set_tag("service", "daemon");
-                    scope.set_tag("area", "server-bind");
-                    scope.set_extra("error", e.to_string().into());
-                }, || {
-                    sentry::capture_message("Daemon server bind failed", sentry::Level::Error);
-                });
-                warn!("Retrying in {:?}...", backoff);
-                tokio::time::sleep(backoff).await;
-                backoff = std::cmp::min(backoff * 2, max_backoff);
-            }
-        }
-    };
+    // Bind to preferred port (7070-7077) or fallback to OS-assigned
+    let listener = bind_preferred_port().await;
     
     let port = listener.local_addr()
         .map(|a| a.port())
         .unwrap_or(0);
     
+    // Write port file immediately
     write_port_file(port);
     info!("Server running on http://127.0.0.1:{}", port);
+    
+    // Start periodic port file refresher
+    spawn_port_file_refresher(port, shutdown.clone());
     
     // Serve with graceful shutdown
     let shutdown_signal = shutdown.clone();

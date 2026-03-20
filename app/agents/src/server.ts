@@ -33,10 +33,17 @@ import {
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
 import { saveMessage, buildSourcesFromStepResults, getSessionMessages } from "./tools/chatPersistence";
+import net from "net";
 
 type InvokableGraph = {
   invoke(input: unknown): Promise<unknown>;
 };
+
+// Preferred port range for agent server (4170-4177)
+const PREFERRED_AGENT_PORT = 4170;
+const AGENT_PORT_RANGE_START = 4170;
+const AGENT_PORT_RANGE_END = 4177;
+const PORT_FILE_REFRESH_INTERVAL_MS = 30000; // 30 seconds
 
 // Request validation schema
 const AgentRequestSchema = z.object({
@@ -100,6 +107,61 @@ async function writePortFile(port: number, logger: any): Promise<void> {
       backoff = Math.min(backoff * 2, maxBackoff);
     }
   }
+}
+
+/**
+ * Check if a port is available for binding.
+ */
+function isPortAvailable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, host);
+  });
+}
+
+/**
+ * Try to find an available port in the preferred range.
+ * Returns the preferred port if available, otherwise tries fallbacks, then 0 for OS-assigned.
+ */
+async function findPreferredPort(host: string, logger: any): Promise<number> {
+  // Try preferred port first
+  if (await isPortAvailable(PREFERRED_AGENT_PORT, host)) {
+    logger.info(`Using preferred port ${PREFERRED_AGENT_PORT}`);
+    return PREFERRED_AGENT_PORT;
+  }
+
+  // Try ports in range
+  for (let port = AGENT_PORT_RANGE_START; port <= AGENT_PORT_RANGE_END; port++) {
+    if (port === PREFERRED_AGENT_PORT) continue; // Already tried
+    if (await isPortAvailable(port, host)) {
+      logger.info(`Using fallback port ${port} (preferred ${PREFERRED_AGENT_PORT} was taken)`);
+      return port;
+    }
+  }
+
+  // All preferred ports taken, use OS-assigned
+  logger.warn(`All preferred ports (${AGENT_PORT_RANGE_START}-${AGENT_PORT_RANGE_END}) taken, using OS-assigned port`);
+  return 0;
+}
+
+/**
+ * Start periodic port file refresh to recover from accidental deletion.
+ */
+function startPortFileRefresh(port: number, logger: any): NodeJS.Timeout {
+  return setInterval(async () => {
+    try {
+      const portPath = path.join(getLocalDataDir(), "memento", "ports");
+      const filePath = path.join(portPath, "memento-agents.port");
+      fs.mkdirSync(portPath, { recursive: true });
+      fs.writeFileSync(filePath, port.toString());
+    } catch (error) {
+      logger.warn(`Failed to refresh port file: ${error}`);
+    }
+  }, PORT_FILE_REFRESH_INTERVAL_MS);
 }
 
 /**
@@ -538,13 +600,31 @@ async function startServer() {
       } as AgentResponse);
     });
 
-    // Start server with OS-assigned port (port 0)
-    const server = app.listen(0, config.server.host, async () => {
+    // Find preferred port (4170-4177) or fall back to OS-assigned
+    const preferredPort = await findPreferredPort(config.server.host, logger);
+    
+    const server = app.listen(preferredPort, config.server.host, async () => {
       const address = server.address();
       const actualPort = typeof address === "object" && address ? address.port : 0;
 
       // Write port to file for frontend to read
       await writePortFile(actualPort, logger);
+      
+      // Start periodic port file refresh (every 30 seconds)
+      const refreshInterval = startPortFileRefresh(actualPort, logger);
+      
+      // Clean up on server close
+      server.on("close", () => {
+        clearInterval(refreshInterval);
+        // Remove port file on shutdown
+        try {
+          const filePath = path.join(getLocalDataDir(), "memento", "ports", "memento-agents.port");
+          fs.unlinkSync(filePath);
+          logger.info("Removed port file on shutdown");
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      });
 
       logger.info(
         `Agent server started on http://${config.server.host}:${actualPort}/api/v1`,

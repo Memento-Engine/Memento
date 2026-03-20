@@ -63,9 +63,51 @@ fn main() -> ExitCode {
     }
 }
 
+/// Shared directory path for cross-process communication
+/// Windows: C:\ProgramData\Memento\
+const SHARED_DIR: &str = r"C:\ProgramData\Memento";
+
+/// Create shared directory with proper permissions for all users
+/// This allows the service (SYSTEM) and user apps to communicate via port files
+fn create_shared_directory() -> Result<()> {
+    println!("Creating shared directory: {}", SHARED_DIR);
+    
+    // Create the directory structure
+    let ports_dir = format!("{}\\ports", SHARED_DIR);
+    let runtime_dir = format!("{}\\runtime", SHARED_DIR);
+    
+    std::fs::create_dir_all(&ports_dir)
+        .context("Failed to create ports directory")?;
+    std::fs::create_dir_all(&runtime_dir)
+        .context("Failed to create runtime directory")?;
+    
+    // Set permissions: SYSTEM=Full, Administrators=Full, Users=Modify
+    // This allows non-admin users to read/write port files
+    let output = Command::new("icacls")
+        .args([
+            SHARED_DIR,
+            "/grant", "Users:(OI)(CI)M",      // Modify for all users (inherited)
+            "/grant", "SYSTEM:(OI)(CI)F",     // Full control for SYSTEM (service)
+            "/T",                              // Apply recursively
+        ])
+        .output()
+        .context("Failed to run icacls")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("icacls failed: {}", stderr));
+    }
+    
+    println!("Shared directory permissions configured");
+    Ok(())
+}
+
 /// Install the service with proper permissions and failure recovery
 fn install_service(daemon_path: &str) -> Result<()> {
     println!("Installing service: {}", SERVICE_NAME);
+    
+    // 0. Create shared directory with proper permissions FIRST
+    create_shared_directory()?;
 
     // 1. Create the service
     // Note: Path must be quoted for paths with spaces, and binPath= needs space before value

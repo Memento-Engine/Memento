@@ -1,5 +1,16 @@
 use std::{fs, path::PathBuf};
 
+// =============================================================================
+// Port Configuration
+// =============================================================================
+
+/// Preferred daemon port - daemon will try this first
+pub const PREFERRED_DAEMON_PORT: u16 = 7070;
+
+/// Port range for daemon if preferred port is unavailable
+pub const DAEMON_PORT_RANGE_START: u16 = 7070;
+pub const DAEMON_PORT_RANGE_END: u16 = 7077;
+
 /// Logging mode - only one should be active at runtime
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogMode {
@@ -37,13 +48,36 @@ pub enum SetupState {
 // Base Directory
 // =============================================================================
 
-/// Root directory for all Memento data
+/// Root directory for all Memento user data
 /// Windows: C:\Users\<Username>\AppData\Local\Memento\
 /// Linux/Mac: ~/.local/share/Memento/
 pub fn base_dir() -> PathBuf {
     dirs::data_local_dir()
         .expect("Cannot find local data directory")
         .join("Memento")
+}
+
+/// Shared directory accessible by all users and services
+/// Used for cross-process communication (ports, locks)
+/// Windows: C:\ProgramData\Memento\
+/// Linux/Mac: /var/lib/memento/
+/// 
+/// In dev mode, uses base_dir() for simplicity (no admin needed)
+pub fn shared_dir() -> PathBuf {
+    if cfg!(debug_assertions) {
+        // Dev mode: use user-local directory (no admin needed)
+        base_dir()
+    } else {
+        // Production mode: use system-wide shared directory
+        #[cfg(windows)]
+        {
+            PathBuf::from(r"C:\ProgramData\Memento")
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/var/lib/memento")
+        }
+    }
 }
 
 // =============================================================================
@@ -111,12 +145,12 @@ pub fn log_file_path(service_name: &str) -> PathBuf {
 }
 
 // =============================================================================
-// Ports
+// Ports (in shared directory for cross-process access)
 // =============================================================================
 
-/// ports/ - directory for port files
+/// ports/ - directory for port files (in shared directory)
 pub fn ports_dir() -> PathBuf {
-    base_dir().join("ports")
+    shared_dir().join("ports")
 }
 
 /// Get port file path with mandatory memento- prefix
@@ -126,12 +160,12 @@ pub fn port_file_path(service_name: &str) -> PathBuf {
 }
 
 // =============================================================================
-// Runtime
+// Runtime (in shared directory for cross-process access)
 // =============================================================================
 
-/// runtime/ - runtime state files
+/// runtime/ - runtime state files (in shared directory)
 pub fn runtime_dir() -> PathBuf {
-    base_dir().join("runtime")
+    shared_dir().join("runtime")
 }
 
 /// Lock file for single instance enforcement
@@ -167,12 +201,23 @@ pub fn get_setup_state() -> SetupState {
 
 /// Initialize all required directories
 pub fn initialize_directories() -> std::io::Result<()> {
+    // User data directories
     fs::create_dir_all(database_dir())?;
     fs::create_dir_all(screenshots_dir())?;
     fs::create_dir_all(metadata_dir())?;
     fs::create_dir_all(models_dir())?;
     fs::create_dir_all(cache_dir())?;
     fs::create_dir_all(current_logs_dir())?;
+    // Shared directories (ports/runtime) - may fail in production if not pre-created by installer
+    let _ = fs::create_dir_all(ports_dir());
+    let _ = fs::create_dir_all(runtime_dir());
+    Ok(())
+}
+
+/// Initialize shared directories (ports, runtime)
+/// Should be called by installer with admin privileges in production
+pub fn initialize_shared_directories() -> std::io::Result<()> {
+    fs::create_dir_all(shared_dir())?;
     fs::create_dir_all(ports_dir())?;
     fs::create_dir_all(runtime_dir())?;
     Ok(())

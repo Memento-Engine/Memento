@@ -17,6 +17,21 @@ export function getMementoBaseDir(): string {
   return path.join(os.homedir(), ".local", "share", "Memento");
 }
 
+/**
+ * Get the shared directory for Memento (accessible by both service and user apps).
+ * On Windows production: C:\ProgramData\Memento (service writes here)
+ * On other platforms or dev: Same as base dir
+ */
+export function getMementoSharedDir(isProduction: boolean): string {
+  const platform = os.platform();
+  
+  if (platform === "win32" && isProduction) {
+    return "C:\\ProgramData\\Memento";
+  }
+  
+  return getMementoBaseDir();
+}
+
 export function getPortDir(): string {
   return path.join(getMementoBaseDir(), PORT_DIR);
 }
