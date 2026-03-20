@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "build:all": "npm run build:agents && npm run build:frontend",
     "build:agents": "npm ci --prefix agents && npm run build:exe --prefix agents",
-    "build:frontend": "npm run build --prefix frontend",
+    "build:frontend": "npm ci --prefix frontend && npm run build --prefix frontend",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "npm run tauri dev"
