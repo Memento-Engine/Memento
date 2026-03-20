@@ -33,7 +33,7 @@ import {
 } from "./telemetry/sentry";
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
-import { saveMessage, buildSourcesFromStepResults } from "./tools/chatPersistence";
+import { saveMessage, buildSourcesFromStepResults, getSessionMessages } from "./tools/chatPersistence";
 
 type InvokableGraph = {
   invoke(input: unknown): Promise<unknown>;
@@ -241,6 +241,24 @@ async function startServer() {
                 deviceId: req.headers["x-device-id"] as string | undefined,
               };
 
+              // Load chat history from DB if sessionId is provided
+              let effectiveChatHistory = chatHistory;
+              if (sessionId) {
+                try {
+                  const dbMessages = await getSessionMessages(sessionId, 50);
+                  if (dbMessages.length > 0) {
+                    logger.info(`Loaded ${dbMessages.length} messages from DB for session ${sessionId}`);
+                    // Cast the role types to match the schema
+                    effectiveChatHistory = dbMessages.map(m => ({
+                      role: m.role as "user" | "assistant",
+                      content: m.content,
+                    }));
+                  }
+                } catch (error) {
+                  logger.warn(`Failed to load chat history from DB for session ${sessionId}: ${error}`);
+                }
+              }
+
               // Set response headers for streaming
               res.setHeader(
                 "Content-Type",
@@ -272,7 +290,6 @@ async function startServer() {
               // Execute agent graph with event queue for streaming
               let result: any;
               let executionError: any = null;
-
               try {
                 const compiledGraph = (await graph) as unknown as InvokableGraph;
                 result = await runWithSpan(
@@ -288,7 +305,7 @@ async function startServer() {
                       requestId: requestId as any,
                       authHeaders: authHeaders as any,
                       searchMode: mode as any,
-                      chatHistory: chatHistory as any,
+                      chatHistory: effectiveChatHistory as any,
                       planAttempts: 0 as any,
                       llmCalls: 0 as any,
                       startTime: startTime as any,

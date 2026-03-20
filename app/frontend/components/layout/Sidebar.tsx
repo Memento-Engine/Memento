@@ -1,12 +1,12 @@
 "use client";
 
 import {
-  Archive,
   Delete,
   Edit,
   Ellipsis,
   LogIn,
   PanelLeft,
+  Pin,
   Search,
   Share,
   SquarePen,
@@ -23,10 +23,10 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 
-import { redirect } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { SettingsDialog } from "../settingsDialog";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,29 +34,135 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Separator } from "../ui/separator";
+import { Skeleton } from "../ui/skeleton";
 import { MementoLogo } from "../Logo";
 import { PremiumCredits } from "../PremiumCredits";
-import  useAuth  from "@/hooks/useAuth";
-
-const techTopics: string[] = [
-  "What are microservices?",
-  "AI agents and LLMs",
-  "Vector databases explained",
-];
+import useAuth from "@/hooks/useAuth";
+import useChatContext from "@/hooks/useChatContext";
+import { openChatSearchDialog } from "@/lib/chatSearch";
+import { notify } from "@/lib/notify";
+import {
+  ChatSessionRow,
+  deleteChatSession,
+  listChatSessions,
+  pinChatSession,
+  renameChatSession,
+} from "@/api/messages";
 
 function LeftSidebar(): React.ReactElement {
   const { toggleSidebar, state } = useSidebar();
   const [isSettingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [isLoadingChats, setIsLoadingChats] = useState<boolean>(false);
+  const [chatSessions, setChatSessions] = useState<ChatSessionRow[]>([]);
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const { user, isAuthenticated } = useAuth();
+  const { chatId, messages, openChat, startNewChat } = useChatContext();
+  const router = useRouter();
   const isCollapsed = state === "collapsed";
 
   const goToHome = (): void => {
-    redirect("/");
+    startNewChat();
+    router.push("/chat", { scroll: false });
   };
 
   const handleFooterClick = (): void => {
     setSettingsOpen(true);
   };
+
+  const refreshChats = useCallback(async () => {
+    setIsLoadingChats(true);
+    try {
+      const rows = await listChatSessions(200);
+      setChatSessions(rows);
+    } catch (error) {
+      console.error("Failed to load chat sessions:", error);
+    } finally {
+      setIsLoadingChats(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshChats();
+  }, [refreshChats]);
+
+  useEffect(() => {
+    // Keep sidebar list fresh when active session or message count changes.
+    void refreshChats();
+  }, [chatId, messages.length, refreshChats]);
+
+  const filteredSessions = chatSessions.filter((session) =>
+    session.title.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  const handleRename = async (session: ChatSessionRow) => {
+    const nextTitle = window.prompt("Rename chat", session.title)?.trim();
+    if (!nextTitle || nextTitle === session.title) return;
+
+    const ok = await renameChatSession(session.session_id, nextTitle);
+    if (!ok) {
+      notify.error("Failed to rename chat");
+      return;
+    }
+
+    notify.success("Chat renamed");
+    await refreshChats();
+  };
+
+  const handlePinToggle = async (session: ChatSessionRow) => {
+    const ok = await pinChatSession(session.session_id, !session.pinned);
+    if (!ok) {
+      notify.error("Failed to update pin");
+      return;
+    }
+
+    notify.success(session.pinned ? "Chat unpinned" : "Chat pinned");
+    await refreshChats();
+  };
+
+  const handleDelete = async (session: ChatSessionRow) => {
+    const confirmed = window.confirm(
+      "Delete this chat? This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    const ok = await deleteChatSession(session.session_id);
+    if (!ok) {
+      notify.error("Failed to delete chat");
+      return;
+    }
+
+    notify.success("Chat deleted");
+    if (chatId === session.session_id) {
+      startNewChat();
+      router.push("/chat", { scroll: false });
+    }
+    await refreshChats();
+  };
+
+  const handleShare = async (session: ChatSessionRow) => {
+    try {
+      const shareLink = `${window.location.origin}/chat?session=${encodeURIComponent(session.session_id)}`;
+      await navigator.clipboard.writeText(shareLink);
+      notify.success("Share link copied");
+    } catch (error) {
+      console.error("Failed to copy share link:", error);
+      notify.error("Failed to copy share link");
+    }
+  };
+
+  const renderSidebarChatSkeletons = () => (
+    Array.from({ length: 6 }).map((_, index) => (
+      <SidebarMenuItem className="list-none px-3 py-2" key={`chat-skeleton-${index}`}>
+        <div className="flex items-center justify-between rounded-lg px-1 py-1">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-[82%] rounded-sm" />
+            <Skeleton className="h-3 w-[46%] rounded-sm" />
+          </div>
+          <Skeleton className="ml-3 h-4 w-4 rounded-full" />
+        </div>
+      </SidebarMenuItem>
+    ))
+  );
 
   return (
     <>
@@ -93,7 +199,7 @@ function LeftSidebar(): React.ReactElement {
               onClick={toggleSidebar}
               className="cursor-pointer text-base flex shrink-0 items-center"
             >
-              <MementoLogo size={40}/>
+              <MementoLogo size={40} />
             </span>
             {!isCollapsed && (
               <PanelLeft
@@ -105,7 +211,7 @@ function LeftSidebar(): React.ReactElement {
           </div>
         </SidebarHeader>
 
-      <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4 group-data-[collapsible=icon]:px-2">
+        <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4 group-data-[collapsible=icon]:px-2">
           <SidebarMenu>
             <SidebarMenuItem
               onClick={goToHome}
@@ -132,11 +238,14 @@ function LeftSidebar(): React.ReactElement {
             <SidebarMenuItem className="group/menuitem list-none">
               <SidebarMenuButton
                 variant="default"
+                onClick={openChatSearchDialog}
                 className="w-full text-muted-foreground flex items-center cursor-pointer justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
               >
                 <Search className="h-5 w-5 shrink-0" />
                 <span className="ml-2 flex w-full min-w-0 items-center justify-between overflow-hidden group-data-[collapsible=icon]:hidden">
-                  <span className="text-sm whitespace-nowrap">Search chats</span>
+                  <span className="text-sm whitespace-nowrap">
+                    Search chats
+                  </span>
                   <span className="text-xs text-muted-foreground/50 opacity-0 transition-opacity group-hover/menuitem:opacity-100 whitespace-nowrap">
                     Ctrl + K
                   </span>
@@ -155,11 +264,25 @@ function LeftSidebar(): React.ReactElement {
               Your chats
             </p>
             <SidebarMenu>
-              {techTopics.map((topic: string, i: number) => (
-                <SidebarMenuItem className="group/view list-none" key={i}>
-                  <SidebarMenuButton
-                    variant="default"
-                    className="
+              {isLoadingChats && renderSidebarChatSkeletons()}
+
+              {!isLoadingChats && filteredSessions.length === 0 && (
+                <SidebarMenuItem className="list-none px-3 py-2 text-xs text-muted-foreground/60">
+                  No chats yet
+                </SidebarMenuItem>
+              )}
+
+              {filteredSessions.map((session: ChatSessionRow) => {
+                const isActive = session.session_id === chatId;
+                return (
+                  <SidebarMenuItem
+                    className="group/view list-none"
+                    key={session.session_id}
+                  >
+                    <SidebarMenuButton
+                      variant="default"
+                      onClick={() => void openChat(session.session_id)}
+                      className="
                     w-full
                     flex
                     items-center
@@ -167,62 +290,74 @@ function LeftSidebar(): React.ReactElement {
                     justify-between
                     cursor-pointer
                     px-3
-                    font-normal
+                    hover:bg-muted/70
+                    data-[active=true]:bg-muted/80
+                    data-[active=true]:text-foreground
                     group-data-[collapsible=icon]:justify-center
                     group-data-[collapsible=icon]:px-0
                     "
-                  >
-                    <span className="truncate text-sm group-data-[collapsible=icon]:hidden">
-                      {topic}
-                    </span>
+                      data-active={isActive}
+                    >
+                      <span className="truncate text-sm group-data-[collapsible=icon]:hidden">
+                        {session.title}
+                      </span>
 
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden" />
-                      </DropdownMenuTrigger>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden" />
+                        </DropdownMenuTrigger>
 
-                      <DropdownMenuContent
-                        align="start"
-                        className="w-48 p-2 rounded-2xl border shadow-lg"
-                      >
-                        <DropdownMenuItem
-                          className={cn(
-                            "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
-                          )}
+                        <DropdownMenuContent
+                          align="start"
+                          className="w-48 p-2 rounded-2xl border shadow-lg"
                         >
-                          <Share className="h-4 w-4 shrink-0" />
-                          <span className="text-sm">Share</span>
-                        </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => void handleShare(session)}
+                            className={cn(
+                              "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
+                            )}
+                          >
+                            <Share className="h-4 w-4 shrink-0" />
+                            <span className="text-sm">Share</span>
+                          </DropdownMenuItem>
 
-                        <DropdownMenuItem
-                          className={cn(
-                            "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
-                          )}
-                        >
-                          <Edit className="h-4 w-4 shrink-0" />
-                          <span className="text-sm">Rename</span>
-                        </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => void handleRename(session)}
+                            className={cn(
+                              "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
+                            )}
+                          >
+                            <Edit className="h-4 w-4 shrink-0" />
+                            <span className="text-sm">Rename</span>
+                          </DropdownMenuItem>
 
-                        <Separator className="my-2" />
+                          <Separator className="my-2" />
 
-                        <DropdownMenuItem
-                          className={cn(
-                            "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
-                          )}
-                        >
-                          <Archive className="h-4 w-4 shrink-0" />
-                          <span className="text-sm">Archive</span>
-                        </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => void handlePinToggle(session)}
+                            className={cn(
+                              "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
+                            )}
+                          >
+                            <Pin className="h-4 w-4 shrink-0" />
+                            <span className="text-sm">
+                              {session.pinned ? "Unpin" : "Pin"}
+                            </span>
+                          </DropdownMenuItem>
 
-                        <DropdownMenuItem className="flex items-center cursor-pointer gap-3 px-2 py-2 rounded-lg text-destructive hover:bg-destructive/10 transition">
-                          <Delete className="h-4 w-4 shrink-0" />
-                          <span className="text-sm">Delete</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+                          <DropdownMenuItem
+                            onClick={() => void handleDelete(session)}
+                            className="flex items-center cursor-pointer gap-3 px-2 py-2 rounded-lg text-destructive hover:bg-destructive/10 transition"
+                          >
+                            <Delete className="h-4 w-4 shrink-0" />
+                            <span className="text-sm">Delete</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </div>
         </SidebarContent>

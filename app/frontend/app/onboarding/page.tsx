@@ -16,7 +16,7 @@ import {
   Cpu,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { checkDaemonHealth, onDaemonStatusChange, DaemonStatus } from "@/api/base";
+import { waitForDaemonHealthy } from "@/api/base";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -592,39 +592,13 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
         setDaemonState("connecting");
         setStatusMessage("Preparing your experience...");
 
-        // Poll for daemon health
-        const maxAttempts = 30;
-        let attempts = 0;
-        
-        const pollHealth = async (): Promise<boolean> => {
-          while (attempts < maxAttempts) {
-            try {
-              const isHealthy = await checkDaemonHealth();
-              if (isHealthy) {
-                return true;
-              }
-            } catch {
-              // Daemon not ready yet, continue polling
-            }
-            attempts++;
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          }
-          return false;
-        };
+        await waitForDaemonHealthy(30000);
 
-        const isReady = await pollHealth();
-        
-        if (isReady) {
-          setDaemonState("ready");
-          setStatusMessage("Memento is ready!");
-          // Auto-proceed after a brief moment
-          setTimeout(() => {
-            onReady();
-          }, 500);
-        } else {
-          setDaemonState("error");
-          setErrorMessage("Could not connect to Memento services. Please try restarting the app.");
-        }
+        setDaemonState("ready");
+        setStatusMessage("Memento is ready!");
+        setTimeout(() => {
+          onReady();
+        }, 500);
       } catch (err) {
         setDaemonState("error");
         setErrorMessage(String(err));
@@ -649,27 +623,10 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
       setDaemonState("connecting");
       setStatusMessage("Preparing your experience...");
 
-      const maxAttempts = 30;
-      let attempts = 0;
-      
-      while (attempts < maxAttempts) {
-        try {
-          const isHealthy = await checkDaemonHealth();
-          if (isHealthy) {
-            setDaemonState("ready");
-            setStatusMessage("Memento is ready!");
-            setTimeout(() => onReady(), 500);
-            return;
-          }
-        } catch {
-          // Continue polling
-        }
-        attempts++;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
-      setDaemonState("error");
-      setErrorMessage("Could not connect to Memento services. Please try restarting the app.");
+      await waitForDaemonHealthy(30000);
+      setDaemonState("ready");
+      setStatusMessage("Memento is ready!");
+      setTimeout(() => onReady(), 500);
     } catch (err) {
       setDaemonState("error");
       setErrorMessage(String(err));

@@ -1,0 +1,225 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Clock3, Edit3, MessageCircle, MessageSquare, Pin, Plus, Search } from "lucide-react";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { listChatSessions, type ChatSessionRow } from "@/api/messages";
+import useChatContext from "@/hooks/useChatContext";
+import { onOpenChatSearchDialog } from "@/lib/chatSearch";
+import { cn } from "@/lib/utils";
+
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export default function ChatSearchDialog(): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const { chatId, openChat } = useChatContext();
+
+  const refreshChats = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const rows = await listChatSessions(200);
+      setSessions(rows);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    return onOpenChatSearchDialog(() => {
+      setOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return;
+    }
+
+    void refreshChats();
+
+    const timer = window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
+
+    return () => window.clearTimeout(timer);
+  }, [open, refreshChats]);
+
+  const filteredSessions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return sessions;
+    }
+
+    return sessions.filter((session) =>
+      session.title.toLowerCase().includes(normalizedQuery),
+    );
+  }, [query, sessions]);
+
+  const handleOpenChat = useCallback(async (sessionId: string) => {
+    setOpen(false);
+    await openChat(sessionId);
+  }, [openChat]);
+
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter" && filteredSessions.length > 0) {
+      event.preventDefault();
+      void handleOpenChat(filteredSessions[0].session_id);
+    }
+  }, [filteredSessions, handleOpenChat]);
+
+  const renderDialogSkeletons = () => (
+    Array.from({ length: 6 }).map((_, index) => (
+      <div
+        key={`dialog-chat-skeleton-${index}`}
+        className="flex w-full items-start justify-between rounded-xl border px-3 py-3"
+      >
+        <div className="min-w-0 flex-1 pr-4">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-4 w-[58%] rounded-sm" />
+            <Skeleton className="h-3.5 w-3.5 rounded-full" />
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <Skeleton className="h-3.5 w-3.5 rounded-full" />
+            <Skeleton className="h-3 w-[28%] rounded-sm" />
+          </div>
+        </div>
+
+        <Skeleton className="h-6 w-16 rounded-full" />
+      </div>
+    ))
+  );
+
+return (
+  <Dialog open={open} onOpenChange={setOpen}>
+    <DialogContent
+      showCloseButton={false}
+      className="max-w-2xl p-0 rounded-xl border border-border/50 bg-background/95 backdrop-blur-xl shadow-2xl overflow-hidden"
+    >
+      {/* Search Bar - Increased height and refined focus */}
+      <div className="flex items-center border-b border-border/50 px-4 h-14 bg-muted/30">
+        <Search className="h-5 w-5 text-muted-foreground/70 mr-3" />
+        <Input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Search conversations..."
+          className="border-none shadow-none focus-visible:ring-0 h-full px-0 text-base bg-transparent"
+        />
+        <div className="flex items-center gap-2 ml-auto">
+          <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+            ESC
+          </kbd>
+        </div>
+      </div>
+
+      <ScrollArea className="max-h-[480px] p-2">
+        <div className="space-y-1">
+          {/* Primary Actions Group */}
+          <div className="pb-2 mb-2 border-b border-border/40">
+            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all hover:bg-primary/10 hover:text-primary group">
+              <div className="flex h-6 w-6 items-center justify-center rounded-md border bg-background group-hover:border-primary/30">
+                <Plus className="h-4 w-4" />
+              </div>
+              New chat
+              <span className="ml-auto text-[10px] opacity-50 font-normal">⌘N</span>
+            </button>
+          </div>
+
+          {/* Section Header */}
+          {filteredSessions.length > 0 && (
+            <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              Recent Chats
+            </div>
+          )}
+
+          {/* Chats List */}
+          {!isLoading && filteredSessions.map((session) => {
+            const isActive = session.session_id === chatId;
+
+            return (
+              <button
+                key={session.session_id}
+                onClick={() => void handleOpenChat(session.session_id)}
+                className={cn(
+                  "group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm transition-all outline-none",
+                  "hover:bg-muted/80 focus:bg-muted/80",
+                  isActive && "bg-muted font-medium border-l-2 border-primary rounded-l-none"
+                )}
+              >
+                <div className={cn(
+                  "p-1.5 rounded-md",
+                  isActive ? "bg-primary/10 text-primary" : "text-muted-foreground group-hover:text-foreground"
+                )}>
+                  <MessageSquare className="h-4 w-4" />
+                </div>
+
+                <div className="flex flex-col items-start flex-1 overflow-hidden">
+                  <span className="truncate w-full text-left">
+                    {session.title || "Untitled Chat"}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground/70 truncate">
+                    {session.last_message_at|| "No messages yet"}
+                  </span>
+                </div>
+
+                {session.pinned && (
+                  <Pin className="h-3.5 w-3.5 text-primary/70 rotate-45" />
+                )}
+              </button>
+            );
+          })}
+
+          {/* Empty State */}
+          {!isLoading && filteredSessions.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                <Search className="h-6 w-6 text-muted-foreground/40" />
+              </div>
+              <p className="text-sm font-medium">No results found</p>
+              <p className="text-xs text-muted-foreground">Try adjusting your search query.</p>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      {/* Footer / Context Hints */}
+      <div className="flex items-center gap-4 border-t border-border/50 bg-muted/20 px-4 py-2.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <kbd className="rounded border bg-background px-1">↑↓</kbd> Navigate
+        </div>
+        <div className="flex items-center gap-1">
+          <kbd className="rounded border bg-background px-1">Enter</kbd> Open
+        </div>
+      </div>
+    </DialogContent>
+  </Dialog>
+);
+}

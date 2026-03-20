@@ -20,7 +20,7 @@ use crate::server::model_endpoints::{
     check_models_status, download_models_sse, download_models_sync, model_state_stream
 };
 use crate::server::chat_endpoints::{
-    save_message, get_messages
+    save_message, get_messages, list_chats, rename_chat, pin_chat, delete_chat
 };
 
 #[derive(Serialize)]
@@ -71,6 +71,10 @@ fn api_router() -> Router<Arc<AppState>> {
         // Chat message persistence
         .route("/chat/messages", post(save_message))
         .route("/chat/messages/list", post(get_messages))
+        .route("/chat/sessions", post(list_chats))
+        .route("/chat/sessions/{session_id}", put(rename_chat))
+        .route("/chat/sessions/{session_id}", delete(delete_chat))
+        .route("/chat/sessions/{session_id}/pin", put(pin_chat))
 }
 
 pub async fn start_server(app_state: Arc<AppState>, shutdown: Arc<ShutdownController>) {

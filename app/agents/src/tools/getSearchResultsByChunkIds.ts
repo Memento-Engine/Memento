@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getConfig } from "../config/config";
+import { getSearchResultsByChunkIdsUrl } from "../config/daemon";
 import { getLogger } from "../utils/logger";
 import { StepSearchResult } from "../types/streaming";
 
@@ -16,7 +17,7 @@ export async function getSearchResultsByChunkIds(
 
   try {
     const response = await axios.post<StepSearchResult[]>(
-      config.backend.searchResultsByChunkIdsUrl,
+      await getSearchResultsByChunkIdsUrl(),
       { chunk_ids: chunkIds, include_text_json : false },
       {
         timeout: config.backend.timeout,

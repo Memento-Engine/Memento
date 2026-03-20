@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getConfig } from "../config/config";
+import { getChatMessagesListUrl, getChatMessagesUrl } from "../config/daemon";
 import { getLogger } from "../utils/logger";
 import { StepResult } from "../types/stepResult";
 
@@ -33,10 +33,6 @@ interface GetMessagesResponse {
   messages: MessageRow[];
 }
 
-function getBaseUrl(searchToolUrl: string): string {
-  return searchToolUrl.replace("/api/v1/search_tool", "");
-}
-
 /**
  * Save a message + chunk references to the daemon's SQLite DB.
  */
@@ -47,12 +43,10 @@ export async function saveMessage(
   sources: MessageSourceInput[],
 ): Promise<number | null> {
   const logger = await getLogger();
-  const config = await getConfig();
-  const baseUrl = getBaseUrl(config.backend.searchToolUrl);
 
   try {
     const response = await axios.post<SaveMessageResponse>(
-      `${baseUrl}/api/v1/chat/messages`,
+      await getChatMessagesUrl(),
       { session_id: sessionId, role, content, sources } satisfies SaveMessagePayload,
       { timeout: 10000, headers: { "Content-Type": "application/json" } },
     );
@@ -78,12 +72,10 @@ export async function getSessionMessages(
   limit = 50,
 ): Promise<Array<{ role: string; content: string }>> {
   const logger = await getLogger();
-  const config = await getConfig();
-  const baseUrl = getBaseUrl(config.backend.searchToolUrl);
 
   try {
     const response = await axios.post<GetMessagesResponse>(
-      `${baseUrl}/api/v1/chat/messages/list`,
+      await getChatMessagesListUrl(),
       { session_id: sessionId, limit },
       { timeout: 10000, headers: { "Content-Type": "application/json" } },
     );

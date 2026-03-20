@@ -25,7 +25,8 @@
       "@agents/*": ["./*"],
       "@tools/*": ["./tools/*"],
       "@planner/*": ["./planner/*"],
-      "@executor/*": ["./executor/*"]
+      "@executor/*": ["./executor/*"],
+      "@shared/*": ["../../../shared/*"]
     }
   },
   "include": [

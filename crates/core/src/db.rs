@@ -1140,6 +1140,107 @@ SELECT
     }
 
     /// Save a chat message and return its id.
+    pub async fn ensure_chat_session(
+        &self,
+        session_id: &str,
+        title: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO chats (session_id, title) VALUES (?, ?)"
+        )
+            .bind(session_id)
+            .bind(title)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Update chat session title.
+    pub async fn rename_chat_session(
+        &self,
+        session_id: &str,
+        title: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE chats SET title = ?, updated_at = datetime('now','localtime') WHERE session_id = ?"
+        )
+            .bind(title)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Pin or unpin a chat session.
+    pub async fn set_chat_session_pinned(
+        &self,
+        session_id: &str,
+        pinned: bool,
+    ) -> Result<bool, sqlx::Error> {
+        let pinned_value = if pinned { 1 } else { 0 };
+        let result = sqlx::query(
+            "UPDATE chats SET pinned = ?, updated_at = datetime('now','localtime') WHERE session_id = ?"
+        )
+            .bind(pinned_value)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete a chat session and all of its messages.
+    pub async fn delete_chat_session(
+        &self,
+        session_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+
+        sqlx::query("DELETE FROM messages WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut **tx.conn())
+            .await?;
+
+        let result = sqlx::query("DELETE FROM chats WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut **tx.conn())
+            .await?;
+
+        tx.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List chat sessions with the latest message timestamp.
+    pub async fn list_chat_sessions(
+        &self,
+        limit: i32,
+    ) -> Result<Vec<(String, String, bool, String)>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT c.session_id, c.title, c.pinned, COALESCE(MAX(m.created_at), c.updated_at) AS last_message_at
+             FROM chats c
+             LEFT JOIN messages m ON m.session_id = c.session_id
+             GROUP BY c.session_id, c.title, c.pinned, c.updated_at
+             ORDER BY c.pinned DESC, last_message_at DESC
+             LIMIT ?"
+        )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows.iter().map(|r| {
+            use sqlx::Row;
+            (
+                r.get::<String, _>("session_id"),
+                r.get::<String, _>("title"),
+                r.get::<i64, _>("pinned") == 1,
+                r.get::<String, _>("last_message_at"),
+            )
+        }).collect())
+    }
+
+    /// Save a chat message and return its id.
     pub async fn save_message(
         &self,
         session_id: &str,
@@ -1209,6 +1310,24 @@ SELECT
                 r.get::<String, _>("content"),
                 r.get::<String, _>("created_at"),
             )
+        }).collect())
+    }
+
+    /// Load all referenced chunk IDs for a message ordered by insertion.
+    pub async fn get_message_source_chunk_ids(
+        &self,
+        message_id: i64,
+    ) -> Result<Vec<i32>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT chunk_id FROM message_sources WHERE message_id = ? ORDER BY id ASC"
+        )
+            .bind(message_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows.iter().map(|r| {
+            use sqlx::Row;
+            r.get::<i32, _>("chunk_id")
         }).collect())
     }
 }

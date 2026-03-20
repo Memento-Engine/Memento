@@ -41,6 +41,7 @@ interface UseStreamingResult {
     goal: string,
     signal: AbortSignal,
     searchMode?: SearchMode,
+    sessionId?: string,
   ) => Promise<void>;
   abort: () => void;
 }
@@ -298,7 +299,7 @@ export function useStreaming(
 
   // Main streaming function
   const streamMessage = useCallback(
-    async (goal: string, signal: AbortSignal, searchMode: SearchMode = "search") => {
+    async (goal: string, signal: AbortSignal, searchMode: SearchMode = "search", sessionId?: string) => {
       // Get auth headers from OS keyring (async)
       const headers = await getAuthHeaders();
 
@@ -314,7 +315,7 @@ export function useStreaming(
         method: "POST",
         headers,
         signal,
-        body: JSON.stringify({ goal, mode: searchMode }),
+        body: JSON.stringify({ goal, mode: searchMode, sessionId }),
       });
 
       if (!res.ok) {

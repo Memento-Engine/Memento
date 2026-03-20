@@ -1,18 +1,80 @@
-import { invoke } from "@tauri-apps/api/core";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { BaseDirectory } from "@tauri-apps/api/path";
+import { AGENTS_PORT_FILE, DAEMON_PORT_FILE } from "@shared/config/fileConfig";
+import {
+  PortReader,
+  PortUrlResolver,
+  ServiceConnectionState,
+  ServiceConnectionStatus,
+} from "@shared/daemon/connection";
 
-// Cached daemon URL - initialized once, reused
-let cachedDaemonUrl: string | null = null;
-let daemonUrlPromise: Promise<string> | null = null;
+class TauriPortReaderImpl implements PortReader {
+  constructor(private readonly portFileName: string) {}
 
-// Daemon connection status
-export type DaemonStatus = "unknown" | "connected" | "disconnected";
-let _daemonStatus: DaemonStatus = "unknown";
-const statusListeners: Set<(status: DaemonStatus) => void> = new Set();
+  async readPort(): Promise<number> {
+    const content = await readTextFile(`memento/ports/${this.portFileName}`, {
+      baseDir: BaseDirectory.LocalData,
+    });
+    const port = Number.parseInt(content.trim(), 10);
+
+    if (Number.isNaN(port)) {
+      throw new Error(`Invalid port in ${this.portFileName}`);
+    }
+
+    return port;
+  }
+}
+
+export type DaemonStatus = ServiceConnectionStatus;
+
+let daemonUrlResolver: PortUrlResolver | null = null;
+let agentUrlResolver: PortUrlResolver | null = null;
+
+function createDaemonResolver(): PortUrlResolver {
+  return new PortUrlResolver(new TauriPortReaderImpl(DAEMON_PORT_FILE), {
+    portFileName: DAEMON_PORT_FILE,
+    buildUrl: (port: number) => `http://127.0.0.1:${port}/api/v1`,
+    healthPath: "/healthz",
+    initialBackoffMs: 300,
+    maxBackoffMs: 5000,
+    healthyPollMs: 5000,
+    fallbackUrl: "http://localhost:9090/api/v1",
+  });
+}
+
+function createAgentResolver(): PortUrlResolver {
+  return new PortUrlResolver(new TauriPortReaderImpl(AGENTS_PORT_FILE), {
+    portFileName: AGENTS_PORT_FILE,
+    buildUrl: (port: number) => `http://127.0.0.1:${port}/api/v1`,
+    healthPath: "/healthz",
+    initialBackoffMs: 300,
+    maxBackoffMs: 5000,
+    healthyPollMs: 5000,
+    fallbackUrl: "http://localhost:4173/api/v1",
+  });
+}
+
+async function ensureDaemonResolver(): Promise<PortUrlResolver> {
+  if (!daemonUrlResolver) {
+    daemonUrlResolver = createDaemonResolver();
+    daemonUrlResolver.startMonitoring();
+  }
+
+  await daemonUrlResolver.initialize();
+  return daemonUrlResolver;
+}
+
+async function ensureAgentResolver(): Promise<PortUrlResolver> {
+  if (!agentUrlResolver) {
+    agentUrlResolver = createAgentResolver();
+  }
+
+  await agentUrlResolver.initialize();
+  return agentUrlResolver;
+}
 
 export function getDaemonStatus(): DaemonStatus {
-  return _daemonStatus;
+  return daemonUrlResolver?.getState().status ?? "unknown";
 }
 
 function isBrowserRuntime(): boolean {
@@ -20,69 +82,75 @@ function isBrowserRuntime(): boolean {
 }
 
 export function onDaemonStatusChange(callback: (status: DaemonStatus) => void): () => void {
-  statusListeners.add(callback);
-  // Immediately call with current status
-  callback(_daemonStatus);
-  return () => statusListeners.delete(callback);
-}
-
-function setDaemonStatus(status: DaemonStatus) {
-  if (_daemonStatus !== status) {
-    _daemonStatus = status;
-    statusListeners.forEach(cb => cb(status));
+  if (!isBrowserRuntime()) {
+    callback("unknown");
+    return () => {};
   }
+
+  initDaemonConnection();
+
+  if (!daemonUrlResolver) {
+    callback("unknown");
+    return () => {};
+  }
+
+  return daemonUrlResolver.onStateChange((state) => callback(state.status));
 }
 
-// Check if daemon is healthy (non-blocking, updates status)
-export async function checkDaemonHealth(): Promise<boolean> {
-  try {
-    const url = await getBaseUrl();
-    console.log("Checking daemon health at", url);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-    const response = await fetch(`${url}/health`, {
-      signal: controller.signal,
-      method: 'GET'
+export function onDaemonConnectionStateChange(
+  callback: (state: ServiceConnectionState) => void,
+): () => void {
+  if (!isBrowserRuntime()) {
+    callback({
+      status: "unknown",
+      url: null,
+      port: null,
+      lastHealthyAt: "",
+      consecutiveFailures: 0,
     });
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      setDaemonStatus("connected");
-      return true;
-    }
-  } catch {
-    // Silently handle - daemon not available
+    return () => {};
   }
-  setDaemonStatus("disconnected");
-  return false;
+
+  initDaemonConnection();
+
+  if (!daemonUrlResolver) {
+    callback({
+      status: "unknown",
+      url: null,
+      port: null,
+      lastHealthyAt: "",
+      consecutiveFailures: 0,
+    });
+    return () => {};
+  }
+
+  return daemonUrlResolver.onStateChange(callback);
 }
 
-// Initialize daemon URL in background (non-blocking)
+export async function checkDaemonHealth(): Promise<boolean> {
+  if (!isBrowserRuntime()) {
+    return false;
+  }
+
+  const resolver = await ensureDaemonResolver();
+  return resolver.checkHealth();
+}
+
 export function initDaemonConnection(): void {
   if (!isBrowserRuntime()) {
     return;
   }
 
-  if (daemonUrlPromise) return; // Already initializing
+  if (!daemonUrlResolver) {
+    daemonUrlResolver = createDaemonResolver();
+    daemonUrlResolver.startMonitoring();
+  }
 
-  daemonUrlPromise = (async () => {
-    try {
-      const url = await invoke<string>("get_daemon_url");
-      cachedDaemonUrl = url;
-      // Check health in background
-      checkDaemonHealth();
-      return url;
-    } catch (err) {
-      console.log("Failed to get daemon URL via Tauri, using fallback", err);
-      cachedDaemonUrl = "http://localhost:9090/api/v1";
-      setDaemonStatus("disconnected");
-      return cachedDaemonUrl;
-    }
-  })();
+  void daemonUrlResolver.initialize().catch((err) => {
+    console.log("Failed to initialize daemon resolver", err);
+  });
 }
 
-// Start initialization immediately when module loads
 if (isBrowserRuntime()) {
   initDaemonConnection();
 }
@@ -92,24 +160,8 @@ export async function getBaseUrl(): Promise<string> {
     return "http://localhost:9090/api/v1";
   }
 
-  // Return cached URL immediately if available
-  if (cachedDaemonUrl) {
-    return cachedDaemonUrl;
-  }
-
-  // Wait for initialization (should be fast since it started at module load)
-  if (daemonUrlPromise) {
-    return daemonUrlPromise;
-  }
-
-  initDaemonConnection();
-
-  if (daemonUrlPromise) {
-    return daemonUrlPromise;
-  }
-
-  // Fallback (shouldn't reach here normally)
-  return "http://localhost:9090/api/v1";
+  const resolver = await ensureDaemonResolver();
+  return resolver.getUrl();
 }
 
 export async function getAgentBaseUrl(): Promise<string> {
@@ -117,19 +169,32 @@ export async function getAgentBaseUrl(): Promise<string> {
     return "http://localhost:4173/api/v1";
   }
 
-  try {
-    // Read from standardized memento/ports directory
-    const port = await readTextFile("memento/ports/memento-agents.port", {
-      baseDir: BaseDirectory.LocalData,
-    });
+  const resolver = await ensureAgentResolver();
+  return resolver.getUrl();
+}
 
-    console.log("Agent Server Port:", port);
-
-    return `http://localhost:${port.trim()}/api/v1`;
-  } catch (err) {
-    console.log("Failed to read agent port file, using fallback", err);
-    return "http://localhost:4173/api/v1";
+export async function getDaemonConnectionState(): Promise<ServiceConnectionState> {
+  if (!isBrowserRuntime()) {
+    return {
+      status: "unknown",
+      url: null,
+      port: null,
+      lastHealthyAt: "",
+      consecutiveFailures: 0,
+    };
   }
+
+  const resolver = await ensureDaemonResolver();
+  return resolver.getState();
+}
+
+export async function waitForDaemonHealthy(timeoutMs = 30000): Promise<string> {
+  if (!isBrowserRuntime()) {
+    return "http://localhost:9090/api/v1";
+  }
+
+  const resolver = await ensureDaemonResolver();
+  return resolver.waitForHealthy(timeoutMs);
 }
 
 export const AI_GATEWAY_BASE_URL = `http://localhost:4180/v1`;

@@ -30,8 +30,6 @@ const ConfigSchema = z.object({
     userId: z.string().min(1).default("agents-service"),
   }),
   backend: z.object({
-    searchToolUrl: z.string().url(),
-    searchResultsByChunkIdsUrl: z.string().url(),
     timeout: z.number().int().min(1000).default(30000),
   }),
   logging: z.object({
@@ -49,39 +47,8 @@ const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-import fs from "fs/promises";
-import path from "path";
-import os from "os";
-
-/**
- * Get the Memento base directory
- * Windows: C:\Users\<Username>\AppData\Local\Memento\
- * macOS: ~/Library/Application Support/Memento/
- * Linux: ~/.local/share/Memento/
- */
-function getMementoBaseDir(): string {
-  const platform = os.platform();
-  if (platform === "win32") {
-    return path.join(os.homedir(), "AppData", "Local", "Memento");
-  }
-  if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "Memento");
-  }
-  return path.join(os.homedir(), ".local", "share", "Memento");
-}
-
-export async function readDaemonPort(): Promise<number> {
-  const filePath = path.join(getMementoBaseDir(), "ports", "memento-daemon.port");
-  const content = await fs.readFile(filePath, "utf-8");
-  const port = parseInt(content.trim(), 10);
-  if (Number.isNaN(port)) {
-    throw new Error("Invalid port in memento-daemon.port");
-  }
-  return port;
-}
 
 export async function loadConfig(): Promise<Config> {
-  const daemonPort = await readDaemonPort();
   const devMode = isDevelopmentMode();
 
   const config = {
@@ -96,8 +63,6 @@ export async function loadConfig(): Promise<Config> {
       userId: "agents-service",
     },
     backend: {
-      searchToolUrl: `http://localhost:${daemonPort}/api/v1/search_tool`,
-      searchResultsByChunkIdsUrl: `http://localhost:${daemonPort}/api/v1/search_results_by_chunk_ids`,
       timeout: 30000,
     },
     logging: {

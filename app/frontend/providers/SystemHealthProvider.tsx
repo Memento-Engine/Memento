@@ -1,7 +1,11 @@
 import { SystemHealthContext } from "@/contexts/SystemHealthContext";
 import React, { useEffect, useState } from "react";
 
-import { checkDaemonHealth, onDaemonStatusChange, DaemonStatus } from "@/api/base";
+import {
+  checkDaemonHealth,
+  onDaemonConnectionStateChange,
+  waitForDaemonHealthy,
+} from "@/api/base";
 import { invoke } from "@tauri-apps/api/core";
 
 interface SystemHealthProviderProps {
@@ -21,11 +25,10 @@ export default function SystemHealthProvider({
   const startMementoDaemon = async (): Promise<void> => {
     try {
       setIsMementoDaemonLoading(true);
-      const ans = await invoke("start_daemon", { isDev: true });
+      await invoke("start_daemon", { isDev: true });
+      await waitForDaemonHealthy(30000);
       setIsError(false);
       setError("");
-      // Check health after starting
-      setTimeout(() => checkDaemonHealth(), 1000);
     } catch (err) {
       console.log("Command hit got error", err);
       setIsError(true);
@@ -39,7 +42,7 @@ export default function SystemHealthProvider({
   const stopMementoDaemon = async (): Promise<void> => {
     try {
       setIsMementoDaemonLoading(true);
-      const ans = await invoke("stop_daemon", { isDev: true });
+      await invoke("stop_daemon", { isDev: true });
       setIsError(false);
       setError("");
       setIsRunning(false);
@@ -62,22 +65,15 @@ export default function SystemHealthProvider({
   };
 
   useEffect(() => {
-    // Subscribe to daemon status changes (non-blocking)
-    const unsubscribe = onDaemonStatusChange((status: DaemonStatus) => {
-      setIsRunning(status === "connected");
+    const unsubscribe = onDaemonConnectionStateChange((state) => {
+      setIsRunning(state.status === "connected");
+      setLastBeat(state.lastHealthyAt);
     });
 
-    // Initial health check (non-blocking)
-    checkDaemonHealth();
-
-    // Periodic health check every 5 seconds
-    const interval = setInterval(() => {
-      checkDaemonHealth();
-    }, 5000);
+    void checkDaemonHealth();
 
     return () => {
       unsubscribe();
-      clearInterval(interval);
     };
   }, []);
 

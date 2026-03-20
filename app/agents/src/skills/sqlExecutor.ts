@@ -1,4 +1,5 @@
 import { SqlExecuteInput, SqlValidationResult } from "./types";
+import { getSqlExecuteUrl } from "../config/daemon";
 import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
 import { getConfig } from "../config/config";
 import axios from "axios";
@@ -190,10 +191,7 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
   logger.debug({ sql: safeSql }, "Executing SQL");
 
   try {
-    // Extract base URL from searchToolUrl
-    const searchToolUrl = config.backend.searchToolUrl;
-    const baseUrl = searchToolUrl.replace("/api/v1/search_tool", "");
-    const sqlEndpoint = `${baseUrl}/api/v1/sql_execute`;
+    const sqlEndpoint = await getSqlExecuteUrl();
 
     logSectionLine(logger, "CALLED backend /api/v1/sql_execute", {
       endpoint: sqlEndpoint,

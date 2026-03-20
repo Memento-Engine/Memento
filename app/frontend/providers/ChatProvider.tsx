@@ -18,6 +18,8 @@ import { SearchQueryData, SourceReviewData } from "@/lib/streamSchemas";
 import { USE_MOCK_DATA, getMockResponse, MOCK_THINKING_STEPS } from "@/mock";
 import useOnboarding from "@/hooks/useOnboarding";
 import { clearAuthState, isAuthError } from "@/lib/auth";
+import { getOrCreateSessionId, setSessionId as setStoredSessionId, startNewSession } from "@/lib/session";
+import { loadSessionMessages, MessageRow } from "@/api/messages";
 
 interface ChatProviderProps {
   children: React.ReactNode;
@@ -29,6 +31,8 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   const [stepUpdates, setStepUpdates] = useState<ThinkingStep[]>([]);
   const [searchQueries, setSearchQueries] = useState<SearchQueryData[]>([]);
   const [sourceReview, setSourceReview] = useState<SourceReviewData | null>(null);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
   
   const { setIsOnboardingComplete } = useOnboarding();
   
@@ -40,6 +44,77 @@ export default function ChatProvider({ children }: ChatProviderProps) {
   
   const router = useRouter();
   const pathname = usePathname();
+
+  // Convert DB message rows to UI message format
+  const convertToUIMessages = useCallback((rows: MessageRow[]): MementoUIMessage[] => {
+    return rows.map((row) => {
+      if (row.role === "user") {
+        return {
+          id: `db-${row.id}`,
+          role: "user" as const,
+          parts: [{ type: "text" as const, text: row.content }],
+        };
+      } else {
+        const parts: MementoUIMessage["parts"] = [{ type: "text" as const, text: row.content }];
+
+        if (row.sources.length > 0) {
+          parts.push({
+            type: "data-sources",
+            data: {
+              includeImages: false,
+              sources: row.sources.map((source) => ({
+                chunkId: source.chunk_id,
+                appName: source.app_name,
+                windowTitle: source.window_title,
+                capturedAt: source.captured_at,
+                browserUrl: source.browser_url,
+                textContent: source.text_content,
+                textJson: source.text_json ?? null,
+                imagePath: source.image_path,
+                frameId: source.frame_id,
+                windowX: source.window_x,
+                windowY: source.window_y,
+                windowWidth: source.window_width,
+                windowHeight: source.window_height,
+              })),
+            },
+          });
+        }
+
+        return {
+          id: `db-${row.id}`,
+          role: "assistant" as const,
+          parts,
+        };
+      }
+    });
+  }, []);
+
+  // Initialize session and load messages on mount
+  useEffect(() => {
+    const initSession = async () => {
+      const sid = getOrCreateSessionId();
+      setSessionId(sid);
+      
+      console.log("[ChatProvider] Loading messages for session:", sid);
+      
+      try {
+        const rows = await loadSessionMessages(sid, 100);
+        if (rows.length > 0) {
+          const uiMessages = convertToUIMessages(rows);
+          console.log("UI MESSAGES", uiMessages);
+          setMessages(uiMessages);
+          console.log(`[ChatProvider] Loaded ${rows.length} messages from DB`);
+        }
+      } catch (error) {
+        console.error("[ChatProvider] Failed to load messages:", error);
+      }
+      
+      setIsMessagesLoaded(true);
+    };
+    
+    initSession();
+  }, [convertToUIMessages]);
 
   // Status transition with validation (uses ref to get current status)
   const transitionStatus = useCallback((nextState: AssistantStatus): boolean => {
@@ -159,7 +234,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
       }
       // ========== END MOCK MODE ==========
 
-      await streamMessage(message, abortController.signal, searchMode);
+      await streamMessage(message, abortController.signal, searchMode, sessionId);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
         console.log("Streaming aborted by user");
@@ -194,7 +269,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
         activeRequestRef.current = null;
       }
     }
-  }, [abort, activeRequestRef, pathname, router, transitionStatus, streamMessage, setIsOnboardingComplete]);
+  }, [abort, activeRequestRef, pathname, router, transitionStatus, streamMessage, setIsOnboardingComplete, sessionId]);
 
   const rewrite = useCallback(async (messageId: string): Promise<void> => {
     const assistantIndex = messages.findIndex(
@@ -233,13 +308,51 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     );
   }, [messages, sendMessage]);
 
+  // Start a new chat session - clears messages and creates new session ID
+  const startNewChat = useCallback(() => {
+    const newSessionId = startNewSession();
+    setSessionId(newSessionId);
+    setMessages([]);
+    setStepUpdates([]);
+    setSearchQueries([]);
+    setSourceReview(null);
+    setAssistantStatus("Idle");
+    console.log("[ChatProvider] Started new session:", newSessionId);
+  }, []);
+
+  const openChat = useCallback(async (targetSessionId: string): Promise<void> => {
+    if (!targetSessionId) return;
+
+    setStoredSessionId(targetSessionId);
+    setSessionId(targetSessionId);
+    setStepUpdates([]);
+    setSearchQueries([]);
+    setSourceReview(null);
+    setAssistantStatus("Idle");
+
+    try {
+      const rows = await loadSessionMessages(targetSessionId, 100);
+      const uiMessages = convertToUIMessages(rows);
+      setMessages(uiMessages);
+    } catch (error) {
+      console.error("[ChatProvider] Failed to open chat session:", error);
+      setMessages([]);
+    }
+
+    if (pathname !== "/chat") {
+      router.push("/chat", { scroll: false });
+    }
+  }, [convertToUIMessages, pathname, router]);
+
   const contextValue = {
     sendMessage,
-    chatId: "",
-    isMessagesLoaded: false,
+    chatId: sessionId,
+    isMessagesLoaded,
     messages,
     rewrite,
     stopMessage,
+    startNewChat,
+    openChat,
     isGenerating,
     assistantStatus,
     makeTransition: transitionStatus,

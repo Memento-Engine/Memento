@@ -37,6 +37,8 @@ type ChatContext = {
   ) => Promise<void>;
   rewrite: (messageId: string) => Promise<void>;
   stopMessage: () => void;
+  startNewChat: () => void;
+  openChat: (sessionId: string) => Promise<void>;
   isGenerating: boolean;
   assistantStatus: AssistantStatus; // Use the raw string type here
   makeTransition: (nextState: AssistantStatus) => boolean;
@@ -53,6 +55,8 @@ export function chatContextEmptyState(): ChatContext {
     sendMessage: async () => {},
     rewrite: async () => {},
     stopMessage: () => {},
+    startNewChat: () => {},
+    openChat: async () => {},
     isGenerating: false,
     assistantStatus: "Idle",
     makeTransition: () => false,

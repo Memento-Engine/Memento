@@ -3,7 +3,20 @@
 import React, { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
-import { Cpu, Database, HatGlasses, Palette, UserPen, Laptop, Globe, Clock3, MonitorSmartphone, Power, Radio, AlertCircle } from "lucide-react";
+import {
+  Cpu,
+  Database,
+  HatGlasses,
+  Palette,
+  UserPen,
+  Laptop,
+  Globe,
+  Clock3,
+  MonitorSmartphone,
+  Power,
+  Radio,
+  AlertCircle,
+} from "lucide-react";
 
 import {
   Card,
@@ -121,7 +134,9 @@ function ProfileTab(): React.ReactElement {
         <div className="space-y-1">
           <p className="text-sm font-medium">Avatar</p>
           <p className="text-xs text-muted-foreground">
-            {user.picture ? "From your Google account" : "Generated from initials"}
+            {user.picture
+              ? "From your Google account"
+              : "Generated from initials"}
           </p>
         </div>
       </div>
@@ -260,7 +275,16 @@ import {
   type DiskUsage,
   type ClearTarget,
 } from "@/api/storage";
-import { Loader2, Trash2, Image, FileText, HardDrive, FolderOpen, AlertTriangle, RefreshCw } from "lucide-react";
+import {
+  Loader2,
+  Trash2,
+  Image,
+  FileText,
+  HardDrive,
+  FolderOpen,
+  AlertTriangle,
+  RefreshCw,
+} from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -320,8 +344,10 @@ function StorageItem({
             Clear {label}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This action cannot be undone. This will permanently delete all {label.toLowerCase()} data.
-            {label === "Database" && " The capture service will be paused during this operation."}
+            This action cannot be undone. This will permanently delete all{" "}
+            {label.toLowerCase()} data.
+            {label === "Database" &&
+              " The capture service will be paused during this operation."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -362,9 +388,7 @@ function StorageItem({
         </div>
         <div>
           <p className="text-sm font-medium">{label}</p>
-          {detail && (
-            <p className="text-xs text-muted-foreground">{detail}</p>
-          )}
+          {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
         </div>
       </div>
       <div className="flex items-center gap-3">
@@ -388,7 +412,9 @@ function DataTab() {
       const usage = await getDiskUsage();
       setDiskUsage(usage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch disk usage");
+      setError(
+        err instanceof Error ? err.message : "Failed to fetch disk usage",
+      );
       console.error("Failed to fetch disk usage:", err);
     } finally {
       setLoading(false);
@@ -407,7 +433,9 @@ function DataTab() {
       await fetchDiskUsage();
     } catch (err) {
       console.error(`Failed to clear ${target}:`, err);
-      setError(err instanceof Error ? err.message : `Failed to clear ${target}`);
+      setError(
+        err instanceof Error ? err.message : `Failed to clear ${target}`,
+      );
     } finally {
       setClearing(null);
     }
@@ -457,7 +485,9 @@ function DataTab() {
       <div className="rounded-xl border p-4 space-y-3 bg-muted/30">
         <div className="flex justify-between text-sm">
           <span className="font-medium">Total Storage Used</span>
-          <span className="font-semibold">{diskUsage.total_size.formatted}</span>
+          <span className="font-semibold">
+            {diskUsage.total_size.formatted}
+          </span>
         </div>
         <div className="h-2 rounded-full bg-muted overflow-hidden">
           <div
@@ -465,7 +495,7 @@ function DataTab() {
             style={{
               width: `${Math.min(
                 (diskUsage.total_size.bytes / (10 * 1024 * 1024 * 1024)) * 100,
-                100
+                100,
               )}%`,
             }}
           />
@@ -478,7 +508,9 @@ function DataTab() {
       {/* Storage Breakdown */}
       <div className="rounded-xl border divide-y divide-border/50">
         <div className="p-4">
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Storage Breakdown</h4>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">
+            Storage Breakdown
+          </h4>
         </div>
         <div className="px-4">
           <StorageItem
@@ -541,7 +573,9 @@ function DataTab() {
               Clear All Data?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete all your data including screenshots, search history, logs, and cache. The capture service will be paused during this operation.
+              This action cannot be undone. This will permanently delete all
+              your data including screenshots, search history, logs, and cache.
+              The capture service will be paused during this operation.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -560,9 +594,12 @@ function DataTab() {
 }
 
 function SessionsTab(): React.ReactElement {
-  const { user, activeSessions, revokeSession, refreshAuth, isLoading } = useAuth();
+  const { user, activeSessions, revokeSession, refreshAuth, isLoading } =
+    useAuth();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const refreshSessions = async () => {
@@ -572,7 +609,9 @@ function SessionsTab(): React.ReactElement {
       await refreshAuth();
     } catch (err) {
       console.error("Failed to refresh sessions:", err);
-      setError(err instanceof Error ? err.message : "Failed to refresh sessions");
+      setError(
+        err instanceof Error ? err.message : "Failed to refresh sessions",
+      );
     } finally {
       setIsRefreshing(false);
     }
@@ -608,7 +647,9 @@ function SessionsTab(): React.ReactElement {
         </div>
 
         <div className="rounded-xl border border-dashed p-8 text-center space-y-2">
-          <p className="text-sm text-muted-foreground">You are not logged in.</p>
+          <p className="text-sm text-muted-foreground">
+            You are not logged in.
+          </p>
           <p className="text-xs text-muted-foreground/70">
             Sign in with Google to manage active sessions.
           </p>
@@ -623,7 +664,8 @@ function SessionsTab(): React.ReactElement {
         <div>
           <h3 className="text-base font-semibold tracking-tight">Sessions</h3>
           <p className="text-sm text-muted-foreground mt-0.5">
-            See where your account is signed in and revoke access from devices you do not recognize.
+            See where your account is signed in and revoke access from devices
+            you do not recognize.
           </p>
         </div>
         <Button
@@ -633,20 +675,30 @@ function SessionsTab(): React.ReactElement {
           disabled={isRefreshing || isLoading}
           className="gap-2"
         >
-          <RefreshCw className={cn("h-4 w-4", (isRefreshing || isLoading) && "animate-spin")} />
+          <RefreshCw
+            className={cn(
+              "h-4 w-4",
+              (isRefreshing || isLoading) && "animate-spin",
+            )}
+          />
           Refresh
         </Button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="rounded-xl border bg-muted/20 p-4">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">Active Sessions</p>
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">
+            Active Sessions
+          </p>
           <p className="text-2xl font-semibold mt-1">{activeSessions.length}</p>
         </div>
         <div className="rounded-xl border bg-muted/20 p-4">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">Current Device</p>
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">
+            Current Device
+          </p>
           <p className="text-sm font-medium mt-1">
-            {activeSessions.find((session) => session.isCurrent)?.deviceHostname || "This device"}
+            {activeSessions.find((session) => session.isCurrent)
+              ?.deviceHostname || "This device"}
           </p>
         </div>
       </div>
@@ -663,7 +715,9 @@ function SessionsTab(): React.ReactElement {
         </div>
       ) : activeSessions.length === 0 ? (
         <div className="rounded-xl border border-dashed p-8 text-center">
-          <p className="text-sm text-muted-foreground">No active sessions found.</p>
+          <p className="text-sm text-muted-foreground">
+            No active sessions found.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -694,7 +748,9 @@ function SessionsTab(): React.ReactElement {
                     <div className="flex items-center gap-1.5">
                       <Clock3 className="h-3.5 w-3.5" />
                       <span>
-                        {session.lastActiveAt ? `Last active ${formatRelativeDate(session.lastActiveAt)}` : "No activity yet"}
+                        {session.lastActiveAt
+                          ? `Last active ${formatRelativeDate(session.lastActiveAt)}`
+                          : "No activity yet"}
                       </span>
                     </div>
                   </div>
@@ -746,11 +802,19 @@ function formatRelativeDate(dateString: string): string {
   return date.toLocaleDateString();
 }
 
-
 import PrivacySettings from "./settings/PrivacyTab";
-import { getDaemonCaptureStatus, pauseCapture, resumeCapture } from "@/api/daemon";
+import {
+  getDaemonCaptureStatus,
+  pauseCapture,
+  resumeCapture,
+} from "@/api/daemon";
 
-type ServiceStatus = "running" | "stopped" | "starting" | "stopping" | "unknown";
+type ServiceStatus =
+  | "running"
+  | "stopped"
+  | "starting"
+  | "stopping"
+  | "unknown";
 type CaptureStatus = "capturing" | "paused" | "unknown";
 
 function BackgroundServiceTab(): React.ReactElement {
@@ -765,7 +829,7 @@ function BackgroundServiceTab(): React.ReactElement {
   const refreshStatuses = async () => {
     try {
       setError(null);
-      
+
       // Get daemon status
       const daemonStatusRes = await invoke<string>("get_service_status");
       console.log("Daemon status response:", daemonStatusRes);
@@ -784,7 +848,8 @@ function BackgroundServiceTab(): React.ReactElement {
         setCaptureStatus("unknown");
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to get service status";
+      const message =
+        err instanceof Error ? err.message : "Failed to get service status";
       setError(message);
       console.error("Status check failed:", err);
       setDaemonStatus("unknown");
@@ -809,11 +874,12 @@ function BackgroundServiceTab(): React.ReactElement {
     try {
       setIsDaemonActionLoading(true);
       setError(null);
-      await invoke("start_daemon", { isDev: false });
+      await invoke("start_daemon", { isDev: true });
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s for daemon to start
       await refreshStatuses();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start daemon";
+      const message =
+        err instanceof Error ? err.message : "Failed to start daemon";
       setError(message);
       console.error("Failed to start daemon:", err);
     } finally {
@@ -826,11 +892,12 @@ function BackgroundServiceTab(): React.ReactElement {
     try {
       setIsDaemonActionLoading(true);
       setError(null);
-      await invoke("stop_daemon", { isDev: false });
+      await invoke("stop_daemon", { isDev: true });
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s for daemon to stop
       await refreshStatuses();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to stop daemon";
+      const message =
+        err instanceof Error ? err.message : "Failed to stop daemon";
       setError(message);
       console.error("Failed to stop daemon:", err);
     } finally {
@@ -846,7 +913,8 @@ function BackgroundServiceTab(): React.ReactElement {
       await resumeCapture();
       await refreshStatuses();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start capture";
+      const message =
+        err instanceof Error ? err.message : "Failed to start capture";
       setError(message);
       console.error("Failed to start capture:", err);
     } finally {
@@ -862,7 +930,8 @@ function BackgroundServiceTab(): React.ReactElement {
       await pauseCapture();
       await refreshStatuses();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to stop capture";
+      const message =
+        err instanceof Error ? err.message : "Failed to stop capture";
       setError(message);
       console.error("Failed to stop capture:", err);
     } finally {
@@ -877,7 +946,9 @@ function BackgroundServiceTab(): React.ReactElement {
     return (
       <div className="space-y-6">
         <div>
-          <h3 className="text-base font-semibold tracking-tight">Background Service</h3>
+          <h3 className="text-base font-semibold tracking-tight">
+            Background Service
+          </h3>
           <p className="text-sm text-muted-foreground mt-0.5">
             Manage the background daemon and capture processes.
           </p>
@@ -892,7 +963,9 @@ function BackgroundServiceTab(): React.ReactElement {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-semibold tracking-tight">Background Service</h3>
+        <h3 className="text-base font-semibold tracking-tight">
+          Background Service
+        </h3>
         <p className="text-sm text-muted-foreground mt-0.5">
           Manage the background daemon and capture processes.
         </p>
@@ -908,51 +981,81 @@ function BackgroundServiceTab(): React.ReactElement {
       {/* Status Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* Daemon Status */}
-        <div className={cn(
-          "rounded-xl border p-4 space-y-3",
-          isDaemonRunning ? "bg-green-50/50 dark:bg-green-950/30 border-green-600/20" : "bg-red-50/50 dark:bg-red-950/30 border-red-600/20"
-        )}>
+        <div
+          className={cn(
+            "rounded-xl border p-4 space-y-3",
+            isDaemonRunning
+              ? "bg-green-50/50 dark:bg-green-950/30 border-green-600/20"
+              : "bg-red-50/50 dark:bg-red-950/30 border-red-600/20",
+          )}
+        >
           <div className="flex items-center gap-2">
-            <div className={cn(
-              "h-3 w-3 rounded-full",
-              isDaemonRunning ? "bg-green-600" : "bg-red-600"
-            )} />
-            <p className={cn(
-              "text-sm font-semibold",
-              isDaemonRunning ? "text-green-900 dark:text-green-100" : "text-red-900 dark:text-red-100"
-            )}>
+            <div
+              className={cn(
+                "h-3 w-3 rounded-full",
+                isDaemonRunning ? "bg-green-600" : "bg-red-600",
+              )}
+            />
+            <p
+              className={cn(
+                "text-sm font-semibold",
+                isDaemonRunning
+                  ? "text-green-900 dark:text-green-100"
+                  : "text-red-900 dark:text-red-100",
+              )}
+            >
               {isDaemonRunning ? "Daemon Running" : "Daemon Dead"}
             </p>
           </div>
-          <p className={cn(
-            "text-xs",
-            isDaemonRunning ? "text-green-800 dark:text-green-200" : "text-red-800 dark:text-red-200"
-          )}>
-            {isDaemonRunning ? "Services operational and responsive" : "No background services active"}
+          <p
+            className={cn(
+              "text-xs",
+              isDaemonRunning
+                ? "text-green-800 dark:text-green-200"
+                : "text-red-800 dark:text-red-200",
+            )}
+          >
+            {isDaemonRunning
+              ? "Services operational and responsive"
+              : "No background services active"}
           </p>
         </div>
 
         {/* Capture Status */}
-        <div className={cn(
-          "rounded-xl border p-4 space-y-3",
-          isCapturing ? "bg-blue-50/50 dark:bg-blue-950/30 border-blue-600/20" : "bg-yellow-50/50 dark:bg-yellow-950/30 border-yellow-600/20"
-        )}>
+        <div
+          className={cn(
+            "rounded-xl border p-4 space-y-3",
+            isCapturing
+              ? "bg-blue-50/50 dark:bg-blue-950/30 border-blue-600/20"
+              : "bg-yellow-50/50 dark:bg-yellow-950/30 border-yellow-600/20",
+          )}
+        >
           <div className="flex items-center gap-2">
-            <div className={cn(
-              "h-3 w-3 rounded-full",
-              isCapturing ? "bg-blue-600 animate-pulse" : "bg-yellow-600"
-            )} />
-            <p className={cn(
-              "text-sm font-semibold",
-              isCapturing ? "text-blue-900 dark:text-blue-100" : "text-yellow-900 dark:text-yellow-100"
-            )}>
+            <div
+              className={cn(
+                "h-3 w-3 rounded-full",
+                isCapturing ? "bg-blue-600 animate-pulse" : "bg-yellow-600",
+              )}
+            />
+            <p
+              className={cn(
+                "text-sm font-semibold",
+                isCapturing
+                  ? "text-blue-900 dark:text-blue-100"
+                  : "text-yellow-900 dark:text-yellow-100",
+              )}
+            >
               {isCapturing ? "Capturing" : "Not Capturing"}
             </p>
           </div>
-          <p className={cn(
-            "text-xs",
-            isCapturing ? "text-blue-800 dark:text-blue-200" : "text-yellow-800 dark:text-yellow-200"
-          )}>
+          <p
+            className={cn(
+              "text-xs",
+              isCapturing
+                ? "text-blue-800 dark:text-blue-200"
+                : "text-yellow-800 dark:text-yellow-200",
+            )}
+          >
             {isCapturing ? "Actively recording activity" : "Capture is paused"}
           </p>
         </div>
@@ -977,7 +1080,11 @@ function BackgroundServiceTab(): React.ReactElement {
               variant="destructive"
               className="gap-2 flex-1"
             >
-              {isDaemonActionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              {isDaemonActionLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Power className="h-4 w-4" />
+              )}
               Stop Daemon
             </Button>
           ) : (
@@ -986,7 +1093,11 @@ function BackgroundServiceTab(): React.ReactElement {
               disabled={isDaemonActionLoading}
               className="gap-2 flex-1"
             >
-              {isDaemonActionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              {isDaemonActionLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Power className="h-4 w-4" />
+              )}
               Start Daemon
             </Button>
           )}
@@ -1021,7 +1132,11 @@ function BackgroundServiceTab(): React.ReactElement {
               variant="outline"
               className="gap-2 flex-1 text-yellow-600 border-yellow-600/20 hover:bg-yellow-50 dark:hover:bg-yellow-950/30"
             >
-              {isCaptureActionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+              {isCaptureActionLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Radio className="h-4 w-4" />
+              )}
               Pause Capture
             </Button>
           ) : (
@@ -1030,7 +1145,11 @@ function BackgroundServiceTab(): React.ReactElement {
               disabled={isCaptureActionLoading || !isDaemonRunning}
               className="gap-2 flex-1"
             >
-              {isCaptureActionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+              {isCaptureActionLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Radio className="h-4 w-4" />
+              )}
               Start Capture
             </Button>
           )}
@@ -1051,11 +1170,21 @@ function BackgroundServiceTab(): React.ReactElement {
         <div className="flex items-start gap-2">
           <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
           <div className="space-y-1">
-            <p className="text-sm font-medium text-blue-900 dark:text-blue-100">How it works</p>
+            <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+              How it works
+            </p>
             <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1 list-disc list-inside">
-              <li>The Daemon is the core background service that powers capture</li>
-              <li>You can stop the daemon to completely halt all background operations</li>
-              <li>Pause capture to leave the daemon running but temporarily halt recording</li>
+              <li>
+                The Daemon is the core background service that powers capture
+              </li>
+              <li>
+                You can stop the daemon to completely halt all background
+                operations
+              </li>
+              <li>
+                Pause capture to leave the daemon running but temporarily halt
+                recording
+              </li>
               <li>The service automatically restarts on app launch</li>
             </ul>
           </div>
@@ -1135,7 +1264,9 @@ export function SettingsDialog({
                 </div>
               )}
               <div className="min-w-0">
-                <p className="text-sm font-medium truncate">{user?.name ?? "Guest"}</p>
+                <p className="text-sm font-medium truncate">
+                  {user?.name ?? "Guest"}
+                </p>
                 <p className="text-xs text-muted-foreground truncate">
                   {user?.email ?? "Anonymous mode"}
                 </p>

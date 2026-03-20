@@ -18,7 +18,7 @@ export const PlatformShortcuts: ShortcutMap = {
   },
 
   [ShortcutAction.SEARCH_MEMORIES]: {
-    key: "m",
+    key: "k",
     ctrlKey: true,
   },
 };

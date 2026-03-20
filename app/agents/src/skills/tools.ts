@@ -21,6 +21,7 @@ import {
   validateSql,
 } from "./sqlExecutor";
 import { getConfig } from "../config/config";
+import { getHybridSearchUrl, getSemanticSearchUrl } from "../config/daemon";
 import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
 import { runWithSpan } from "../telemetry/tracing";
 import axios from "axios";
@@ -162,10 +163,7 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
         });
 
         try {
-          // Extract base URL from searchToolUrl
-          const searchToolUrl = config.backend.searchToolUrl;
-          const baseUrl = searchToolUrl.replace("/api/v1/search_tool", "");
-          const semanticEndpoint = `${baseUrl}/api/v1/semantic_search`;
+          const semanticEndpoint = await getSemanticSearchUrl();
 
           const response = await axios.post(
             semanticEndpoint,
@@ -302,9 +300,7 @@ export class HybridSearchTool implements Tool<
         });
 
         try {
-          const searchToolUrl = config.backend.searchToolUrl;
-          const baseUrl = searchToolUrl.replace("/api/v1/search_tool", "");
-          const hybridEndpoint = `${baseUrl}/api/v1/hybrid_search`;
+          const hybridEndpoint = await getHybridSearchUrl();
 
           const response = await axios.post(
             hybridEndpoint,

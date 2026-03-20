@@ -8,6 +8,7 @@ import RightSidebar from "@/components/layout/Rightbar";
 import KeyboardProvider from "@/providers/KeyboardProvider";
 import ChatProvider from "@/providers/ChatProvider";
 import LeftSidebar from "@/components/layout/Sidebar";
+import ChatSearchDialog from "@/components/layout/ChatSearchDialog";
 import { Toaster } from "sonner";
 import SystemHealthProvider from "@/providers/SystemHealthProvider";
 import CreditsProvider from "@/providers/CreditsProvider";
@@ -92,6 +93,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
           <ReferenceProvider>
             <SidebarProvider>
               <KeyboardProvider />
+              <ChatSearchDialog />
 
               <div className="flex h-dvh w-full overflow-hidden bg-background">
                 <LeftSidebar />
