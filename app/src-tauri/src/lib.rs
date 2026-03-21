@@ -10,6 +10,12 @@ use tauri::{Manager, WindowEvent};
 use tracing::{info, warn, error, debug};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 pub mod build_info;
 pub mod get_app_icon;
 pub mod get_device_id;
@@ -23,6 +29,13 @@ static LOGGING_INIT: Once = Once::new();
 #[derive(Default)]
 struct AgentServerState {
     process: Mutex<Option<Child>>,
+}
+
+fn configure_no_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn find_embedded_agent_binary() -> Option<PathBuf> {
@@ -40,6 +53,26 @@ fn find_embedded_agent_binary() -> Option<PathBuf> {
         exe_dir
             .join("resources")
             .join("memento-agents-x86_64-pc-windows-msvc.exe"),
+    ];
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn find_embedded_daemon_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    let candidates = [
+        exe_dir.join("memento-daemon.exe"),
+        exe_dir.join("memento-daemon-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("binaries").join("memento-daemon.exe"),
+        exe_dir
+            .join("binaries")
+            .join("memento-daemon-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("resources").join("memento-daemon.exe"),
+        exe_dir
+            .join("resources")
+            .join("memento-daemon-x86_64-pc-windows-msvc.exe"),
     ];
 
     candidates.into_iter().find(|path| path.exists())
@@ -84,6 +117,7 @@ fn start_embedded_agent_server(state: &AgentServerState) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    configure_no_window(&mut command);
 
     if let Some(parent_dir) = binary_path.parent() {
         command.current_dir(parent_dir);
@@ -231,9 +265,13 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
         return Ok("Daemon already running".into());
     }
 
+    let mut wait_for_service = false;
+
     if is_dev {
         info!("Starting daemon in dev mode");
-        Command::new("../../target/debug/memento-daemon.exe")
+        let mut command = Command::new("../../target/debug/memento-daemon.exe");
+        configure_no_window(&mut command);
+        command
             .spawn()
             .map_err(|e| {
                 let message = format!("Failed to start daemon: {}", e);
@@ -251,11 +289,51 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
             })?;
     } else {
         info!("Starting daemon via Windows Service");
-        // Use status() not spawn() - we need to wait for sc.exe to submit the
-        // start request to SCM before polling service state in wait_until_healthy()
-        let sc_result = Command::new("sc")
+        let query_result = Command::new("sc")
+            .args(["query", SERVICE_NAME])
+            .output();
+
+        let service_missing = match query_result {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                !out.status.success()
+                    && (out.status.code() == Some(1060)
+                        || stdout.contains("1060")
+                        || stderr.contains("1060"))
+            }
+            Err(_) => false,
+        };
+
+        if service_missing {
+            warn!("Windows service is not installed; falling back to standalone daemon process");
+            let daemon_path = find_embedded_daemon_binary().ok_or_else(|| {
+                "Service is not installed and packaged daemon binary could not be found".to_string()
+            })?;
+
+            let mut command = Command::new(&daemon_path);
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            configure_no_window(&mut command);
+
+            if let Some(parent_dir) = daemon_path.parent() {
+                command.current_dir(parent_dir);
+            }
+
+            command.spawn().map_err(|e| {
+                let message = format!("Failed to start standalone daemon: {}", e);
+                error!("{}", message);
+                message
+            })?;
+        } else {
+            wait_for_service = true;
+            // Use output() not spawn() - we need to wait for sc.exe to submit the
+            // start request to SCM before polling service state in wait_until_healthy()
+            let sc_result = Command::new("sc")
             .args(["start", "SearchEngineDaemon"])
-            .status()
+            .output()
             .map_err(|e| {
                 let message = format!("Failed to start service: {}", e);
                 error!("{}", message);
@@ -270,18 +348,23 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
                 });
                 message
             })?;
-        // Exit code 0 = started, 1056 = already running (both are fine)
-        if !sc_result.success() {
-            let code = sc_result.code().unwrap_or(-1);
-            // 1056 = ERROR_SERVICE_ALREADY_RUNNING
-            if code != 1056 {
-                info!("sc start exited with code {} (service may already be running)", code);
+            // Exit code 0 = started, 1056 = already running (both are fine)
+            if !sc_result.status.success() {
+                let code = sc_result.status.code().unwrap_or(-1);
+                let stdout = String::from_utf8_lossy(&sc_result.stdout);
+                let stderr = String::from_utf8_lossy(&sc_result.stderr);
+                if code != 1056 && !stdout.contains("1056") && !stderr.contains("1056") {
+                    info!(
+                        "sc start exited with code {}. stdout: {} stderr: {}",
+                        code, stdout, stderr
+                    );
+                }
             }
         }
     }
 
     info!("Waiting for daemon to become healthy...");
-    wait_until_healthy()?;
+    wait_until_healthy(wait_for_service)?;
     info!("Daemon started successfully");
 
     Ok("Daemon started successfully".into())
@@ -392,12 +475,12 @@ fn wait_until_unhealthy() -> Result<(), String> {
     Err("Daemon failed to stop".into())
 }
 
-fn wait_until_healthy() -> Result<(), String> {
+fn wait_until_healthy(wait_for_service: bool) -> Result<(), String> {
     let start = Instant::now();
     let timeout = Duration::from_secs(60);
     
     // In production, wait for Windows service to reach RUNNING state first
-    if !cfg!(debug_assertions) {
+    if wait_for_service {
         info!("Waiting for Windows service to reach RUNNING state...");
         let service_timeout = Duration::from_secs(30);
         // Track whether we've seen the service leave STOPPED at least once.

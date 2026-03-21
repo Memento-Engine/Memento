@@ -10,3 +10,4 @@ pub mod privacy;
 pub mod privacy_endpoints;
 pub mod model_endpoints;
 pub mod chat_endpoints;
+pub mod system_endpoints;
