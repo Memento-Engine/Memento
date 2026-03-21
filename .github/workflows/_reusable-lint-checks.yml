@@ -139,8 +139,15 @@ jobs:
         shell: pwsh
         run: |
           cd app/frontend
-          # Run lint and capture output (ignore exit code, we check manually)
-          $output = npm run lint 2>&1 | Out-String
+          # Run lint and capture output
+          # Use try/catch to ignore npm exit code - we check content manually
+          try {
+            $output = npm run lint 2>&1 | Out-String
+          } catch {
+            $output = $_.Exception.Message
+          }
+          $LASTEXITCODE = 0  # Reset so script doesn't fail from npm
+          
           Write-Host $output
           
           # This check ONLY fails on our custom rule violations
@@ -153,6 +160,7 @@ jobs:
           }
           
           Write-Host "✓ No custom rule violations (memento/no-raw-process-env-invoke)"
+          exit 0
 
   # ─────────────────────────────────────────────────────────────
   # #4 — Helper usage grep
