@@ -37,7 +37,9 @@ export default function ChatSearchDialog(): React.ReactElement {
   const [query, setQuery] = useState("");
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const { chatId, openChat } = useChatContext();
 
   const refreshChats = useCallback(async () => {
@@ -59,6 +61,7 @@ export default function ChatSearchDialog(): React.ReactElement {
   useEffect(() => {
     if (!open) {
       setQuery("");
+      setSelectedIndex(0);
       return;
     }
 
@@ -82,17 +85,44 @@ export default function ChatSearchDialog(): React.ReactElement {
     );
   }, [query, sessions]);
 
+  // Reset selection when query changes
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [query]);
+
+  // Scroll selected item into view
+  useEffect(() => {
+    if (!listRef.current) return;
+    const selectedEl = listRef.current.querySelector(`[data-index="${selectedIndex}"]`);
+    if (selectedEl) {
+      selectedEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [selectedIndex]);
+
   const handleOpenChat = useCallback(async (sessionId: string) => {
     setOpen(false);
     await openChat(sessionId);
   }, [openChat]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter" && filteredSessions.length > 0) {
-      event.preventDefault();
-      void handleOpenChat(filteredSessions[0].session_id);
+    const itemCount = filteredSessions.length;
+    if (itemCount === 0) return;
+
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        setSelectedIndex((prev) => (prev + 1) % itemCount);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        setSelectedIndex((prev) => (prev - 1 + itemCount) % itemCount);
+        break;
+      case "Enter":
+        event.preventDefault();
+        void handleOpenChat(filteredSessions[selectedIndex].session_id);
+        break;
     }
-  }, [filteredSessions, handleOpenChat]);
+  }, [filteredSessions, selectedIndex, handleOpenChat]);
 
   const renderDialogSkeletons = () => (
     Array.from({ length: 6 }).map((_, index) => (
@@ -141,17 +171,7 @@ return (
       </div>
 
       <ScrollArea className="max-h-[480px] p-2">
-        <div className="space-y-1">
-          {/* Primary Actions Group */}
-          <div className="pb-2 mb-2 border-b border-border/40">
-            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all hover:bg-primary/10 hover:text-primary group">
-              <div className="flex h-6 w-6 items-center justify-center rounded-md border bg-background group-hover:border-primary/30">
-                <Plus className="h-4 w-4" />
-              </div>
-              New chat
-              <span className="ml-auto text-[10px] opacity-50 font-normal">⌘N</span>
-            </button>
-          </div>
+        <div className="space-y-1" ref={listRef}>
 
           {/* Section Header */}
           {filteredSessions.length > 0 && (
@@ -161,22 +181,26 @@ return (
           )}
 
           {/* Chats List */}
-          {!isLoading && filteredSessions.map((session) => {
+          {!isLoading && filteredSessions.map((session, index) => {
             const isActive = session.session_id === chatId;
+            const isSelected = index === selectedIndex;
 
             return (
               <button
                 key={session.session_id}
+                data-index={index}
                 onClick={() => void handleOpenChat(session.session_id)}
+                onMouseEnter={() => setSelectedIndex(index)}
                 className={cn(
                   "group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm transition-all outline-none",
                   "hover:bg-muted/80 focus:bg-muted/80",
+                  isSelected && "bg-muted/80 ring-1 ring-primary/30",
                   isActive && "bg-muted font-medium border-l-2 border-primary rounded-l-none"
                 )}
               >
                 <div className={cn(
                   "p-1.5 rounded-md",
-                  isActive ? "bg-primary/10 text-primary" : "text-muted-foreground group-hover:text-foreground"
+                  isSelected ? "bg-primary/10 text-primary" : isActive ? "bg-primary/10 text-primary" : "text-muted-foreground group-hover:text-foreground"
                 )}>
                   <MessageSquare className="h-4 w-4" />
                 </div>

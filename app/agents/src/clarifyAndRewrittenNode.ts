@@ -17,7 +17,6 @@ export async function clarifyAndRewrittenNode(
   const MAX_TRIES = 1;
   const currentDate = new Date().toLocaleDateString("en-CA");
 
-  // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
   const prompt = await clarifyAndRewritePrompt.invoke({
     userQuery: state.goal,
     currentDate,

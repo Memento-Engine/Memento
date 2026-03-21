@@ -102,7 +102,6 @@ export async function plannerNodeV2(
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           try {
-            // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
             const prompt = await plannerPromptV2.invoke({
               goal: state.rewrittenQuery ?? state.goal,
               previousErrors: lastError,

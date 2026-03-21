@@ -10,8 +10,8 @@ interface KeyboardShortcutProps {
 export default function useKeyboardShortcuts({
   key,
   callback,
-  shiftKey,
-  ctrlKey,
+  shiftKey = false,
+  ctrlKey = false,
 }: KeyboardShortcutProps) {
   useEffect(() => {
     const handleKeyshortcuts = (e: KeyboardEvent) => {

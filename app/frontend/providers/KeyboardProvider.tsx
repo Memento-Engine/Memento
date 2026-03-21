@@ -22,6 +22,7 @@ export default function KeyboardProvider() {
     },
   });
 
+  // Search Memories
   useKeyboardShortcuts({
     ...searchMemories,
     callback: (): void => {

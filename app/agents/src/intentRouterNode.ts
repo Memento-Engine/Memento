@@ -15,7 +15,6 @@ export async function intentRouterNode(
       goal: state.goal,
     });
 
-    // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
     const prompt = await intentRouterPrompt.invoke({
       query: state.rewrittenQuery,
     });

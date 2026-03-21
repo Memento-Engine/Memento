@@ -107,7 +107,6 @@ async function buildAgentGraph() {
 
         graphBuilder.addEdge(START, "clarifyAndRewritten");
 
-        // @ts-expect-error - LangGraph StateGraph.addConditionalEdges() type inference issue
         graphBuilder.addConditionalEdges(
           "clarifyAndRewritten",
           afterClarificationAndRewrite,
@@ -117,7 +116,6 @@ async function buildAgentGraph() {
           },
         );
 
-        // @ts-expect-error - LangGraph StateGraph.addConditionalEdges() type inference issue
         graphBuilder.addConditionalEdges("intentRouter", afterRouter, {
           conversationExit: "conversationExit",
           planner: "planner",

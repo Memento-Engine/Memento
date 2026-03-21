@@ -16,6 +16,7 @@ import {
   Power,
   Radio,
   AlertCircle,
+  XIcon,
 } from "lucide-react";
 
 import {
@@ -1235,36 +1236,46 @@ export function SettingsDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       {/* OVERLAY - Smoother fade */}
       <div
         onClick={(): void => setOpen(false)}
-        className="absolute inset-0 bg-background/40 backdrop-blur-xs"
+        className="absolute inset-0 bg-background/60 backdrop-blur-sm"
       />
 
-      {/* DIALOG PANEL */}
-      <div className="relative w-full max-w-[1000px] h-[650px] bg-card border shadow-2xl rounded-3xl overflow-hidden flex">
-        {/* LEFT SIDEBAR */}
-        <aside className="w-64 shrink-0 bg-sidebar border-r flex flex-col">
-          <div className="p-6 space-y-4">
-            <h2 className="text-md font-medium tracking-tight">Settings</h2>
-            <p className="text-sm text-muted-foreground/70 font-medium">
-              Account Management
-            </p>
+      {/* DIALOG PANEL - Responsive */}
+      <div className="relative w-full max-w-[1000px] h-[calc(100dvh-1rem)] sm:h-[min(650px,calc(100dvh-2rem))] bg-card border shadow-2xl rounded-2xl sm:rounded-3xl overflow-hidden flex flex-col md:flex-row">
+        {/* LEFT SIDEBAR - Collapsible on narrow */}
+        <aside className="w-full md:w-64 shrink-0 bg-sidebar md:border-r flex flex-col border-b md:border-b-0">
+          {/* Compact header for mobile, full for desktop */}
+          <div className="p-4 md:p-6 space-y-3 md:space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base md:text-md font-medium tracking-tight">Settings</h2>
+              {/* Close button for mobile */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden h-8 w-8 text-muted-foreground hover:text-foreground"
+                onClick={() => setOpen(false)}
+              >
+                <XIcon className="h-4 w-4" />
+              </Button>
+            </div>
 
-            <div className="rounded-xl border bg-muted/20 p-3 flex items-center gap-3">
+            {/* User card - hidden on very narrow, compact otherwise */}
+            <div className="hidden sm:flex rounded-xl border bg-muted/20 p-2.5 md:p-3 items-center gap-3">
               {user?.picture ? (
                 <img
                   src={user.picture}
                   alt={user.name}
-                  className="h-10 w-10 rounded-xl object-cover border border-border"
+                  className="h-8 w-8 md:h-10 md:w-10 rounded-lg md:rounded-xl object-cover border border-border"
                 />
               ) : (
-                <div className="h-10 w-10 rounded-xl border border-border bg-muted flex items-center justify-center text-sm font-semibold">
+                <div className="h-8 w-8 md:h-10 md:w-10 rounded-lg md:rounded-xl border border-border bg-muted flex items-center justify-center text-xs md:text-sm font-semibold">
                   G
                 </div>
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">
                   {user?.name ?? "Guest"}
                 </p>
@@ -1286,7 +1297,8 @@ export function SettingsDialog({
             )}
           </div>
 
-          <nav className="flex-1 px-3 space-y-1">
+          {/* Nav tabs - horizontal scroll on narrow, vertical on desktop */}
+          <nav className="flex md:flex-col md:flex-1 px-2 md:px-3 pb-3 md:pb-0 gap-1 overflow-x-auto md:overflow-x-visible custom-scrollbar">
             {visibleTabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
@@ -1294,18 +1306,22 @@ export function SettingsDialog({
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   variant={isActive ? "secondary" : "ghost"}
-                  className={`w-full cursor-pointer  justify-start gap-3 px-3 h-10 transition-all ${
+                  className={cn(
+                    "cursor-pointer gap-2 md:gap-3 px-3 h-9 md:h-10 transition-all shrink-0 md:w-full md:justify-start",
                     isActive
                       ? "text-foreground"
                       : "text-muted-foreground/70 hover:text-foreground"
-                  }`}
+                  )}
                 >
                   <span
-                    className={`${isActive ? "text-primary" : "opacity-70"}`}
+                    className={cn(
+                      "[&>svg]:h-4 [&>svg]:w-4",
+                      isActive ? "text-primary" : "opacity-70"
+                    )}
                   >
                     {tab.icon}
                   </span>
-                  <span className=" text-sm">{tab.label}</span>
+                  <span className="text-sm whitespace-nowrap">{tab.label}</span>
                 </Button>
               );
             })}
@@ -1313,10 +1329,10 @@ export function SettingsDialog({
         </aside>
 
         {/* RIGHT PANEL */}
-        <main className="flex-1 flex flex-col relative bg-background">
+        <main className="flex-1 flex flex-col relative bg-background min-h-0">
           {/* CONTENT AREA */}
-          <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-            <div className="max-w-2xl mx-auto lg:mx-0">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 custom-scrollbar">
+            <div className="max-w-2xl mx-auto md:mx-0">
               {tabContent[activeTab] ?? tabContent[SettingsTabs.Appearance]}
             </div>
           </div>
