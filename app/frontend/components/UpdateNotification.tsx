@@ -7,7 +7,7 @@ import useUpdate from "@/hooks/useUpdate";
 import { cn } from "@/lib/utils";
 
 export default function UpdateNotification(): React.ReactElement | null {
-  const {
+  const { 
     availableVersion,
     isApplyingUpdate,
     applyUpdate,
