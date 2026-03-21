@@ -4,9 +4,9 @@ use std::{
     thread,
     time::{Duration, Instant},
     path::PathBuf,
-    sync::{Mutex, Once},
+    sync::{Arc, Mutex, Once, RwLock},
 };
-use tauri::{Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tracing::{info, warn, error, debug};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -24,11 +24,34 @@ pub mod oauth;
 /// Service name constant
 const SERVICE_NAME: &str = "SearchEngineDaemon";
 
+/// Update check interval: 6 hours
+const UPDATE_CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
+
 static LOGGING_INIT: Once = Once::new();
 
 #[derive(Default)]
 struct AgentServerState {
     process: Mutex<Option<Child>>,
+}
+
+/// State for tracking available updates
+struct UpdateState {
+    /// The version of the available update (if any)
+    available_version: RwLock<Option<String>>,
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        Self {
+            available_version: RwLock::new(None),
+        }
+    }
+}
+
+/// Payload for update-available event
+#[derive(Clone, serde::Serialize)]
+struct UpdateAvailablePayload {
+    version: String,
 }
 
 fn configure_no_window(command: &mut Command) {
@@ -567,43 +590,99 @@ fn get_daemon_url() -> Result<String, String> {
     }
 }
 
-/// Check for available updates
-#[tauri::command]
-fn check_for_updates() -> Result<Option<String>, String> {
-    info!("Checking for updates (version: {})", build_info::VERSION);
-    
+/// Core update check logic - shared by both user-triggered and background checks
+fn check_for_updates_core() -> Result<Option<String>, String> {
     debug!("Update URL: {}", build_info::UPDATE_URL);
     
     let source = velopack::sources::HttpSource::new(build_info::UPDATE_URL);
     let um = velopack::UpdateManager::new(source, None, None)
-        .map_err(|e| {
-            let msg = format!("Failed to create update manager: {:?}", e);
-            error!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Error);
-            msg
-        })?;
+        .map_err(|e| format!("Failed to create update manager: {:?}", e))?;
     
     let update_check = um.check_for_updates()
-        .map_err(|e| {
-            let msg = format!("Failed to check for updates: {:?}", e);
-            error!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Error);
-            msg
-        })?;
+        .map_err(|e| format!("Failed to check for updates: {:?}", e))?;
     
     match update_check {
         velopack::UpdateCheck::UpdateAvailable(info) => {
             let version = info.TargetFullRelease.Version.to_string();
+            Ok(Some(version))
+        }
+        velopack::UpdateCheck::NoUpdateAvailable => Ok(None),
+        velopack::UpdateCheck::RemoteIsEmpty => Ok(None),
+    }
+}
+
+/// Background update check - emits event if update available
+fn check_for_updates_background(app_handle: &AppHandle, update_state: &UpdateState) -> Option<String> {
+    // Skip in development mode
+    if cfg!(debug_assertions) {
+        debug!("Skipping update check in development mode");
+        return None;
+    }
+
+    info!("Performing background update check (version: {})", build_info::VERSION);
+    
+    match check_for_updates_core() {
+        Ok(Some(version)) => {
+            info!("Update available: {} (background check)", version);
+            
+            // Store the available version
+            if let Ok(mut stored_version) = update_state.available_version.write() {
+                *stored_version = Some(version.clone());
+            }
+            
+            // Emit event to frontend
+            if let Err(e) = app_handle.emit("update-available", UpdateAvailablePayload { 
+                version: version.clone() 
+            }) {
+                warn!("Failed to emit update-available event: {}", e);
+            }
+            
+            Some(version)
+        }
+        Ok(None) => {
+            info!("No update available (background check)");
+            None
+        }
+        Err(e) => {
+            warn!("Background update check failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Start the background update checker thread
+fn start_update_checker(app_handle: AppHandle, update_state: Arc<UpdateState>) {
+    thread::spawn(move || {
+        // Initial delay before first check (10 seconds after app start)
+        thread::sleep(Duration::from_secs(10));
+        
+        loop {
+            check_for_updates_background(&app_handle, &update_state);
+            
+            // Wait for the next check interval
+            thread::sleep(Duration::from_secs(UPDATE_CHECK_INTERVAL_SECS));
+        }
+    });
+}
+
+/// Check for available updates (user-triggered)
+#[tauri::command]
+fn check_for_updates() -> Result<Option<String>, String> {
+    info!("Checking for updates (version: {})", build_info::VERSION);
+    
+    match check_for_updates_core() {
+        Ok(Some(version)) => {
             info!("Update available: {}", version);
             Ok(Some(version))
         }
-        velopack::UpdateCheck::NoUpdateAvailable => {
+        Ok(None) => {
             info!("No update available");
             Ok(None)
         }
-        velopack::UpdateCheck::RemoteIsEmpty => {
-            warn!("Remote update source is empty");
-            Ok(None)
+        Err(e) => {
+            error!("{}", e);
+            sentry::capture_message(&e, sentry::Level::Error);
+            Err(e)
         }
     }
 }
@@ -760,6 +839,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(AgentServerState::default())
+        .manage(Arc::new(UpdateState::default()))
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -779,6 +859,12 @@ pub fn run() {
                     Err(err) => warn!("Failed to auto-start daemon: {}", err),
                 }
             });
+
+            // Start the background update checker
+            let app_handle = app.handle().clone();
+            let update_state = app.state::<Arc<UpdateState>>().inner().clone();
+            start_update_checker(app_handle, update_state);
+            info!("Background update checker started");
 
             Ok(())
         })

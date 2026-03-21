@@ -11,8 +11,10 @@ import LeftSidebar from "@/components/layout/Sidebar";
 import ChatSearchDialog from "@/components/layout/ChatSearchDialog";
 import { Toaster } from "sonner";
 import SystemHealthProvider from "@/providers/SystemHealthProvider";
+import UpdateProvider from "@/providers/UpdateProvider";
 import CreditsProvider from "@/providers/CreditsProvider";
 import AuthProvider from "@/providers/AuthProvider";
+import UpdateNotification from "@/components/UpdateNotification";
 import type { Metadata } from "next";
 
 import { Inter } from "next/font/google";
@@ -96,26 +98,29 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <SystemHealthProvider>
-      <CreditsProvider>
-        <ChatProvider>
-          <ReferenceProvider>
-            <SidebarProvider>
-              <KeyboardProvider />
-              <ChatSearchDialog />
+      <UpdateProvider>
+        <CreditsProvider>
+          <ChatProvider>
+            <ReferenceProvider>
+              <SidebarProvider>
+                <KeyboardProvider />
+                <ChatSearchDialog />
+                <UpdateNotification />
 
-              <div className="flex h-dvh w-full overflow-hidden bg-background">
-                <LeftSidebar />
+                <div className="flex h-dvh w-full overflow-hidden bg-background">
+                  <LeftSidebar />
 
-                <main className="flex flex-1 flex-col overflow-hidden">
-                  <div className="flex-1 overflow-y-auto">{children}</div>
-                </main>
+                  <main className="flex flex-1 flex-col overflow-hidden">
+                    <div className="flex-1 overflow-y-auto">{children}</div>
+                  </main>
 
-                <RightSidebar />
-              </div>
-            </SidebarProvider>
-          </ReferenceProvider>
-        </ChatProvider>
-      </CreditsProvider>
+                  <RightSidebar />
+                </div>
+              </SidebarProvider>
+            </ReferenceProvider>
+          </ChatProvider>
+        </CreditsProvider>
+      </UpdateProvider>
     </SystemHealthProvider>
   );
 }
