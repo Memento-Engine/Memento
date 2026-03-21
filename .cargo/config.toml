@@ -1,2 +1,32 @@
+[build]
+jobs = 8  # Parallel compilation (adjust to your CPU cores)
+
+# Use all available CPUs for codegen units
+[profile.dev]
+incremental = true
+opt-level = 0
+debug = 1          # Reduced debug info = faster linking
+
+[profile.release]
+incremental = true # Enable for faster rebuilds (disable for final production)
+lto = "thin"       # Faster than "fat" LTO, still good optimization
+codegen-units = 16 # More parallel codegen
+
+# Override slow deps to use less optimization in dev
+[profile.dev.package."*"]
+opt-level = 0
+debug = false
+
+# But keep core packages optimized even in dev (for speed)
+[profile.dev.package.tokio]
+opt-level = 2
+
+[profile.dev.package.sqlx]
+opt-level = 2
+
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-Ctarget-feature=-crt-static"]
+
+[env]
+# Faster linking on Windows
+CARGO_PROFILE_DEV_BUILD_OVERRIDE_DEBUG = "false"

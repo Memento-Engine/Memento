@@ -6,3 +6,11 @@ members = [
     "app/src-tauri",
 ]
 resolver = "2"
+
+# Faster dev builds
+[profile.dev]
+incremental = true
+debug = 1  # Reduced debug info = faster linking
+
+[profile.dev.package."*"]
+opt-level = 0  # No optimization for deps in dev

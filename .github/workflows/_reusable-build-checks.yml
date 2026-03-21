@@ -28,9 +28,19 @@ jobs:
       matrix:
         os: ${{ fromJson(inputs.os_matrix) }}
     
+    env:
+      CARGO_INCREMENTAL: 1
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -C debuginfo=0
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -52,6 +62,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
+          cache-on-failure: true
+          shared-key: rust-${{ matrix.os }}
 
       # Build frontend
       - name: Install shared dependencies

@@ -268,10 +268,19 @@ jobs:
   build-daemon:
     needs: validate-policy
     runs-on: windows-latest
+    
+    env:
+      CARGO_INCREMENTAL: 1
+      CARGO_TERM_COLOR: always
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -282,6 +291,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
+          cache-on-failure: true
+          shared-key: rust-release
 
       - name: Build daemon (Release)
         run: cargo build --release -p memento-daemon
@@ -311,10 +322,19 @@ jobs:
   build-service-helper:
     needs: validate-policy
     runs-on: windows-latest
+    
+    env:
+      CARGO_INCREMENTAL: 1
+      CARGO_TERM_COLOR: always
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -325,6 +345,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
+          cache-on-failure: true
+          shared-key: rust-release
 
       - name: Build service-helper (Release)
         run: cargo build --release -p service-helper
@@ -339,10 +361,19 @@ jobs:
   build-tauri:
     needs: [validate-policy, build-frontend, build-agents]
     runs-on: windows-latest
+    
+    env:
+      CARGO_INCREMENTAL: 1
+      CARGO_TERM_COLOR: always
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -360,6 +391,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
+          cache-on-failure: true
+          shared-key: rust-release
 
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
