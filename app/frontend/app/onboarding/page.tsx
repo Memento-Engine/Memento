@@ -590,7 +590,7 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
         setStatusMessage("Starting Memento services...");
         
         console.log("Invoking the daemon");
-        await invoke("start_daemon", { isDev: isDesktopProductionMode() });
+        await invoke("start_daemon", { isDev: !isDesktopProductionMode() });
         
 
 
@@ -628,7 +628,7 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
     hasStarted.current = true;
     
     try {
-      await invoke("start_daemon", { isDev: process.env.NODE_ENV === "development" });
+      await invoke("start_daemon", { isDev: !isDesktopProductionMode() });
       setDaemonState("connecting");
       setStatusMessage("Preparing your experience...");
 

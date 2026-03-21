@@ -62,7 +62,7 @@ function LeftSidebar(): React.ReactElement {
 
   const goToHome = (): void => {
     startNewChat();
-    router.push("/chat", { scroll: false });
+    router.push("/", { scroll: false });
   };
 
   const handleFooterClick = (): void => {
