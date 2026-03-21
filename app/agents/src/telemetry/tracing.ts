@@ -2,12 +2,13 @@ import { getLogger } from "../utils/logger";
 import fs from "fs/promises";
 import path from "path";
 import { formatLocalTimestamp, getLocalTimeZone } from "../utils/time";
+import { getMementoSharedDir } from "@shared/config/mementoPaths";
 
 type SpanAttributes = Record<string, string | number | boolean | undefined>;
 
 const LATENCY_LOGS_ENABLED = true;
 const LATENCY_TO_MAIN_LOG = false;
-const LATENCY_LOG_FILE = path.join(process.cwd(), "logs", "latency.log");
+const LATENCY_LOG_FILE = path.join(getMementoSharedDir(), "logs", "agents", "latency.log");
 const LATENCY_SLOW_MS = 1200;
 
 function sanitizeAttributes(attributes: SpanAttributes) {

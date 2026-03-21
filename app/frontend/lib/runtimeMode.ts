@@ -12,5 +12,14 @@ export function isDesktopProductionMode(): boolean {
   }
 
   const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  
+  // Tauri 2.x production uses https://tauri.localhost/
+  // Tauri 1.x production uses tauri:// protocol
+  // Development uses http://localhost:1420 or similar
+  if (hostname === "tauri.localhost") {
+    return true;
+  }
+  
   return protocol !== "http:" && protocol !== "https:";
 }

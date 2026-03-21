@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { getMementoSharedDir } from "@shared/config/mementoPaths";
 
 import { graph } from "./agent";
 import { getConfig, loadConfig } from "./config/config";
@@ -35,6 +36,8 @@ import { formatLocalTimestamp } from "./utils/time";
 import { saveMessage, buildSourcesFromStepResults, getSessionMessages } from "./tools/chatPersistence";
 import net from "net";
 
+declare const __DEV__: boolean | undefined;
+
 type InvokableGraph = {
   invoke(input: unknown): Promise<unknown>;
 };
@@ -61,20 +64,15 @@ const AgentRequestSchema = z.object({
 });
 
 /**
- * Get the local data directory path (cross-platform).
- * Windows: %LOCALAPPDATA%
- * macOS: ~/Library/Application Support
- * Linux: ~/.local/share
+ * Get the shared memento directory path (cross-platform).
+ * Windows: %PROGRAMDATA%\memento (shared with Windows Service)
+ * macOS/Linux: Same as getMementoSharedDir from shared config
  */
-function getLocalDataDir(): string {
-  const platform = os.platform();
-  if (platform === "win32") {
-    return path.join(os.homedir(), "AppData", "Local");
-  } else if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support");
-  } else {
-    return path.join(os.homedir(), ".local", "share");
-  }
+function getSharedMementoDir(): string {
+  // Use the shared config which handles Windows Service path correctly
+  // isDevelopmentMode() is compile-time constant set by esbuild
+  const isProduction = typeof __DEV__ === "boolean" ? !__DEV__ : process.env.MEMENTO_DEV !== "true";
+  return getMementoSharedDir(isProduction);
 }
 
 /**
@@ -87,8 +85,7 @@ async function writePortFile(port: number, logger: any): Promise<void> {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const dirPath = path.join(getLocalDataDir(), "memento");
-      const portPath = path.join(dirPath, "ports");
+      const portPath = path.join(getSharedMementoDir(), "ports");
       const filePath = path.join(portPath, "memento-agents.port");
 
       fs.mkdirSync(portPath, { recursive: true });
@@ -154,7 +151,7 @@ async function findPreferredPort(host: string, logger: any): Promise<number> {
 function startPortFileRefresh(port: number, logger: any): NodeJS.Timeout {
   return setInterval(async () => {
     try {
-      const portPath = path.join(getLocalDataDir(), "memento", "ports");
+      const portPath = path.join(getSharedMementoDir(), "ports");
       const filePath = path.join(portPath, "memento-agents.port");
       fs.mkdirSync(portPath, { recursive: true });
       fs.writeFileSync(filePath, port.toString());
@@ -618,7 +615,7 @@ async function startServer() {
         clearInterval(refreshInterval);
         // Remove port file on shutdown
         try {
-          const filePath = path.join(getLocalDataDir(), "memento", "ports", "memento-agents.port");
+          const filePath = path.join(getSharedMementoDir(), "ports", "memento-agents.port");
           fs.unlinkSync(filePath);
           logger.info("Removed port file on shutdown");
         } catch (e) {

@@ -1,8 +1,8 @@
 {
   "scripts": {
     "dev:agent": "cross-env MEMENTO_DEV=true tsx watch --include src/**/*.ts src/server.ts",
-    "build:bundle": "esbuild src/server.ts --bundle --platform=node --target=node18 --format=cjs --define:__DEV__=false --outfile=dist/memento-agents.cjs",
-    "build:exe": "npm run build:bundle && pkg dist/memento-agents.cjs --targets node18-win-x64 --output dist/memento-agents.exe",
+    "build:bundle": "esbuild src/bootstrap.ts --bundle --platform=node --target=node20 --format=cjs --define:__DEV__=false --outfile=dist/memento-agents.cjs",
+    "build:exe": "npm run build:bundle && npx @yao-pkg/pkg dist/memento-agents.cjs --targets node20-win-x64 --output dist/memento-agents.exe",
     "typecheck": "tsc --noEmit --watch",
     "dev": "concurrently \"npm run dev:agent\" \"npm run typecheck\"",
     "latency:tail": "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force logs | Out-Null; if (!(Test-Path logs/latency.log)) { New-Item -ItemType File logs/latency.log | Out-Null }; Get-Content logs/latency.log -Wait\"",
@@ -34,7 +34,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
     "esbuild": "^0.27.4",
-    "pkg": "^5.8.1",
+    "@yao-pkg/pkg": "^6.7.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3"
   }

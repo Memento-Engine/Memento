@@ -67,10 +67,10 @@ fn main() -> ExitCode {
 /// Uses PROGRAMDATA when available to avoid brittle hardcoded absolute paths.
 fn shared_dir() -> PathBuf {
     if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-        PathBuf::from(program_data).join("Memento")
+        PathBuf::from(program_data).join("memento")
     } else {
         // Safe Windows fallback if env var is unexpectedly missing
-        PathBuf::from(r"C:\ProgramData").join("Memento")
+        PathBuf::from(r"C:\ProgramData").join("memento")
     }
 }
 

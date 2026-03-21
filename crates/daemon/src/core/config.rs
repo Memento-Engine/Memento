@@ -79,7 +79,7 @@ impl Default for DaemonConfig {
 impl DaemonConfig {
     /// Load config from file or return defaults
     pub fn load() -> Self {
-        let config_path = app_core::config::base_dir().join("daemon.toml");
+        let config_path = app_core::config::shared_dir().join("daemon.toml");
         
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
@@ -102,7 +102,7 @@ impl DaemonConfig {
     
     /// Save current config to file
     pub fn save(&self) -> std::io::Result<()> {
-        let config_path = app_core::config::base_dir().join("daemon.toml");
+        let config_path = app_core::config::shared_dir().join("daemon.toml");
         
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;

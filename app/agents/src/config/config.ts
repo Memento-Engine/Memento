@@ -9,7 +9,7 @@ import { z } from "zod";
  */
 declare const __DEV__: boolean | undefined;
 
-function isDevelopmentMode(): boolean {
+export function isDevelopmentMode(): boolean {
   // Check compile-time constant first (set by esbuild --define)
   if (typeof __DEV__ === "boolean") {
     return __DEV__;

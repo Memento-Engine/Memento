@@ -48,37 +48,42 @@ pub enum SetupState {
 // Base Directory
 // =============================================================================
 
-/// Root directory for all Memento user data
-/// Windows: C:\Users\<Username>\AppData\Local\Memento\
-/// Linux/Mac: ~/.local/share/Memento/
+/// Root directory for all memento user data
+/// Windows: C:\Users\<Username>\AppData\Local\memento\
+/// Linux/Mac: ~/.local/share/memento/
 pub fn base_dir() -> PathBuf {
     dirs::data_local_dir()
         .expect("Cannot find local data directory")
-        .join("Memento")
+        .join("memento")
 }
 
 /// Shared directory accessible by all users and services
-/// Used for cross-process communication (ports, locks)
-/// Windows: C:\ProgramData\Memento\
-/// Linux/Mac: /var/lib/memento/
+/// Used for cross-process communication (ports, locks) AND shared data (models, db)
+/// Windows: C:\ProgramData\memento\ (both dev and production)
+/// Linux/Mac: /var/lib/memento/ (production) or ~/.local/share/memento/ (dev)
 /// 
-/// In dev mode, uses base_dir() for simplicity (no admin needed)
+/// On Windows, always uses ProgramData so that:
+/// - Windows Service (SYSTEM account) can access data
+/// - User app can access the same data
+/// - Models downloaded by user are available to service
 pub fn shared_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        // Dev mode: use user-local directory (no admin needed)
-        base_dir()
-    } else {
-        // Production mode: use system-wide shared directory
-        #[cfg(windows)]
-        {
-            if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-                PathBuf::from(program_data).join("Memento")
-            } else {
-                PathBuf::from(r"C:\ProgramData").join("Memento")
-            }
+    #[cfg(windows)]
+    {
+        // Windows: Always use ProgramData for shared data (both dev and production)
+        // This ensures Windows Service and user apps access the same data
+        if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+            PathBuf::from(program_data).join("memento")
+        } else {
+            PathBuf::from(r"C:\ProgramData").join("memento")
         }
-        #[cfg(not(windows))]
-        {
+    }
+    #[cfg(not(windows))]
+    {
+        if cfg!(debug_assertions) {
+            // Dev mode on non-Windows: use user-local directory
+            base_dir()
+        } else {
+            // Production mode on non-Windows: use system-wide directory
             PathBuf::from("/var/lib/memento")
         }
     }
@@ -88,9 +93,9 @@ pub fn shared_dir() -> PathBuf {
 // Data Directories
 // =============================================================================
 
-/// data/ - root for all data storage
+/// data/ - root for all data storage (in shared directory for service access)
 pub fn data_dir() -> PathBuf {
-    base_dir().join("data")
+    shared_dir().join("data")
 }
 
 /// data/db/ - structured database storage
@@ -129,12 +134,12 @@ pub fn cache_dir() -> PathBuf {
 }
 
 // =============================================================================
-// Logging
+// Logging (in shared directory for service access)
 // =============================================================================
 
-/// logs/ - root for all logs
+/// logs/ - root for all logs (in shared directory)
 pub fn logs_dir() -> PathBuf {
-    base_dir().join("logs")
+    shared_dir().join("logs")
 }
 
 /// logs/dev/ or logs/production/ - based on current mode
@@ -178,11 +183,11 @@ pub fn lock_file_path(service_name: &str) -> PathBuf {
 }
 
 // =============================================================================
-// Config (deprecated - kept for migration)
+// Config (in shared directory for service access)
 // =============================================================================
 
 fn config_file() -> PathBuf {
-    base_dir().join("config.toml")
+    shared_dir().join("config.toml")
 }
 
 // =============================================================================

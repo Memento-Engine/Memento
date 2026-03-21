@@ -23,8 +23,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$LOCALAPPDATA/Memento/data/memories/**",
-          "C:/Users/*/AppData/Local/Memento/data/memories/**"
+          "C:/ProgramData/memento/data/memories/**"
         ]
       }
     }

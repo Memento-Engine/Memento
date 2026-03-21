@@ -25,6 +25,7 @@ import useOnboarding from "@/hooks/useOnboarding";
 import { checkModelsStatus, downloadModelsWithProgress, ModelDownloadProgress } from "@/api/models";
 import { cn } from "@/lib/utils";
 import useAuth from "@/hooks/useAuth";
+import { isDesktopProductionMode } from "@/lib/runtimeMode";
 
 function Feature({
   icon,
@@ -584,11 +585,19 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
     const startAndWaitForDaemon = async () => {
       try {
         // Start the daemon
+        console.log("Starting the daemon");
         setDaemonState("starting");
         setStatusMessage("Starting Memento services...");
         
-        await invoke("start_daemon", { isDev: process.env.NODE_ENV === "development" });
+        console.log("Invoking the daemon");
+        await invoke("start_daemon", { isDev: isDesktopProductionMode() });
         
+
+
+        console.log("Waiting for daemon to be healthy");
+
+
+
         setDaemonState("connecting");
         setStatusMessage("Preparing your experience...");
 

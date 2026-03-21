@@ -1,11 +1,14 @@
-import { DAEMON_PORT_FILE } from "@shared/config/fileConfig";
+import { DAEMON_PORT_FILE, PREFERRED_DAEMON_PORT } from "@shared/config/fileConfig";
 import { getPortFilePath } from "@shared/config/mementoPaths";
 import { PortUrlResolver } from "@shared/daemon/connection";
 import { NodePortReader } from "@shared/daemon/nodePortReader";
+import { isDevelopmentMode } from "./config";
 
-const daemonResolver = new PortUrlResolver(new NodePortReader(getPortFilePath), {
+const daemonResolver = new PortUrlResolver(new NodePortReader((portFileName) =>
+  getPortFilePath(portFileName, !isDevelopmentMode())), {
   portFileName: DAEMON_PORT_FILE,
   buildUrl: (port: number) => `http://127.0.0.1:${port}/api/v1`,
+  preferredPort: PREFERRED_DAEMON_PORT,
   healthPath: "/healthz",
   initialBackoffMs: 300,
   maxBackoffMs: 5000,

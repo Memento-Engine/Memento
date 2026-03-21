@@ -1,8 +1,9 @@
 import { getLogger } from "../utils/logger";
 import path from "path";
+import { getMementoSharedDir } from "@shared/config/mementoPaths";
 
 let latencyLoggingInitialized = false;
-const LATENCY_LOG_FILE = path.join(process.cwd(), "logs", "latency.log");
+const LATENCY_LOG_FILE = path.join(getMementoSharedDir(), "logs", "agents", "latency.log");
 const LATENCY_SLOW_MS = 1200;
 const LATENCY_TO_MAIN_LOG = false;
 

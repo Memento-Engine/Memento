@@ -120,27 +120,23 @@ fn stop_embedded_agent_server(state: &AgentServerState) {
     }
 }
 
-/// Get the base directory for Memento (user-local)
+/// Get the base directory for memento (user-local)
 fn get_base_dir() -> PathBuf {
     dirs::data_local_dir()
         .expect("Cannot find local data directory")
-        .join("Memento")
+        .join("memento")
 }
 
-/// Get the shared directory for Memento (accessible by service and user apps)
-/// In production: %PROGRAMDATA%\Memento (written by service, read by apps)
-/// In development: Same as base_dir (no service involvement)
+/// Get the shared directory for memento (accessible by service and user apps)
+/// Windows: Always %PROGRAMDATA%\memento (both dev and production)
+/// This ensures Windows Service and user apps access the same data
 fn get_shared_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        get_base_dir()
+    // Windows: Always use ProgramData for shared data
+    // This ensures Windows Service (SYSTEM account) and user apps access the same data
+    if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+        PathBuf::from(program_data).join("memento")
     } else {
-        // Use PROGRAMDATA env var with fallback
-        if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-            PathBuf::from(program_data).join("Memento")
-        } else {
-            // Fallback for edge cases where env var is missing
-            PathBuf::from(r"C:\ProgramData").join("Memento")
-        }
+        PathBuf::from(r"C:\ProgramData").join("memento")
     }
 }
 
@@ -148,9 +144,10 @@ fn get_shared_dir() -> PathBuf {
 const PREFERRED_DAEMON_PORT: u16 = 7070;
 
 /// Get the log directory based on build mode (dev/production)
+/// Uses shared directory for consistent access by service and user app
 fn get_log_dir() -> PathBuf {
     let log_mode = if cfg!(debug_assertions) { "dev" } else { "production" };
-    get_base_dir().join("logs").join(log_mode)
+    get_shared_dir().join("logs").join(log_mode)
 }
 
 /// Set up file and console logging
@@ -349,7 +346,7 @@ fn stop_daemon(is_dev: bool) -> Result<String, String> {
 
 fn daemon_is_running() -> bool {
     // Create HTTP client with timeout to prevent hangs
-    let client = match reqwest::blocking::Client::builder()
+    let client: reqwest::blocking::Client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(3))
         .connect_timeout(Duration::from_secs(2))
         .build() 

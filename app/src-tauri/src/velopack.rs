@@ -141,36 +141,44 @@ fn on_before_uninstall() {
     cleanup_user_data();
 }
 
-/// Remove all user data on uninstall
+/// Remove all user data on uninstall (both LocalAppData and ProgramData)
 fn cleanup_user_data() {
-    info!("Cleaning up user data directory...");
+    info!("Cleaning up user data directories...");
     
-    // Get the Memento data directory: %LOCALAPPDATA%\Memento
-    let data_dir = match dirs::data_local_dir() {
-        Some(dir) => dir.join("Memento"),
-        None => {
-            warn!("Could not determine local data directory");
-            return;
+    // Clean up legacy LocalAppData directory: %LOCALAPPDATA%\memento
+    if let Some(local_dir) = dirs::data_local_dir() {
+        let local_data_dir = local_dir.join("memento");
+        if local_data_dir.exists() {
+            info!("Removing local data directory: {:?}", local_data_dir);
+            match std::fs::remove_dir_all(&local_data_dir) {
+                Ok(_) => info!("Successfully removed local data directory"),
+                Err(e) => warn!("Failed to remove local data directory {:?}: {}", local_data_dir, e),
+            }
         }
-    };
-    
-    if !data_dir.exists() {
-        info!("Data directory does not exist, nothing to clean up");
-        return;
     }
     
-    info!("Removing data directory: {:?}", data_dir);
+    // Clean up shared ProgramData directory: %PROGRAMDATA%\memento
+    let shared_dir = if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+        std::path::PathBuf::from(program_data).join("memento")
+    } else {
+        std::path::PathBuf::from(r"C:\ProgramData").join("memento")
+    };
     
-    match std::fs::remove_dir_all(&data_dir) {
-        Ok(_) => {
-            info!("Successfully removed user data directory");
-            sentry::capture_message("User data cleaned up on uninstall", sentry::Level::Info);
+    if shared_dir.exists() {
+        info!("Removing shared data directory: {:?}", shared_dir);
+        match std::fs::remove_dir_all(&shared_dir) {
+            Ok(_) => {
+                info!("Successfully removed shared data directory");
+                sentry::capture_message("User data cleaned up on uninstall", sentry::Level::Info);
+            }
+            Err(e) => {
+                let msg = format!("Failed to remove shared data directory {:?}: {}", shared_dir, e);
+                warn!("{}", msg);
+                sentry::capture_message(&msg, sentry::Level::Warning);
+            }
         }
-        Err(e) => {
-            let msg = format!("Failed to remove data directory {:?}: {}", data_dir, e);
-            warn!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Warning);
-        }
+    } else {
+        info!("Shared data directory does not exist, nothing to clean up");
     }
 }
 

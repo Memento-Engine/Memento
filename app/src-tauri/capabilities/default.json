@@ -14,6 +14,18 @@
     "keyring:allow-delete-password",
 
     "fs:allow-localdata-read-recursive",
-    "fs:allow-localdata-write-recursive"
+    "fs:allow-localdata-write-recursive",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "C:\\ProgramData\\memento\\**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        { "path": "C:\\ProgramData\\memento\\**" }
+      ]
+    }
   ]
 }

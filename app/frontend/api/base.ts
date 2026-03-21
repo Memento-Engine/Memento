@@ -1,37 +1,72 @@
 import { readTextFile, BaseDirectory } from "@tauri-apps/plugin-fs";
-import { AGENTS_PORT_FILE, DAEMON_PORT_FILE } from "@shared/config/fileConfig";
+import {
+  AGENTS_PORT_FILE,
+  DAEMON_PORT_FILE,
+  PREFERRED_AGENT_PORT,
+  PREFERRED_DAEMON_PORT,
+} from "@shared/config/fileConfig";
 import {
   PortReader,
   PortUrlResolver,
   ServiceConnectionState,
   ServiceConnectionStatus,
 } from "@shared/daemon/connection";
-import { isDesktopProductionMode } from "../lib/runtimeMode";
 
 class TauriPortReaderImpl implements PortReader {
   constructor(private readonly portFileName: string) {}
 
   async readPort(): Promise<number> {
-    let content: string;
-    
-    // In production on Windows, read from shared ProgramData directory
-    // This is where the Windows service writes the port file
-    const isProduction = isDesktopProductionMode();
-    const isWindows = navigator.platform.toLowerCase().includes("win");
-    
-    if (isProduction && isWindows) {
-      // Read from %PROGRAMDATA%\Memento\ports\<portFile>
-      // In Tauri context, we use the known Windows path since browser env vars aren't available
-      // The service-helper ensures this directory exists with proper permissions
-      const sharedPath = `C:\\ProgramData\\Memento\\ports\\${this.portFileName}`;
-      content = await readTextFile(sharedPath);
+    let content: string | null = null;
+    const fileNamesToTry = new Set<string>([this.portFileName]);
+    if (this.portFileName.endsWith(".port")) {
+      fileNamesToTry.add(this.portFileName.slice(0, -5));
     } else {
-      // Development: read from user's local app data
-      content = await readTextFile(`memento/ports/${this.portFileName}`, {
-        baseDir: BaseDirectory.LocalData,
-      });
+      fileNamesToTry.add(`${this.portFileName}.port`);
     }
-    
+
+    // Try to read port file
+    // On Windows: Always use ProgramData (shared between service and user apps)
+    // On other platforms: Use LocalAppData
+    const isWindows = navigator.platform.toLowerCase().includes("win");
+
+    const tryProgramDataPath = async (fileName: string): Promise<string | null> => {
+      try {
+        const sharedPath = `C:\\ProgramData\\memento\\ports\\${fileName}`;
+        return await readTextFile(sharedPath);
+      } catch {
+        return null;
+      }
+    };
+
+    const tryLocalAppDataPath = async (fileName: string): Promise<string | null> => {
+      try {
+        return await readTextFile(`memento/ports/${fileName}`, {
+          baseDir: BaseDirectory.LocalData,
+        });
+      } catch {
+        return null;
+      }
+    };
+
+    // Try locations based on platform
+    for (const candidateFileName of fileNamesToTry) {
+      if (isWindows) {
+        // Windows: Always use ProgramData (shared with Windows Service)
+        content = await tryProgramDataPath(candidateFileName);
+      } else {
+        // Non-Windows: use LocalAppData
+        content = await tryLocalAppDataPath(candidateFileName);
+      }
+
+      if (content) {
+        break;
+      }
+    }
+
+    if (content === null) {
+      throw new Error(`Unable to read port file for ${this.portFileName}`);
+    }
+
     const port = Number.parseInt(content.trim(), 10);
 
     if (Number.isNaN(port)) {
@@ -51,6 +86,7 @@ function createDaemonResolver(): PortUrlResolver {
   return new PortUrlResolver(new TauriPortReaderImpl(DAEMON_PORT_FILE), {
     portFileName: DAEMON_PORT_FILE,
     buildUrl: (port: number) => `http://127.0.0.1:${port}/api/v1`,
+    preferredPort: PREFERRED_DAEMON_PORT,
     healthPath: "/healthz",
     initialBackoffMs: 300,
     maxBackoffMs: 5000,
@@ -63,6 +99,7 @@ function createAgentResolver(): PortUrlResolver {
   return new PortUrlResolver(new TauriPortReaderImpl(AGENTS_PORT_FILE), {
     portFileName: AGENTS_PORT_FILE,
     buildUrl: (port: number) => `http://127.0.0.1:${port}/api/v1`,
+    preferredPort: PREFERRED_AGENT_PORT,
     healthPath: "/healthz",
     initialBackoffMs: 300,
     maxBackoffMs: 5000,
@@ -206,11 +243,17 @@ export async function getDaemonConnectionState(): Promise<ServiceConnectionState
 }
 
 export async function waitForDaemonHealthy(timeoutMs = 30000): Promise<string> {
+  console.log("Came this waitfor daemon healty")
+
   if (!isBrowserRuntime()) {
+    console.log("Not in browser runtime, returning fallback URL");
     return "http://localhost:9090/api/v1";
   }
-
+  console.log("Ensuring daemon resolver");
   const resolver = await ensureDaemonResolver();
+
+  console.log("Waiting for daemon to be healthy with timeout", resolver.getUrl(), resolver.getState());
+
   return resolver.waitForHealthy(timeoutMs);
 }
 

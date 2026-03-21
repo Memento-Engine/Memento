@@ -8,7 +8,38 @@ export class NodePortReader implements PortReader {
   ) {}
 
   async readPort(portFileName: string): Promise<number> {
-    const content = await fs.readFile(this.resolveFilePath(portFileName), "utf-8");
+
+    console.log("cALLED Node Port reader", portFileName);
+
+
+    const fileNamesToTry = new Set<string>([portFileName]);
+    if (portFileName.endsWith(".port")) {
+      fileNamesToTry.add(portFileName.slice(0, -5));
+    } else {
+      fileNamesToTry.add(`${portFileName}.port`);
+    }
+
+    let content: string | null = null;
+    let readError: unknown;
+
+    for (const candidateFileName of fileNamesToTry) {
+      try {
+
+
+        console.log("tryouting reading many files with candidate file name", candidateFileName, "and resolved path", this.resolveFilePath(candidateFileName));
+
+
+        content = await fs.readFile(this.resolveFilePath(candidateFileName), "utf-8");
+        break;
+      } catch (error) {
+        readError = error;
+      }
+    }
+
+    if (content === null) {
+      throw readError instanceof Error ? readError : new Error(`Unable to read port file for ${portFileName}`);
+    }
+
     const port = Number.parseInt(content.trim(), 10);
 
     if (Number.isNaN(port)) {

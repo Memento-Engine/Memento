@@ -15,6 +15,7 @@ export interface PortReader {
 export interface PortUrlResolverOptions {
   portFileName: string;
   buildUrl: (port: number) => string;
+  preferredPort?: number;
   healthPath?: string;
   requestTimeoutMs?: number;
   initialBackoffMs?: number;
@@ -136,6 +137,11 @@ export class PortUrlResolver {
       return this.state.url;
     }
 
+    const preferred = await this.readPreferredUrl();
+    if (preferred) {
+      return preferred.url;
+    }
+
     const candidate = await this.readCandidateUrl();
     if (candidate) {
       return candidate.url;
@@ -197,6 +203,12 @@ export class PortUrlResolver {
       return true;
     }
 
+    const preferred = await this.readPreferredUrl();
+    if (preferred && (await this.isUrlHealthy(preferred.url))) {
+      this.markConnected(preferred.url, preferred.port);
+      return true;
+    }
+
     const candidate = await this.readCandidateUrl();
     if (!candidate) {
       this.markDisconnected();
@@ -210,6 +222,24 @@ export class PortUrlResolver {
 
     this.markDisconnected();
     return false;
+  }
+
+  private async readPreferredUrl(): Promise<{ port: number; url: string } | null> {
+    const preferredPort = this.options.preferredPort;
+    if (!preferredPort) {
+      return null;
+    }
+
+    const url = this.options.buildUrl(preferredPort);
+
+    if (this.state.port !== preferredPort || this.state.url !== url) {
+      this.updateState({
+        port: preferredPort,
+        url,
+      });
+    }
+
+    return { port: preferredPort, url };
   }
 
   private async readCandidateUrl(): Promise<{ port: number; url: string } | null> {
