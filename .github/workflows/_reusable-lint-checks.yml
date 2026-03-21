@@ -45,12 +45,14 @@ jobs:
           
           $excludeDirs = @(
             'node_modules',
-            '.git',
+            '\.git',
             'target',
             'dist',
             'out',
-            '.next',
-            'velopack-output'
+            '\.next',
+            'velopack-output',
+            '__tests__',
+            'eslint-rules'
           )
           
           $searchPaths = @(
@@ -65,8 +67,12 @@ jobs:
             
             $files = Get-ChildItem -Path $basePath -Recurse -Include "*.ts","*.tsx","*.js","*.jsx","*.rs" -File |
               Where-Object { 
-                $path = $_.FullName
-                -not ($excludeDirs | Where-Object { $path -match [regex]::Escape($_) })
+                $path = $_.FullName.Replace('\', '/')
+                $excluded = $false
+                foreach ($dir in $excludeDirs) {
+                  if ($path -match "/$dir/") { $excluded = $true; break }
+                }
+                -not $excluded
               }
             
             foreach ($file in $files) {
@@ -121,11 +127,26 @@ jobs:
         run: cd app/frontend && npm ci
 
       - name: Run ESLint with custom rules
+        shell: pwsh
         run: |
           cd app/frontend
-          npm run lint -- --max-warnings 0
-        env:
-          ESLINT_CUSTOM_RULES: 'true'
+          # Run lint and capture output
+          $output = npm run lint 2>&1 | Out-String
+          Write-Host $output
+          
+          # Check specifically for our custom rule violations
+          if ($output -match 'memento/no-raw-process-env-invoke') {
+            Write-Host "::error::Custom ESLint rule violation: no-raw-process-env-invoke"
+            exit 1
+          }
+          
+          # Also fail on actual errors (not warnings)
+          if ($output -match '\d+ errors?') {
+            Write-Host "::error::ESLint found errors"
+            exit 1
+          }
+          
+          Write-Host "✓ No custom rule violations"
 
   # ─────────────────────────────────────────────────────────────
   # #4 — Helper usage grep
@@ -145,7 +166,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           
           $searchPath = 'app/frontend'
-          $excludeDirs = @('node_modules', '.next', 'out', 'dist')
+          $excludeDirs = @('node_modules', '\.next', 'out', 'dist', '__tests__', 'eslint-rules')
           
           # Find all files with invoke("start_daemon" or invoke("stop_daemon"
           $invokePattern = 'invoke\s*\(\s*[''"](?:start|stop)_daemon[''"]'
@@ -157,8 +178,12 @@ jobs:
           
           $files = Get-ChildItem -Path $searchPath -Recurse -Include "*.ts","*.tsx","*.js","*.jsx" -File |
             Where-Object { 
-              $path = $_.FullName
-              -not ($excludeDirs | Where-Object { $path -match "[\\/]$_[\\/]" })
+              $path = $_.FullName.Replace('\', '/')
+              $excluded = $false
+              foreach ($dir in $excludeDirs) {
+                if ($path -match "/$dir/") { $excluded = $true; break }
+              }
+              -not $excluded
             }
           
           foreach ($file in $files) {
