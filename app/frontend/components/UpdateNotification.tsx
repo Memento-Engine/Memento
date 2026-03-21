@@ -16,9 +16,9 @@ export default function UpdateNotification(): React.ReactElement | null {
   } = useUpdate();
 
 //   Don't show if no update or dismissed
-  if (!availableVersion || isDismissed) {
-    return null;
-  }
+//   if (!availableVersion || isDismissed) {
+//     return null;
+//   }
 
   return (
     <div
@@ -30,6 +30,7 @@ export default function UpdateNotification(): React.ReactElement | null {
         "animate-in slide-in-from-bottom-4 fade-in duration-300"
       )}
     >
+        <p>UPDATER WORKING</p>
       <div className="flex items-center gap-2.5">
         <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10">
           <Sparkles className="w-4 h-4 text-primary" />
