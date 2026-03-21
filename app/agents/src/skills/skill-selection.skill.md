@@ -26,6 +26,17 @@ description: Critical guide for choosing the right search strategy based on quer
 - After SQL returns empty, retry with hybrid
 - User wants "search activities" - this is conceptual!
 
+### Use WEB Search When:
+- The user asks for **external or current information** not tied to captured screen history
+- The answer depends on the **public internet**: docs, release notes, news, websites, live facts
+- You need to **verify a public claim** against the web
+- Local search results are empty but the request is clearly about outside knowledge
+- **You are uncertain** and need external validation of your findings
+- The query **mixes personal + public knowledge** - search BOTH memory AND web
+- **Supplementing memory results** would provide a more complete answer
+
+**PROACTIVE STRATEGY**: Web search can run alongside memory searches. Don't wait for memory search to fail - if the query could benefit from both personal history AND public information, use both.
+
 ## APP NAME MAPPINGS (Critical Knowledge)
 
 **⚠️ ALWAYS use ALL variants of an app name in filters!**
@@ -105,3 +116,4 @@ When user mentions a programming language, search for:
 2. **Don't search browser_url for "search"** - Most search URLs don't have that word
 3. **Don't use SQL for conceptual queries** - Use semantic/hybrid first
 4. **Don't give up after one empty result** - Try a different action type
+5. **Don't force local search for external facts** - Use web search when the answer belongs on the public web

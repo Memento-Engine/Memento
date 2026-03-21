@@ -9,9 +9,11 @@ import {
 import {
   SqlExecuteInputSchema,
   SemanticSearchInputSchema,
+  WebSearchInputSchema,
   CurrentDateTimeInputSchema,
   SqlExecuteInput,
   SemanticSearchInput,
+  WebSearchInput,
   CurrentDateTimeInput,
 } from "./types";
 import {
@@ -25,6 +27,13 @@ import { getHybridSearchUrl, getSemanticSearchUrl } from "../config/daemon";
 import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
 import { runWithSpan } from "../telemetry/tracing";
 import axios from "axios";
+import {
+  getCacheManager,
+  logCacheHit,
+  logCacheMiss,
+  logCacheStore,
+  summarizeInput,
+} from "../utils/cache";
 
 type CurrentDateTimeOutput = {
   localIso: string;
@@ -59,6 +68,17 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
       },
       async () => {
         const logger = await getLogger();
+        const cacheManager = getCacheManager();
+        const cacheKey = { sql: input.sql };
+        const inputSummary = summarizeInput(cacheKey);
+
+        // Check cache first
+        const cachedResult = cacheManager.get<ToolResult<any>>("sql_execute", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("sql_execute").getStats();
+          await logCacheHit("sql_execute", inputSummary, stats);
+          return cachedResult;
+        }
 
         // Pre-validate
         const validation = validateSql(input.sql);
@@ -66,6 +86,10 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
           logger.warn({ error: validation.error }, "SQL validation failed");
           return toolFailure(`Invalid SQL: ${validation.error}`);
         }
+
+        // Log cache miss
+        const missStats = cacheManager.getCache("sql_execute").getStats();
+        await logCacheMiss("sql_execute", inputSummary, missStats);
 
         logger.info(
           { stepId: context.stepId, sql: input.sql },
@@ -109,12 +133,19 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
           stepId: context.stepId,
         });
 
-        return toolSuccess(formatResultsAsJson(result), {
+        const toolResult = toolSuccess(formatResultsAsJson(result), {
           source: "sql_execute",
           rowCount: result.rowCount,
           executionTimeMs: result.executionTimeMs,
           columns: result.columns,
         });
+
+        // Cache successful results
+        cacheManager.set("sql_execute", cacheKey, toolResult);
+        const valueSize = JSON.stringify(toolResult).length * 2;
+        await logCacheStore("sql_execute", inputSummary, valueSize);
+
+        return toolResult;
       },
     );
   }
@@ -144,6 +175,26 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
       async () => {
         const logger = await getLogger();
         const config = await getConfig();
+        const cacheManager = getCacheManager();
+        const cacheKey = {
+          query: input.query,
+          limit: input.limit ?? 20,
+          offset: input.offset ?? 0,
+          filters: input.filters,
+        };
+        const inputSummary = summarizeInput(cacheKey);
+
+        // Check cache first
+        const cachedResult = cacheManager.get<ToolResult<any>>("semantic_search", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("semantic_search").getStats();
+          await logCacheHit("semantic_search", inputSummary, stats);
+          return cachedResult;
+        }
+
+        // Log cache miss
+        const missStats = cacheManager.getCache("semantic_search").getStats();
+        await logCacheMiss("semantic_search", inputSummary, missStats);
 
         logger.info(
           { stepId: context.stepId, query: input.query, limit: input.limit },
@@ -215,7 +266,7 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
             stepId: context.stepId,
           });
 
-          return toolSuccess(
+          const toolResult = toolSuccess(
             {
               success: true,
               data: results,
@@ -229,6 +280,13 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
               resultCount: results.length,
             },
           );
+
+          // Cache successful results
+          cacheManager.set("semantic_search", cacheKey, toolResult);
+          const valueSize = JSON.stringify(toolResult).length * 2;
+          await logCacheStore("semantic_search", inputSummary, valueSize);
+
+          return toolResult;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
@@ -276,6 +334,27 @@ export class HybridSearchTool implements Tool<
       async () => {
         const logger = await getLogger();
         const config = await getConfig();
+        const cacheManager = getCacheManager();
+        const cacheKey = {
+          query: input.query,
+          keywords: input.keywords,
+          limit: input.limit ?? 20,
+          offset: input.offset ?? 0,
+          filters: input.filters,
+        };
+        const inputSummary = summarizeInput(cacheKey);
+
+        // Check cache first
+        const cachedResult = cacheManager.get<ToolResult<any>>("hybrid_search", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("hybrid_search").getStats();
+          await logCacheHit("hybrid_search", inputSummary, stats);
+          return cachedResult;
+        }
+
+        // Log cache miss
+        const missStats = cacheManager.getCache("hybrid_search").getStats();
+        await logCacheMiss("hybrid_search", inputSummary, missStats);
 
         logger.info(
           {
@@ -348,7 +427,7 @@ export class HybridSearchTool implements Tool<
             stepId: context.stepId,
           });
 
-          return toolSuccess(
+          const toolResult = toolSuccess(
             {
               success: true,
               data: results,
@@ -363,6 +442,13 @@ export class HybridSearchTool implements Tool<
               resultCount: results.length,
             },
           );
+
+          // Cache successful results
+          cacheManager.set("hybrid_search", cacheKey, toolResult);
+          const valueSize = JSON.stringify(toolResult).length * 2;
+          await logCacheStore("hybrid_search", inputSummary, valueSize);
+
+          return toolResult;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
@@ -374,6 +460,133 @@ export class HybridSearchTool implements Tool<
             error: errorMessage,
           });
           return toolFailure(`Hybrid search error: ${errorMessage}`);
+        }
+      },
+    );
+  }
+}
+
+/**
+ * Web Search Tool
+ * Executes public web search via the ai-gateway.
+ */
+export class WebSearchTool implements Tool<WebSearchInput, any> {
+  name = "web_search";
+  description =
+    "Search the public web for external or current information when the answer is not in local screen activity data.";
+  inputSchema = WebSearchInputSchema;
+
+  async execute(
+    input: WebSearchInput,
+    context: ToolContext,
+  ): Promise<ToolResult<any>> {
+    return runWithSpan(
+      "agent.tool.web_search",
+      {
+        request_id: context.requestId,
+        step_id: context.stepId,
+        query: input.query,
+      },
+      async () => {
+        const logger = await getLogger();
+        const config = await getConfig();
+        const cacheManager = getCacheManager();
+        const cacheKey = {
+          query: input.query,
+          limit: input.limit ?? 5,
+        };
+        const inputSummary = summarizeInput(cacheKey);
+
+        const cachedResult = cacheManager.get<ToolResult<any>>("web_search", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("web_search").getStats();
+          await logCacheHit("web_search", inputSummary, stats);
+          return cachedResult;
+        }
+
+        const missStats = cacheManager.getCache("web_search").getStats();
+        await logCacheMiss("web_search", inputSummary, missStats);
+
+        logSeparator(logger, "TOOL START | web_search", {
+          requestId: context.requestId,
+          stepId: context.stepId,
+        });
+        logSectionLine(logger, "CALLED TOOL web_search", {
+          requestId: context.requestId,
+          stepId: context.stepId,
+          query: input.query,
+          limit: input.limit ?? 5,
+        });
+
+        try {
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+          };
+
+          if (context.authHeaders?.authorization) {
+            headers["Authorization"] = context.authHeaders.authorization;
+          }
+          if (context.authHeaders?.deviceId) {
+            headers["X-Device-ID"] = context.authHeaders.deviceId;
+          }
+
+          const response = await axios.post(
+            `${config.aiGateway.baseUrl}/v1/search`,
+            {
+              query: input.query,
+              limit: input.limit ?? 5,
+            },
+            {
+              timeout: Math.min(context.timeout, config.aiGateway.timeoutMs),
+              headers,
+            },
+          );
+
+          const payload = response.data?.data;
+          const results = Array.isArray(payload?.results) ? payload.results : [];
+
+          logSectionLine(logger, "RESULT TOOL web_search", {
+            requestId: context.requestId,
+            stepId: context.stepId,
+            success: true,
+            resultCount: results.length,
+          });
+          logSeparator(logger, "TOOL END | web_search", {
+            requestId: context.requestId,
+            stepId: context.stepId,
+          });
+
+          const toolResult = toolSuccess(
+            {
+              success: true,
+              data: results,
+              metadata: {
+                resultCount: results.length,
+                query: input.query,
+              },
+            },
+            {
+              source: "web_search",
+              resultCount: results.length,
+            },
+          );
+
+          cacheManager.set("web_search", cacheKey, toolResult);
+          const valueSize = JSON.stringify(toolResult).length * 2;
+          await logCacheStore("web_search", inputSummary, valueSize);
+
+          return toolResult;
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          logger.error({ error: errorMessage }, "Web search failed");
+          logSectionLine(logger, "RESULT TOOL web_search", {
+            requestId: context.requestId,
+            stepId: context.stepId,
+            success: false,
+            error: errorMessage,
+          });
+          return toolFailure(`Web search error: ${errorMessage}`);
         }
       },
     );
@@ -458,5 +671,6 @@ export function createSkillTools(): Tool[] {
     new SqlExecuteTool(),
     new SemanticSearchTool(),
     new HybridSearchTool(),
+    new WebSearchTool(),
   ];
 }

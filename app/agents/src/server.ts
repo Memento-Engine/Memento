@@ -34,6 +34,7 @@ import {
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
 import { saveMessage, buildSourcesFromStepResults, getSessionMessages } from "./tools/chatPersistence";
+import { logCacheStatsSummary } from "./utils/cache";
 import net from "net";
 
 declare const __DEV__: boolean | undefined;
@@ -510,6 +511,9 @@ async function startServer() {
                 }) + "\n",
               );
 
+              // Log cache statistics after execution
+              await logCacheStatsSummary();
+
               // Clean up event queue after successful completion
               cleanupEventQueue(requestId);
               return res.end();
@@ -581,6 +585,41 @@ async function startServer() {
           name: t.name,
           description: t.description,
         })),
+      });
+    });
+
+    /**
+     * Cache statistics endpoint
+     */
+    router.get<{}, any>("/cache/stats", async (req: Request, res: Response) => {
+      const { getCacheManager } = await import("./utils/cache");
+      const manager = getCacheManager();
+      const allStats = manager.getAllStats();
+
+      const stats: Record<string, any> = {};
+      let totalHits = 0;
+      let totalMisses = 0;
+      let totalSize = 0;
+
+      for (const [name, cacheStats] of allStats.entries()) {
+        stats[name] = cacheStats;
+        totalHits += cacheStats.hits;
+        totalMisses += cacheStats.misses;
+        totalSize += cacheStats.size;
+      }
+
+      const totalOps = totalHits + totalMisses;
+      const overallHitRate = totalOps > 0 ? totalHits / totalOps : 0;
+
+      return res.status(200).json({
+        caches: stats,
+        summary: {
+          totalHits,
+          totalMisses,
+          totalSize,
+          overallHitRate,
+          timestamp: formatLocalTimestamp(),
+        },
       });
     });
 

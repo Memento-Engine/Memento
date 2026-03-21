@@ -112,6 +112,16 @@ export const SemanticSearchInputSchema = z.object({
 export type SemanticSearchInput = z.infer<typeof SemanticSearchInputSchema>;
 
 /**
+ * Zod schema for web search input.
+ */
+export const WebSearchInputSchema = z.object({
+  query: z.string().min(1).describe("Natural language query for public web search"),
+  limit: z.number().int().min(1).max(10).default(5),
+});
+
+export type WebSearchInput = z.infer<typeof WebSearchInputSchema>;
+
+/**
  * Zod schema for current datetime tool input.
  */
 export const CurrentDateTimeInputSchema = z.object({});

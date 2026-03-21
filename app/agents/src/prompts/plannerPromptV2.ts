@@ -63,6 +63,7 @@ Specify which skill to use in the intent.
 - Use "sql_execute" with FTS for keyword searches ("find error 404")
 - Use "sql_execute" for aggregations ("how many hours on X")
 - Use hybrid approach for ambiguous queries
+- Use "web_search" when the user needs external or current web information that is unlikely to exist in captured screen history
 
 **reason**
 Analyze, filter, interpret, or compute from previous step outputs.
@@ -102,6 +103,17 @@ SKILL SELECTION GUIDANCE
 **Use HYBRID (both) when:**
 - Both keywords AND concepts present
 - Unsure which approach is best
+
+**Use WEB SEARCH when:**
+- The user asks for current events, public web facts, or external information
+- The answer is not expected to exist in the user's captured local activity history
+- You need to verify something against the live web
+- The agent is uncertain and needs external knowledge to validate findings
+- Combining with memory search would provide a more complete answer
+
+**PROACTIVE web search:** Web search can run alongside memory searches.
+If a query could benefit from both personal history AND public information,
+plan multiple steps: one for memory search, one for web search.
 
 ================================
 REFERENCING PREVIOUS STEPS
@@ -175,6 +187,9 @@ EXAMPLES
 **Query:** "What did I learn about microservices recently?"
 → Semantic search (conceptual) + final
 
+**Query:** "What changed in React 19 this month?"
+→ Web search + final
+
 **Query:** "Show what I did after the meeting about deployment"
 → Semantic search (find meeting) + reason (extract time) + search (activity after that time) + final
 
@@ -186,6 +201,7 @@ IMPORTANT
 - Specify which skill/tool to use in search step intents
 - Use semantic search for conceptual queries
 - Use FTS/SQL for keyword and structural queries
+- Use web search for external/current web knowledge
 - Never generate actual SQL queries in the plan
 `,
   ],

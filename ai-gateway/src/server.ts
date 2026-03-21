@@ -56,6 +56,25 @@ const chatSchema = z.object({
   use_premium_model: z.boolean().optional(),
 });
 
+const webSearchSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(10).optional(),
+});
+
+type TavilySearchResult = {
+  title?: string;
+  url?: string;
+  content?: string;
+  score?: number;
+  published_date?: string;
+};
+
+type TavilySearchResponse = {
+  results?: TavilySearchResult[];
+  query?: string;
+  response_time?: number;
+};
+
 function buildProviderRegistry(
   config: ReturnType<typeof loadConfig>,
 ): Map<ProviderName, LlmProviderAdapter> {
@@ -250,6 +269,108 @@ async function startServer(): Promise<void> {
         throw new BadRequestError(error.issues.map((e) => e.message).join(", "));
       }
       throw error;
+    }
+  });
+
+  app.post("/v1/search", validateUserRequest, async (req: RequestContext, res: Response) => {
+    const parsed = webSearchSchema.parse(req.body);
+
+    if (!config.webSearch.apiKey) {
+      const errResponse: GatewayResponse<null> = {
+        success: false,
+        error: {
+          code: StatusCodes.SERVICE_UNAVAILABLE,
+          message: "Web search is not configured. Set TAVILY_API_KEY or AI_GATEWAY_TAVILY_API_KEY.",
+        },
+      };
+      return res.status(StatusCodes.SERVICE_UNAVAILABLE).json(errResponse);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.webSearch.timeoutMs);
+
+    try {
+      const tavilyResponse = await fetch(`${config.webSearch.baseUrl}/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          api_key: config.webSearch.apiKey,
+          query: parsed.query,
+          max_results: Math.min(parsed.limit ?? config.webSearch.maxResults, config.webSearch.maxResults),
+          search_depth: "advanced",
+          include_answer: false,
+          include_raw_content: false,
+          include_images: false,
+          topic: "general",
+        }),
+        signal: controller.signal,
+      });
+
+      if (!tavilyResponse.ok) {
+        const body = await tavilyResponse.text();
+        throw new Error(`Tavily search failed (${tavilyResponse.status}): ${body}`);
+      }
+
+      const payload = (await tavilyResponse.json()) as TavilySearchResponse;
+      const results = Array.isArray(payload.results)
+        ? payload.results
+            .filter((result) => typeof result.url === "string" && result.url.length > 0)
+            .map((result) => ({
+              title: result.title ?? result.url ?? "Untitled result",
+              url: result.url as string,
+              snippet: result.content ?? "",
+              score: result.score,
+              publishedAt: result.published_date,
+            }))
+        : [];
+
+      log.info({
+        query: parsed.query,
+        resultCount: results.length,
+        userRole: req.userRole,
+      }, "Completed web search request");
+
+      const response: GatewayResponse<{
+        query: string;
+        results: Array<{
+          title: string;
+          url: string;
+          snippet: string;
+          score?: number;
+          publishedAt?: string;
+        }>;
+        metadata: {
+          resultCount: number;
+          responseTimeMs?: number;
+        };
+      }> = {
+        success: true,
+        data: {
+          query: payload.query ?? parsed.query,
+          results,
+          metadata: {
+            resultCount: results.length,
+            responseTimeMs: payload.response_time,
+          },
+        },
+      };
+
+      return res.status(StatusCodes.OK).json(response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Web search failed";
+      log.error({ error, query: parsed.query }, "Web search request failed");
+      const errResponse: GatewayResponse<null> = {
+        success: false,
+        error: {
+          code: StatusCodes.BAD_GATEWAY,
+          message,
+        },
+      };
+      return res.status(StatusCodes.BAD_GATEWAY).json(errResponse);
+    } finally {
+      clearTimeout(timeout);
     }
   });
 

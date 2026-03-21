@@ -49,6 +49,12 @@ const configSchema = z.object({
     model: z.string().default("google/gemini-2.0-flash-001"),
     maxTokens: z.number().int().min(64).default(65536),
   }),
+  webSearch: z.object({
+    apiKey: z.string().min(1).optional(),
+    baseUrl: z.string().url().default("https://api.tavily.com"),
+    maxResults: z.number().int().min(1).max(10).default(5),
+    timeoutMs: z.number().int().min(1000).default(15000),
+  }),
   providers: z.array(providerSchema),
   roles: z.object({
     router: roleConfigSchema,
@@ -163,6 +169,15 @@ export function loadConfig(): GatewayConfig {
         process.env.AI_GATEWAY_DEFAULT_MAX_TOKENS ?? "65536",
         10,
       ),
+    },
+    webSearch: {
+      apiKey:
+        process.env.AI_GATEWAY_TAVILY_API_KEY ??
+        process.env.TAVILY_API_KEY ??
+        undefined,
+      baseUrl: process.env.AI_GATEWAY_TAVILY_BASE_URL ?? "https://api.tavily.com",
+      maxResults: parseInt(process.env.AI_GATEWAY_TAVILY_MAX_RESULTS ?? "5", 10),
+      timeoutMs: parseInt(process.env.AI_GATEWAY_TAVILY_TIMEOUT_MS ?? "15000", 10),
     },
     providers,
     roles: {

@@ -57,7 +57,7 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
       {
         id: "step1",
         kind: "search",
-        stepGoal: `Find relevant activity for: ${state.rewrittenQuery ?? state.goal}`,
+        stepGoal: `Find relevant information for: ${state.rewrittenQuery ?? state.goal}`,
         intent: state.rewrittenQuery ?? state.goal,
         dependsOn: [],
         expectedOutput: {

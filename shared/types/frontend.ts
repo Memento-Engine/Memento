@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+// Source type to distinguish where results came from
+export const SourceTypeEnum = z.enum(["memory", "web"]);
+export type SourceType = z.infer<typeof SourceTypeEnum>;
+
 export const StepSearchResultsSchema = z.object({
   chunk_id: z.number(),
   app_name: z.string(),
@@ -9,6 +13,14 @@ export const StepSearchResultsSchema = z.object({
   image_path : z.string().optional(),
   text_content: z.string().optional(),
   text_json: z.string().optional(),
+  // Source type: "memory" for captured screen history, "web" for external web search
+  // Optional for backwards compatibility - defaults to "memory" at runtime
+  sourceType: SourceTypeEnum.optional(),
+  // Web-specific fields
+  url: z.string().optional(),
+  title: z.string().optional(),
+  snippet: z.string().optional(),
+  publishedAt: z.string().optional(),
 });
 
 // Available action types for UI display
@@ -17,6 +29,7 @@ export const ActionTypeEnum = z.enum([
   "sql",          // Running SQL/FTS query
   "semantic",     // Vector semantic search
   "hybrid",       // Combined FTS + semantic
+  "webSearch",    // External web search
   "readMore",     // Reading full content of chunks
   "thinking",     // Agent is analyzing/reasoning
   "summarizing",  // Generating final answer

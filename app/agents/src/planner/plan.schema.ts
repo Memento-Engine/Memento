@@ -105,7 +105,7 @@ const SearchStepSchema = z.object({
       "Suggested skill to use (e.g. 'semantic-search', 'fts-search', 'hybrid-search', 'temporal-query', 'aggregation-digest')",
     ),
   suggestedTool: z
-    .enum(["sql_execute", "semantic_search", "search"])
+    .enum(["sql_execute", "semantic_search", "search", "web_search"])
     .optional()
     .describe("Suggested tool to execute this step"),
   dependsOn: z.array(z.string()).default([]),

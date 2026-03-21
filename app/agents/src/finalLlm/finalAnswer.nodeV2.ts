@@ -124,6 +124,7 @@ ${stepBriefs}
 - Cite evidence using chunk_ids: [chunk_42], [chunk_45]
 - Multiple sources: [[chunk_42][chunk_45]]
 - Only cite chunks mentioned in step results
+- If evidence is from web search and has no chunk_id, do not invent chunk citations
 - If a step found nothing, say so honestly
 
 ## Response Guidelines
