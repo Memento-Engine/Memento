@@ -14,6 +14,8 @@ import {
   AlertCircle,
   Loader2,
   Cpu,
+  XCircle,
+  Monitor,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { waitForDaemonHealthy } from "@/api/base";
@@ -23,6 +25,7 @@ import { Progress } from "@/components/ui/progress";
 import { MementoLogo } from "@/components/Logo";
 import useOnboarding from "@/hooks/useOnboarding";
 import { checkModelsStatus, downloadModelsWithProgress, ModelDownloadProgress } from "@/api/models";
+import { checkSystemRequirements, RequirementCheck, SystemRequirementsResponse } from "@/api/system";
 import { cn } from "@/lib/utils";
 import useAuth from "@/hooks/useAuth";
 import { isDesktopProductionMode } from "@/lib/runtimeMode";
@@ -64,12 +67,14 @@ export default function OnboardingPage() {
   // Track completion state for each step
   // Step 0: Welcome (always completable)
   // Step 1: Daemon Startup (must wait for daemon)
-  // Step 2: Privacy (always completable)  
-  // Step 3: Model Download (must complete download)
-  // Step 4: Login/Skip (final step)
+  // Step 2: System Requirements Check (must pass all checks)
+  // Step 3: Privacy (always completable)  
+  // Step 4: Model Download (must complete download)
+  // Step 5: Login/Skip (final step)
   const [stepStates, setStepStates] = useState<StepState[]>([
     { completed: false, canProceed: true },  // Welcome
     { completed: false, canProceed: false }, // Daemon Startup
+    { completed: false, canProceed: false }, // System Requirements
     { completed: false, canProceed: true },  // Privacy
     { completed: false, canProceed: false }, // Model Download
     { completed: false, canProceed: true },  // Login/Skip
@@ -93,8 +98,8 @@ export default function OnboardingPage() {
   }, [stepStates, completeStep, setCurrentStep]);
 
   const handleModelsDownloaded = useCallback(() => {
-    completeStep(3);
-    setCurrentStep(4);
+    completeStep(4);
+    setCurrentStep(5);
   }, [completeStep, setCurrentStep]);
 
   return (
@@ -121,18 +126,29 @@ export default function OnboardingPage() {
         )}
 
         {currentStep === 2 && (
-          <SlideWrapper key="privacy">
-            <PrivacySlide onContinue={() => goToNextStep(2)} />
+          <SlideWrapper key="system-requirements">
+            <SystemRequirementsSlide
+              onPassed={() => {
+                completeStep(2);
+                setCurrentStep(3);
+              }}
+            />
           </SlideWrapper>
         )}
 
         {currentStep === 3 && (
+          <SlideWrapper key="privacy">
+            <PrivacySlide onContinue={() => goToNextStep(3)} />
+          </SlideWrapper>
+        )}
+
+        {currentStep === 4 && (
           <SlideWrapper key="models">
             <ModelDownloadSlide onComplete={handleModelsDownloaded} />
           </SlideWrapper>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 5 && (
           <SlideWrapper key="login">
             <LoginSlide 
               onComplete={() => setIsOnboardingComplete(true)} 
@@ -143,7 +159,7 @@ export default function OnboardingPage() {
 
       <ProgressDots 
         step={currentStep} 
-        total={5} 
+        total={6} 
         stepStates={stepStates}
       />
     </div>
@@ -701,6 +717,160 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
         <ShieldCheck size={16} className="text-primary" />
         This runs entirely on your device.
       </div>
+    </div>
+  );
+}
+
+type RequirementsState = "checking" | "passed" | "failed";
+
+function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
+  const [state, setState] = useState<RequirementsState>("checking");
+  const [requirements, setRequirements] = useState<SystemRequirementsResponse | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const hasChecked = useRef(false);
+
+  useEffect(() => {
+    if (hasChecked.current) return;
+    hasChecked.current = true;
+
+    const checkRequirements = async () => {
+      try {
+        const result = await checkSystemRequirements();
+        setRequirements(result);
+        
+        if (result.all_passed) {
+          setState("passed");
+          // Auto-advance after a short delay
+          setTimeout(() => onPassed(), 1000);
+        } else {
+          setState("failed");
+        }
+      } catch (err) {
+        setState("failed");
+        setErrorMessage(`Could not check system requirements: ${String(err)}`);
+      }
+    };
+
+    checkRequirements();
+  }, [onPassed]);
+
+  const retry = async () => {
+    hasChecked.current = false;
+    setState("checking");
+    setErrorMessage(null);
+    setRequirements(null);
+    
+    hasChecked.current = true;
+    
+    try {
+      const result = await checkSystemRequirements();
+      setRequirements(result);
+      
+      if (result.all_passed) {
+        setState("passed");
+        setTimeout(() => onPassed(), 1000);
+      } else {
+        setState("failed");
+      }
+    } catch (err) {
+      setState("failed");
+      setErrorMessage(`Could not check system requirements: ${String(err)}`);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-xl text-center space-y-6 px-6">
+      <div className="flex justify-center">
+        {state === "passed" ? (
+          <CheckCircle2 className="text-green-500" size={48} />
+        ) : state === "failed" ? (
+          <XCircle className="text-destructive" size={48} />
+        ) : (
+          <div className="relative">
+            <Monitor className="text-primary" size={48} />
+            <Loader2 className="absolute -bottom-1 -right-1 text-primary animate-spin" size={20} />
+          </div>
+        )}
+      </div>
+
+      <h1 className="text-3xl sm:text-4xl font-bold">
+        {state === "passed"
+          ? "System Ready!"
+          : state === "failed"
+          ? "System Requirements"
+          : "Checking System"}
+      </h1>
+
+      <p className="text-muted-foreground text-lg">
+        {state === "passed"
+          ? "Your system meets all requirements."
+          : state === "failed"
+          ? "Some requirements need attention before continuing."
+          : "Verifying your system is compatible with Memento..."}
+      </p>
+
+      {state === "checking" && (
+        <div className="flex items-center justify-center gap-3">
+          <Loader2 className="animate-spin text-primary" size={20} />
+          <span className="text-sm text-muted-foreground">Checking requirements...</span>
+        </div>
+      )}
+
+      {requirements && (
+        <div className="space-y-3 text-left">
+          {requirements.checks.map((check, index) => (
+            <div
+              key={index}
+              className={cn(
+                "p-4 rounded-lg border",
+                check.passed
+                  ? "bg-green-500/10 border-green-500/20"
+                  : "bg-destructive/10 border-destructive/20"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                {check.passed ? (
+                  <CheckCircle2 className="text-green-500 mt-0.5 flex-shrink-0" size={20} />
+                ) : (
+                  <XCircle className="text-destructive mt-0.5 flex-shrink-0" size={20} />
+                )}
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium">{check.name}</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{check.message}</p>
+                  {!check.passed && check.fix_suggestion && (
+                    <div className="mt-2 text-sm bg-background/50 p-3 rounded border border-border/50">
+                      <p className="font-medium text-foreground mb-1">How to fix:</p>
+                      <p className="text-muted-foreground whitespace-pre-line">{check.fix_suggestion}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+          <p className="text-sm text-destructive">{errorMessage}</p>
+        </div>
+      )}
+
+      {state === "failed" && (
+        <div className="flex flex-col items-center gap-3 pt-4">
+          <Button
+            size="lg"
+            onClick={retry}
+            variant="outline"
+            className="cursor-pointer"
+          >
+            Check Again
+          </Button>
+          <p className="text-sm text-muted-foreground">
+            Fix the issues above and click &quot;Check Again&quot;
+          </p>
+        </div>
+      )}
     </div>
   );
 }

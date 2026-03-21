@@ -4,11 +4,17 @@ use std::{
     thread,
     time::{Duration, Instant},
     path::PathBuf,
-    sync::{Mutex, Once},
+    sync::{Arc, Mutex, Once, RwLock},
 };
-use tauri::{Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tracing::{info, warn, error, debug};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub mod build_info;
 pub mod get_app_icon;
@@ -18,11 +24,41 @@ pub mod oauth;
 /// Service name constant
 const SERVICE_NAME: &str = "SearchEngineDaemon";
 
+/// Update check interval: 6 hours
+const UPDATE_CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
+
 static LOGGING_INIT: Once = Once::new();
 
 #[derive(Default)]
 struct AgentServerState {
     process: Mutex<Option<Child>>,
+}
+
+/// State for tracking available updates
+struct UpdateState {
+    /// The version of the available update (if any)
+    available_version: RwLock<Option<String>>,
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        Self {
+            available_version: RwLock::new(None),
+        }
+    }
+}
+
+/// Payload for update-available event
+#[derive(Clone, serde::Serialize)]
+struct UpdateAvailablePayload {
+    version: String,
+}
+
+fn configure_no_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn find_embedded_agent_binary() -> Option<PathBuf> {
@@ -40,6 +76,26 @@ fn find_embedded_agent_binary() -> Option<PathBuf> {
         exe_dir
             .join("resources")
             .join("memento-agents-x86_64-pc-windows-msvc.exe"),
+    ];
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn find_embedded_daemon_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    let candidates = [
+        exe_dir.join("memento-daemon.exe"),
+        exe_dir.join("memento-daemon-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("binaries").join("memento-daemon.exe"),
+        exe_dir
+            .join("binaries")
+            .join("memento-daemon-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("resources").join("memento-daemon.exe"),
+        exe_dir
+            .join("resources")
+            .join("memento-daemon-x86_64-pc-windows-msvc.exe"),
     ];
 
     candidates.into_iter().find(|path| path.exists())
@@ -84,6 +140,7 @@ fn start_embedded_agent_server(state: &AgentServerState) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    configure_no_window(&mut command);
 
     if let Some(parent_dir) = binary_path.parent() {
         command.current_dir(parent_dir);
@@ -231,9 +288,13 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
         return Ok("Daemon already running".into());
     }
 
+    let mut wait_for_service = false;
+
     if is_dev {
         info!("Starting daemon in dev mode");
-        Command::new("../../target/debug/memento-daemon.exe")
+        let mut command = Command::new("../../target/debug/memento-daemon.exe");
+        configure_no_window(&mut command);
+        command
             .spawn()
             .map_err(|e| {
                 let message = format!("Failed to start daemon: {}", e);
@@ -251,11 +312,51 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
             })?;
     } else {
         info!("Starting daemon via Windows Service");
-        // Use status() not spawn() - we need to wait for sc.exe to submit the
-        // start request to SCM before polling service state in wait_until_healthy()
-        let sc_result = Command::new("sc")
+        let query_result = Command::new("sc")
+            .args(["query", SERVICE_NAME])
+            .output();
+
+        let service_missing = match query_result {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                !out.status.success()
+                    && (out.status.code() == Some(1060)
+                        || stdout.contains("1060")
+                        || stderr.contains("1060"))
+            }
+            Err(_) => false,
+        };
+
+        if service_missing {
+            warn!("Windows service is not installed; falling back to standalone daemon process");
+            let daemon_path = find_embedded_daemon_binary().ok_or_else(|| {
+                "Service is not installed and packaged daemon binary could not be found".to_string()
+            })?;
+
+            let mut command = Command::new(&daemon_path);
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            configure_no_window(&mut command);
+
+            if let Some(parent_dir) = daemon_path.parent() {
+                command.current_dir(parent_dir);
+            }
+
+            command.spawn().map_err(|e| {
+                let message = format!("Failed to start standalone daemon: {}", e);
+                error!("{}", message);
+                message
+            })?;
+        } else {
+            wait_for_service = true;
+            // Use output() not spawn() - we need to wait for sc.exe to submit the
+            // start request to SCM before polling service state in wait_until_healthy()
+            let sc_result = Command::new("sc")
             .args(["start", "SearchEngineDaemon"])
-            .status()
+            .output()
             .map_err(|e| {
                 let message = format!("Failed to start service: {}", e);
                 error!("{}", message);
@@ -270,18 +371,23 @@ fn start_daemon_internal(is_dev: bool) -> Result<String, String> {
                 });
                 message
             })?;
-        // Exit code 0 = started, 1056 = already running (both are fine)
-        if !sc_result.success() {
-            let code = sc_result.code().unwrap_or(-1);
-            // 1056 = ERROR_SERVICE_ALREADY_RUNNING
-            if code != 1056 {
-                info!("sc start exited with code {} (service may already be running)", code);
+            // Exit code 0 = started, 1056 = already running (both are fine)
+            if !sc_result.status.success() {
+                let code = sc_result.status.code().unwrap_or(-1);
+                let stdout = String::from_utf8_lossy(&sc_result.stdout);
+                let stderr = String::from_utf8_lossy(&sc_result.stderr);
+                if code != 1056 && !stdout.contains("1056") && !stderr.contains("1056") {
+                    info!(
+                        "sc start exited with code {}. stdout: {} stderr: {}",
+                        code, stdout, stderr
+                    );
+                }
             }
         }
     }
 
     info!("Waiting for daemon to become healthy...");
-    wait_until_healthy()?;
+    wait_until_healthy(wait_for_service)?;
     info!("Daemon started successfully");
 
     Ok("Daemon started successfully".into())
@@ -392,12 +498,12 @@ fn wait_until_unhealthy() -> Result<(), String> {
     Err("Daemon failed to stop".into())
 }
 
-fn wait_until_healthy() -> Result<(), String> {
+fn wait_until_healthy(wait_for_service: bool) -> Result<(), String> {
     let start = Instant::now();
     let timeout = Duration::from_secs(60);
     
     // In production, wait for Windows service to reach RUNNING state first
-    if !cfg!(debug_assertions) {
+    if wait_for_service {
         info!("Waiting for Windows service to reach RUNNING state...");
         let service_timeout = Duration::from_secs(30);
         // Track whether we've seen the service leave STOPPED at least once.
@@ -484,43 +590,99 @@ fn get_daemon_url() -> Result<String, String> {
     }
 }
 
-/// Check for available updates
-#[tauri::command]
-fn check_for_updates() -> Result<Option<String>, String> {
-    info!("Checking for updates (version: {})", build_info::VERSION);
-    
+/// Core update check logic - shared by both user-triggered and background checks
+fn check_for_updates_core() -> Result<Option<String>, String> {
     debug!("Update URL: {}", build_info::UPDATE_URL);
     
     let source = velopack::sources::HttpSource::new(build_info::UPDATE_URL);
     let um = velopack::UpdateManager::new(source, None, None)
-        .map_err(|e| {
-            let msg = format!("Failed to create update manager: {:?}", e);
-            error!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Error);
-            msg
-        })?;
+        .map_err(|e| format!("Failed to create update manager: {:?}", e))?;
     
     let update_check = um.check_for_updates()
-        .map_err(|e| {
-            let msg = format!("Failed to check for updates: {:?}", e);
-            error!("{}", msg);
-            sentry::capture_message(&msg, sentry::Level::Error);
-            msg
-        })?;
+        .map_err(|e| format!("Failed to check for updates: {:?}", e))?;
     
     match update_check {
         velopack::UpdateCheck::UpdateAvailable(info) => {
             let version = info.TargetFullRelease.Version.to_string();
+            Ok(Some(version))
+        }
+        velopack::UpdateCheck::NoUpdateAvailable => Ok(None),
+        velopack::UpdateCheck::RemoteIsEmpty => Ok(None),
+    }
+}
+
+/// Background update check - emits event if update available
+fn check_for_updates_background(app_handle: &AppHandle, update_state: &UpdateState) -> Option<String> {
+    // Skip in development mode
+    if cfg!(debug_assertions) {
+        debug!("Skipping update check in development mode");
+        return None;
+    }
+
+    info!("Performing background update check (version: {})", build_info::VERSION);
+    
+    match check_for_updates_core() {
+        Ok(Some(version)) => {
+            info!("Update available: {} (background check)", version);
+            
+            // Store the available version
+            if let Ok(mut stored_version) = update_state.available_version.write() {
+                *stored_version = Some(version.clone());
+            }
+            
+            // Emit event to frontend
+            if let Err(e) = app_handle.emit("update-available", UpdateAvailablePayload { 
+                version: version.clone() 
+            }) {
+                warn!("Failed to emit update-available event: {}", e);
+            }
+            
+            Some(version)
+        }
+        Ok(None) => {
+            info!("No update available (background check)");
+            None
+        }
+        Err(e) => {
+            warn!("Background update check failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Start the background update checker thread
+fn start_update_checker(app_handle: AppHandle, update_state: Arc<UpdateState>) {
+    thread::spawn(move || {
+        // Initial delay before first check (10 seconds after app start)
+        thread::sleep(Duration::from_secs(10));
+        
+        loop {
+            check_for_updates_background(&app_handle, &update_state);
+            
+            // Wait for the next check interval
+            thread::sleep(Duration::from_secs(UPDATE_CHECK_INTERVAL_SECS));
+        }
+    });
+}
+
+/// Check for available updates (user-triggered)
+#[tauri::command]
+fn check_for_updates() -> Result<Option<String>, String> {
+    info!("Checking for updates (version: {})", build_info::VERSION);
+    
+    match check_for_updates_core() {
+        Ok(Some(version)) => {
             info!("Update available: {}", version);
             Ok(Some(version))
         }
-        velopack::UpdateCheck::NoUpdateAvailable => {
+        Ok(None) => {
             info!("No update available");
             Ok(None)
         }
-        velopack::UpdateCheck::RemoteIsEmpty => {
-            warn!("Remote update source is empty");
-            Ok(None)
+        Err(e) => {
+            error!("{}", e);
+            sentry::capture_message(&e, sentry::Level::Error);
+            Err(e)
         }
     }
 }
@@ -677,6 +839,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(AgentServerState::default())
+        .manage(Arc::new(UpdateState::default()))
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -696,6 +859,12 @@ pub fn run() {
                     Err(err) => warn!("Failed to auto-start daemon: {}", err),
                 }
             });
+
+            // Start the background update checker
+            let app_handle = app.handle().clone();
+            let update_state = app.state::<Arc<UpdateState>>().inner().clone();
+            start_update_checker(app_handle, update_state);
+            info!("Background update checker started");
 
             Ok(())
         })

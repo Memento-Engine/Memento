@@ -24,11 +24,6 @@ export class NodePortReader implements PortReader {
 
     for (const candidateFileName of fileNamesToTry) {
       try {
-
-
-        console.log("tryouting reading many files with candidate file name", candidateFileName, "and resolved path", this.resolveFilePath(candidateFileName));
-
-
         content = await fs.readFile(this.resolveFilePath(candidateFileName), "utf-8");
         break;
       } catch (error) {

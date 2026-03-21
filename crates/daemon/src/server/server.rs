@@ -22,6 +22,7 @@ use crate::server::model_endpoints::{
 use crate::server::chat_endpoints::{
     save_message, get_messages, list_chats, rename_chat, pin_chat, delete_chat
 };
+use crate::server::system_endpoints::check_system_requirements;
 
 #[derive(Serialize)]
 pub struct HealthStatus {
@@ -75,6 +76,8 @@ fn api_router() -> Router<Arc<AppState>> {
         .route("/chat/sessions/{session_id}", put(rename_chat))
         .route("/chat/sessions/{session_id}", delete(delete_chat))
         .route("/chat/sessions/{session_id}/pin", put(pin_chat))
+        // System requirements check (for onboarding)
+        .route("/system/check", get(check_system_requirements))
 }
 
 /// Try to bind to a port in the preferred range (7070-7077)

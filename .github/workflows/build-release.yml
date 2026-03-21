@@ -1,16 +1,13 @@
 name: Build and Release
 
-# ═══════════════════════════════════════════════════════════════════════════
-# RELEASE WORKFLOW
-# ═══════════════════════════════════════════════════════════════════════════
-# Triggered only on workflow_dispatch to create releases.
-# For CI validation on main branch, see ci-tier4-main.yml which runs all
-# tiered checks (lint, unit tests, build, E2E, production simulation, etc.)
-#
-# Before running this workflow, ensure ci-tier4-main.yml has passed.
-# ═══════════════════════════════════════════════════════════════════════════
-
+# Triggered on:
+#   - push to main         → runs all build jobs (CI validation only, no release)
+#   - workflow_dispatch    → builds + tests + creates atomic tag + release
 on:
+  push:
+    branches:
+      - main
+      - '**'
   workflow_dispatch:
     inputs:
       version:
@@ -22,11 +19,6 @@ on:
         required: false
         type: boolean
         default: true
-      skip_tier_checks:
-        description: 'Skip tier checks (use only if ci-tier4-main already passed)'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -40,9 +32,6 @@ env:
 # JOB ORDER:
 #
 #   validate-policy
-#       │
-#       ▼
-#   tier-checks (lint, unit tests — skippable if ci-tier4-main passed)
 #       │
 #       ├── build-frontend
 #       ├── build-agents
@@ -62,33 +51,12 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # 0. TIER CHECKS (lint + unit)
-  #    Run before any builds to catch issues early.
-  #    Skippable if ci-tier4-main already ran on this commit.
-  # ─────────────────────────────────────────────────────────────
-  tier-lint:
-    name: 'Pre-release: Lint Checks'
-    if: ${{ github.event.inputs.skip_tier_checks != 'true' }}
-    uses: ./.github/workflows/_reusable-lint-checks.yml
-    with:
-      fail_fast: true
-
-  tier-unit:
-    name: 'Pre-release: Unit Tests'
-    if: ${{ github.event.inputs.skip_tier_checks != 'true' }}
-    uses: ./.github/workflows/_reusable-unit-tests.yml
-    with:
-      os_matrix: '["windows-latest"]'
-
-  # ─────────────────────────────────────────────────────────────
   # 1. VALIDATE POLICY
   #    - Determines whether this run should produce a release
   #    - Validates version format and secrets (dispatch only)
   #    - Prints last release so you know what version to bump from
   # ─────────────────────────────────────────────────────────────
   validate-policy:
-    needs: [tier-lint, tier-unit]
-    if: always()
     runs-on: windows-latest
     outputs:
       run_packaging: ${{ steps.policy.outputs.run_packaging }}
@@ -96,29 +64,6 @@ jobs:
       is_prerelease: ${{ steps.policy.outputs.is_prerelease }}
 
     steps:
-      - name: Check tier checks status
-        shell: pwsh
-        run: |
-          $skipChecks = "${{ github.event.inputs.skip_tier_checks }}" -eq "true"
-          $lintResult = "${{ needs.tier-lint.result }}"
-          $unitResult = "${{ needs.tier-unit.result }}"
-          
-          Write-Host "Tier checks skipped: $skipChecks"
-          Write-Host "Lint result: $lintResult"
-          Write-Host "Unit result: $unitResult"
-          
-          if (-not $skipChecks) {
-            if ($lintResult -ne 'success') {
-              throw "Lint checks failed. Cannot proceed with release."
-            }
-            if ($unitResult -ne 'success') {
-              throw "Unit tests failed. Cannot proceed with release."
-            }
-            Write-Host "✓ All tier checks passed"
-          } else {
-            Write-Host "⚠ Tier checks skipped - ensure ci-tier4-main passed for this commit"
-          }
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -147,6 +92,7 @@ jobs:
               $isPrerelease = $true
             }
           }
+          # Push to main: run all build jobs for CI validation only — no packaging or release.
 
           echo "run_packaging=$($runPackaging.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           echo "version=$version"                                    >> $env:GITHUB_OUTPUT
@@ -268,19 +214,10 @@ jobs:
   build-daemon:
     needs: validate-policy
     runs-on: windows-latest
-    
-    env:
-      CARGO_INCREMENTAL: 1
-      CARGO_TERM_COLOR: always
-      SCCACHE_GHA_ENABLED: true
-      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -291,8 +228,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          cache-on-failure: true
-          shared-key: rust-release
 
       - name: Build daemon (Release)
         run: cargo build --release -p memento-daemon
@@ -322,19 +257,10 @@ jobs:
   build-service-helper:
     needs: validate-policy
     runs-on: windows-latest
-    
-    env:
-      CARGO_INCREMENTAL: 1
-      CARGO_TERM_COLOR: always
-      SCCACHE_GHA_ENABLED: true
-      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -345,8 +271,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          cache-on-failure: true
-          shared-key: rust-release
 
       - name: Build service-helper (Release)
         run: cargo build --release -p service-helper
@@ -361,19 +285,10 @@ jobs:
   build-tauri:
     needs: [validate-policy, build-frontend, build-agents]
     runs-on: windows-latest
-    
-    env:
-      CARGO_INCREMENTAL: 1
-      CARGO_TERM_COLOR: always
-      SCCACHE_GHA_ENABLED: true
-      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -391,8 +306,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          cache-on-failure: true
-          shared-key: rust-release
 
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
