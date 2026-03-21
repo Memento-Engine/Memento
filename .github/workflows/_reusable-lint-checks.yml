@@ -1,0 +1,225 @@
+# Reusable workflow: Static analysis and lint checks
+# Called by tier workflows - fast checks that catch logic bugs
+
+name: Lint Checks
+
+on:
+  workflow_call:
+    inputs:
+      fail_fast:
+        description: 'Stop on first failure'
+        type: boolean
+        default: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # #9 — Anti-pattern grep block
+  # PR fails if any file contains isDev: isDesktopProductionMode()
+  # or inline mode variants (reversed polarity = production bug)
+  # ─────────────────────────────────────────────────────────────
+  antipattern-grep:
+    name: '#9 Anti-pattern Detection'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for anti-patterns
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          
+          # Patterns that indicate WRONG polarity (production will break)
+          $antiPatterns = @(
+            # Direct WRONG usage: isDev should be !isDesktopProductionMode(), not positive
+            'isDev:\s*isDesktopProductionMode\s*\(\)',
+            'isDev\s*:\s*isDesktopProductionMode\s*\(\)',
+            # Inline process.env checks in invoke payloads
+            'isDev:\s*process\.env\.',
+            'isDev\s*:\s*process\.env\.',
+            # Double negation errors  
+            'isDev:\s*!!\s*isDesktopProductionMode',
+            # NODE_ENV checks in Tauri invoke payloads
+            'isDev:\s*.*NODE_ENV',
+          )
+          
+          $excludeDirs = @(
+            'node_modules',
+            '.git',
+            'target',
+            'dist',
+            'out',
+            '.next',
+            'velopack-output'
+          )
+          
+          $searchPaths = @(
+            'app/frontend',
+            'app/src-tauri'
+          )
+          
+          $hasErrors = $false
+          
+          foreach ($basePath in $searchPaths) {
+            if (-not (Test-Path $basePath)) { continue }
+            
+            $files = Get-ChildItem -Path $basePath -Recurse -Include "*.ts","*.tsx","*.js","*.jsx","*.rs" -File |
+              Where-Object { 
+                $path = $_.FullName
+                -not ($excludeDirs | Where-Object { $path -match [regex]::Escape($_) })
+              }
+            
+            foreach ($file in $files) {
+              $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+              if (-not $content) { continue }
+              
+              $lineNum = 0
+              foreach ($line in (Get-Content $file.FullName)) {
+                $lineNum++
+                foreach ($pattern in $antiPatterns) {
+                  if ($line -match $pattern) {
+                    Write-Host "::error file=$($file.FullName),line=$lineNum::Anti-pattern detected: $line"
+                    Write-Host "  Pattern: $pattern"
+                    Write-Host "  Fix: Use 'isDev: !isDesktopProductionMode()' (note the negation)"
+                    $hasErrors = $true
+                  }
+                }
+              }
+            }
+          }
+          
+          if ($hasErrors) {
+            Write-Host ""
+            Write-Host "::error::Anti-pattern check failed. See above for details."
+            Write-Host ""
+            Write-Host "The correct pattern is: isDev: !isDesktopProductionMode()"
+            Write-Host "This ensures isDev=false in production (Windows Service mode)"
+            exit 1
+          }
+          
+          Write-Host "✓ No anti-patterns detected"
+
+  # ─────────────────────────────────────────────────────────────
+  # #3 — ESLint rule: no raw process.env in invoke payloads
+  # Blocks direct env checks, forces getDaemonInvokeMode() helper
+  # ─────────────────────────────────────────────────────────────
+  eslint-invoke-check:
+    name: '#3 ESLint Invoke Payload Check'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd app/frontend && npm ci
+
+      - name: Run ESLint with custom rules
+        run: |
+          cd app/frontend
+          npm run lint -- --max-warnings 0
+        env:
+          ESLINT_CUSTOM_RULES: 'true'
+
+  # ─────────────────────────────────────────────────────────────
+  # #4 — Helper usage grep
+  # Scans all invoke("start_daemon") call sites, fails if any
+  # bypass the shared isDesktopProductionMode helper
+  # ─────────────────────────────────────────────────────────────
+  helper-usage-check:
+    name: '#4 Helper Usage Enforcement'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify helper usage at invoke sites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          
+          $searchPath = 'app/frontend'
+          $excludeDirs = @('node_modules', '.next', 'out', 'dist')
+          
+          # Find all files with invoke("start_daemon" or invoke("stop_daemon"
+          $invokePattern = 'invoke\s*\(\s*[''"](?:start|stop)_daemon[''"]'
+          $correctPattern = '!isDesktopProductionMode\s*\(\s*\)'
+          
+          $hasErrors = $false
+          $checkedFiles = 0
+          $invokeCallSites = @()
+          
+          $files = Get-ChildItem -Path $searchPath -Recurse -Include "*.ts","*.tsx","*.js","*.jsx" -File |
+            Where-Object { 
+              $path = $_.FullName
+              -not ($excludeDirs | Where-Object { $path -match "[\\/]$_[\\/]" })
+            }
+          
+          foreach ($file in $files) {
+            $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+            if (-not $content) { continue }
+            
+            # Check if file contains daemon invoke calls
+            if ($content -notmatch $invokePattern) { continue }
+            
+            $checkedFiles++
+            $lines = Get-Content $file.FullName
+            
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              $line = $lines[$i]
+              $lineNum = $i + 1
+              
+              if ($line -match $invokePattern) {
+                $invokeCallSites += @{
+                  File = $file.FullName
+                  Line = $lineNum
+                  Content = $line.Trim()
+                }
+                
+                # Look at surrounding context (current line + next 3 lines)
+                $context = $line
+                for ($j = 1; $j -le 3 -and ($i + $j) -lt $lines.Count; $j++) {
+                  $context += " " + $lines[$i + $j]
+                }
+                
+                # Must use isDesktopProductionMode helper
+                if ($context -notmatch 'isDesktopProductionMode') {
+                  Write-Host "::error file=$($file.FullName),line=$lineNum::invoke() call does not use isDesktopProductionMode helper"
+                  Write-Host "  Found: $($line.Trim())"
+                  $hasErrors = $true
+                }
+                # Must negate it (isDev: !isDesktopProductionMode())
+                elseif ($context -notmatch $correctPattern) {
+                  Write-Host "::error file=$($file.FullName),line=$lineNum::invoke() call uses wrong polarity"
+                  Write-Host "  Expected: isDev: !isDesktopProductionMode()"
+                  Write-Host "  Found: $($line.Trim())"
+                  $hasErrors = $true
+                }
+              }
+            }
+          }
+          
+          Write-Host ""
+          Write-Host "Checked $checkedFiles files with daemon invoke calls"
+          Write-Host "Found $($invokeCallSites.Count) invoke() call sites:"
+          foreach ($site in $invokeCallSites) {
+            Write-Host "  - $($site.File):$($site.Line)"
+          }
+          
+          if ($hasErrors) {
+            Write-Host ""
+            Write-Host "::error::Helper usage check failed."
+            Write-Host "All invoke('start_daemon') and invoke('stop_daemon') calls must:"
+            Write-Host "  1. Import isDesktopProductionMode from '@/lib/runtimeMode'"
+            Write-Host "  2. Use { isDev: !isDesktopProductionMode() }"
+            exit 1
+          }
+          
+          Write-Host ""
+          Write-Host "✓ All invoke() call sites use correct helper pattern"

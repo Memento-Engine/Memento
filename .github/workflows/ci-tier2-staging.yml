@@ -1,0 +1,126 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TIER 2 — develop / staging branches
+# ═══════════════════════════════════════════════════════════════════════════
+# Windows 10 + 11 matrix (~15 min)
+# All PR checks, plus build validation and E2E smoke tests.
+#
+# Additional checks:
+#   #7 — Windows 10 + 11 matrix
+#   #5 — Release-binary presence check
+#   #1 — E2E smoke test (production build, headless)
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: 'CI: Tier 2 - Staging'
+
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - 'release/**'
+  pull_request:
+    branches:
+      - develop
+      - staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tier2-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Windows 10 (2019) and Windows 11 (latest)
+  OS_MATRIX: '["windows-2019", "windows-latest"]'
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TIER 1 CHECKS (inherited)
+  # ═══════════════════════════════════════════════════════════════════════════
+  
+  lint-checks:
+    name: 'Tier 1: Lint & Static Analysis'
+    uses: ./.github/workflows/_reusable-lint-checks.yml
+    with:
+      fail_fast: true
+
+  unit-tests:
+    name: 'Tier 1: Unit & Contract Tests'
+    uses: ./.github/workflows/_reusable-unit-tests.yml
+    with:
+      os_matrix: '["windows-2019", "windows-latest"]'  # Run on both OS versions
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TIER 2 CHECKS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # #7 — Windows 10 + 11 matrix build
+  # #5 — Release-binary presence check
+  # ─────────────────────────────────────────────────────────────
+  build-checks:
+    name: 'Tier 2: Build & Binary Check'
+    needs: [lint-checks]  # Don't waste build time if lint fails
+    uses: ./.github/workflows/_reusable-build-checks.yml
+    with:
+      os_matrix: '["windows-2019", "windows-latest"]'
+      upload_artifacts: true
+
+  # ─────────────────────────────────────────────────────────────
+  # #1 — E2E smoke test (production build, headless)
+  # ─────────────────────────────────────────────────────────────
+  e2e-tests:
+    name: 'Tier 2: E2E Smoke Test'
+    needs: [build-checks]
+    uses: ./.github/workflows/_reusable-e2e-tests.yml
+    with:
+      os_matrix: '["windows-2019", "windows-latest"]'
+      run_installer_test: false
+      run_production_simulation: false
+      run_startup_diagnostics: false
+
+  # ─────────────────────────────────────────────────────────────
+  # Summary job for branch protection
+  # ─────────────────────────────────────────────────────────────
+  tier2-summary:
+    name: 'Tier 2 Summary'
+    needs: [lint-checks, unit-tests, build-checks, e2e-tests]
+    runs-on: windows-latest
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        shell: pwsh
+        run: |
+          $results = @{
+            "lint-checks" = "${{ needs.lint-checks.result }}"
+            "unit-tests" = "${{ needs.unit-tests.result }}"
+            "build-checks" = "${{ needs.build-checks.result }}"
+            "e2e-tests" = "${{ needs.e2e-tests.result }}"
+          }
+          
+          Write-Host "=== Tier 2 Staging Check Results ==="
+          Write-Host "Tier 1 (inherited):"
+          Write-Host "  - lint-checks: $($results['lint-checks'])"
+          Write-Host "  - unit-tests: $($results['unit-tests'])"
+          Write-Host ""
+          Write-Host "Tier 2 (additional):"
+          Write-Host "  - build-checks: $($results['build-checks'])"
+          Write-Host "  - e2e-tests: $($results['e2e-tests'])"
+          
+          $failed = @()
+          foreach ($job in $results.Keys) {
+            $status = $results[$job]
+            if ($status -ne 'success' -and $status -ne 'skipped') {
+              $failed += $job
+            }
+          }
+          
+          if ($failed.Count -gt 0) {
+            Write-Host ""
+            Write-Host "::error::Tier 2 checks failed: $($failed -join ', ')"
+            exit 1
+          }
+          
+          Write-Host ""
+          Write-Host "✓ All Tier 2 checks passed"
