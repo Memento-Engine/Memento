@@ -42,7 +42,7 @@ jobs:
       - name: Run daemon mode contract tests
         run: |
           cd app/frontend
-          npm test -- --testPathPattern="daemon-launch-mode|daemon-mode-contract" --passWithNoTests
+          npm test
         env:
           CI: true
 
@@ -72,7 +72,7 @@ jobs:
       - name: Run unit tests
         run: |
           cd app/frontend
-          npm test -- --passWithNoTests
+          npm test
         env:
           CI: true
 
