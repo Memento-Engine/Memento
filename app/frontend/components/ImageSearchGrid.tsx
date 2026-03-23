@@ -72,4 +72,4 @@ export default function ImageSearchGrid({ sources, onSelect }: ImageSearchGridPr
   )
 }
 
-export default memo(ImageSearchGrid)
+// export default memo(ImageSearchGrid)

@@ -1,103 +1,45 @@
 ---
 name: hybrid-search
-description: Combines FTS and semantic search for best results. Default for most queries.
+description: Combines FTS and semantic search. Default for most queries.
 tools: sql_execute, semantic_search
 ---
 
-# Hybrid Search Skill
+# Hybrid Search
 
-Combines keyword-based FTS and meaning-based semantic search for optimal results.
+Combines keyword (FTS) and meaning (semantic) search.
 
 ## When to Use
-- Most general search queries
-- When unsure if user wants exact match or conceptual match
-- Complex queries that benefit from both approaches
-- Default choice when query type is ambiguous
+- General search queries
+- When unsure if exact match or concept
+- Complex queries benefiting from both
+- Default when query type is ambiguous
 
 ## Strategy
 
-1. **Run both searches in parallel:**
-   - FTS for exact keyword matches
-   - Semantic for conceptual matches
+1. Run FTS for exact keyword matches
+2. Run semantic for conceptual matches
+3. Merge and deduplicate by chunk_id
+4. Boost items appearing in both
 
-2. **Merge and deduplicate results:**
-   - Combine results by chunk_id
-   - Boost items that appear in both
+## Action: hybrid
 
-3. **Rank by combined score:**
-   - FTS provides precision (exact matches)
-   - Semantic provides recall (related content)
-
-## Execution Pattern
-
-**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
-
-### Step 1: FTS Search
-```sql
-SELECT 
-  c.id as chunk_id,  -- REQUIRED for citations
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
-  SUBSTR(c.text_content, 1, 150) as preview,
-  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text,
-  1.0 as fts_score
-FROM chunks_fts
-JOIN chunks c ON chunks_fts.rowid = c.id
-JOIN frames f ON c.frame_id = f.id
-WHERE chunks_fts MATCH 'microservices architecture'
-ORDER BY f.captured_at DESC
-LIMIT 30;
-```
-
-### Step 2: Semantic Search
 ```json
 {
-  "query": "microservices architecture design patterns",
-  "limit": 30
+  "action": "hybrid",
+  "query": "microservices architecture",
+  "keywords": ["microservices", "docker", "kubernetes"],
+  "limit": 20,
+  "filters": {
+    "app_names": ["Chrome", "VS Code"]
+  }
 }
 ```
 
-### Step 3: Merge Results (reasoning step)
-
-The LLM receives both result sets and:
-1. Identifies overlapping chunks (high confidence matches)
-2. Ranks unique FTS results (exact matches)
-3. Ranks unique semantic results (conceptual matches)
-4. Returns merged, deduplicated list
-
-## Query Examples
-
-### "What did I learn about microservices?"
-
-**FTS Query:**
-```sql
-SELECT 
-  c.id as chunk_id,  -- REQUIRED for citations
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
-  SUBSTR(c.text_content, 1, 150) as preview,
-  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as text
-FROM chunks_fts
-JOIN chunks c ON chunks_fts.rowid = c.id
-JOIN frames f ON c.frame_id = f.id
-WHERE chunks_fts MATCH 'microservices'
-ORDER BY f.captured_at DESC
-LIMIT 30;
-```
-
-**Semantic Query:**
-```json
-{
-  "query": "learning microservices architecture distributed systems",
-  "limit": 30,
-  "filters": {
-    "app_names": ["Chrome", "Firefox", "Arc", "Safari"]
+## Notes
+- `query` drives semantic similarity
+- `keywords` drive FTS matching
+- Results merged by the orchestrator
+- Use when both keywords AND concepts present
   }
 }
 ```

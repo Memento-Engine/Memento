@@ -28,6 +28,15 @@ import {
 import { runMigrations } from "@/db/migrate.ts";
 import { logger, childLogger } from "@/utils/logger.ts";
 import { httpLogger } from "@/middlewares/httpLogger.ts";
+import {
+  logChatCall,
+  logContextShrink,
+  logSearchCall,
+  logUsageTracked,
+  logRateLimit,
+  logValidationError,
+  logChatError,
+} from "@/utils/tokenLogger.ts";
 
 const log = childLogger("server");
 
@@ -44,6 +53,8 @@ const chatSchema = z.object({
   user_id: z.string().min(1),
   role: z
     .enum([
+      "summarizer",
+      "classifierAndRouter",
       "clarifyAndRewriter",
       "router",
       "planner",
@@ -129,23 +140,12 @@ async function startServer(): Promise<void> {
 
   app.post("/v1/chat", validateUserRequest, async (req: RequestContext, res: Response) => {
     try {
-      console.log("Request body", req.body);
+      const startTime = Date.now();
       const parsed = chatSchema.parse(req.body);
       const deviceId = req.deviceId;
-      const userId = req.user?.id;
+      const userId = req.user?.id || "anonymous";
       const userRole = req.userRole as UserRole;
       const usePremiumModel = req.availablePremiumCredits > 0;
-
-      log.info({
-        messages: parsed.messages.map((m) => ({
-          role: m.role,
-          contentLength: m.content.length,
-        })),
-        sysRole: parsed.role,
-        userRole,
-        availableCredits: req.availablePremiumCredits,
-        usePremiumModel,
-      }, "Received chat request");
 
       // Select model config based on tier (premium if using premium model, else free)
       const accessTier = usePremiumModel ? "premium" : "free";
@@ -175,6 +175,8 @@ async function startServer(): Promise<void> {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
 
+        logRateLimit(rateLimitResult.tier, rateLimitResult.reason || "Rate limit exceeded", rateLimitResult.retryAfterMs, userId);
+
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
@@ -202,12 +204,7 @@ async function startServer(): Promise<void> {
         processedMessages = shrinkResult.messages;
         contextShrinkApplied = true;
 
-        log.info({
-          originalTokens: shrinkResult.originalTokens,
-          shrunkTokens: shrinkResult.shrunkTokens,
-          messagesRemoved: shrinkResult.messagesRemoved,
-          strategy: shrinkResult.strategy,
-        }, "Context window shrunk");
+        logContextShrink(shrinkResult.originalTokens, shrinkResult.shrunkTokens, shrinkResult.messagesRemoved, userId);
       }
 
       const chatRequest: ChatRequest = {
@@ -220,6 +217,18 @@ async function startServer(): Promise<void> {
       };
 
       const response = await modelRouter.chat(chatRequest);
+      const durationMs = Date.now() - startTime;
+
+      // Log LLM call with token info
+      logChatCall(
+        parsed.role || "default",
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+        response.usage.total_tokens,
+        userId,
+        durationMs,
+        { model: response.model, fallbackUsed: response.fallback_used }
+      );
 
       // Track usage - tokens are counted based on role (expensive roles count towards quota)
       await usageTracker.trackUsage({
@@ -234,6 +243,15 @@ async function startServer(): Promise<void> {
         fallbackUsed: response.fallback_used,
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
+
+      // Log usage tracking
+      logUsageTracked(
+        parsed.role || "default",
+        response.usage.total_tokens,
+        rateLimitResult.tier,
+        rateLimitResult.quota?.tokensRemaining ?? null,
+        userId
+      );
 
       // Include usage metadata in response (hide model from agents for abstraction)
       const { model: _usedModel, ...responseWithoutModel } = response;
@@ -250,18 +268,28 @@ async function startServer(): Promise<void> {
       };
       res.status(StatusCodes.OK).json(chatResponse);
     } catch (error) {
+      // Log errors with clean token logging
+      const userId = (req as any).user?.id || "anonymous";
+      const role = (req.body as any)?.role || "unknown";
+      
       // Let the error handler deal with properly formatted errors
       if (error instanceof RateLimitError) {
+        logChatError(role, error, userId);
         throw new ForbiddenError(error.message);
       }
       if (error instanceof z.ZodError) {
-        throw new BadRequestError(error.issues.map((e) => e.message).join(", "));
+        const errorMsg = error.issues.map((e) => e.message).join(", ");
+        logValidationError("/v1/chat", errorMsg);
+        throw new BadRequestError(errorMsg);
       }
+      logChatError(role, error instanceof Error ? error : "Unknown error", userId);
       throw error;
     }
   });
 
   app.post("/v1/search", validateUserRequest, async (req: RequestContext, res: Response) => {
+    const startTime = Date.now();
+    const userId = req.user?.id || "anonymous";
     const parsed = webSearchSchema.parse(req.body);
 
     if (!config.webSearch.apiKey) {
@@ -315,11 +343,8 @@ async function startServer(): Promise<void> {
             }))
         : [];
 
-      log.info({
-        query: parsed.query,
-        resultCount: results.length,
-        userRole: req.userRole,
-      }, "Completed web search request");
+      const durationMs = Date.now() - startTime;
+      logSearchCall(parsed.query, results.length, durationMs, userId);
 
       const response: GatewayResponse<{
         query: string;
@@ -349,7 +374,7 @@ async function startServer(): Promise<void> {
       return res.status(StatusCodes.OK).json(response);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Web search failed";
-      log.error({ error, query: parsed.query }, "Web search request failed");
+      logChatError("web_search", message, userId);
       const errResponse: GatewayResponse<null> = {
         success: false,
         error: {
@@ -365,22 +390,13 @@ async function startServer(): Promise<void> {
 
   // Streaming chat endpoint for final answer
   app.post("/v1/chat/stream", validateUserRequest, async (req: RequestContext, res: Response) => {
+    const startTime = Date.now();
+    const userId = req.user?.id || "anonymous";
     try {
       const parsed = chatSchema.parse(req.body);
       const deviceId = req.deviceId;
-      const userId = req.user?.id;
       const userRole = req.userRole as UserRole;
       const usePremiumModel = req.availablePremiumCredits > 0;
-
-      log.info({
-        messages: parsed.messages.map((m) => ({
-          role: m.role,
-          contentLength: m.content.length,
-        })),
-        sysRole: parsed.role,
-        userRole,
-        usePremiumModel,
-      }, "Received streaming chat request");
 
       // Select model config based on tier
       const accessTier = usePremiumModel ? "premium" : "free";
@@ -410,6 +426,8 @@ async function startServer(): Promise<void> {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
 
+        logRateLimit(rateLimitResult.tier, rateLimitResult.reason || "Rate limit exceeded", rateLimitResult.retryAfterMs, userId);
+
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
@@ -436,6 +454,8 @@ async function startServer(): Promise<void> {
         });
         processedMessages = shrinkResult.messages;
         contextShrinkApplied = true;
+
+        logContextShrink(shrinkResult.originalTokens, shrinkResult.shrunkTokens, shrinkResult.messagesRemoved, userId);
       }
 
       const chatRequest: ChatRequest = {
@@ -459,6 +479,19 @@ async function startServer(): Promise<void> {
           // Send each chunk as SSE data
           res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
         },
+      );
+
+      const durationMs = Date.now() - startTime;
+
+      // Log streaming chat call
+      logChatCall(
+        parsed.role || "default",
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+        response.usage.total_tokens,
+        userId,
+        durationMs,
+        { model: response.model, fallbackUsed: response.fallback_used, streaming: true }
       );
 
       // Track usage - tokens are counted based on role (expensive roles count towards quota)
@@ -497,6 +530,7 @@ async function startServer(): Promise<void> {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown gateway error";
+      logChatError((req.body as any)?.role || "stream", message, userId);
       const errorPayload: GatewayResponse<null> = {
         success: false,
         error: {

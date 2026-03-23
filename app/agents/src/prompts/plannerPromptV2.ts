@@ -104,12 +104,17 @@ SKILL SELECTION GUIDANCE
 - Both keywords AND concepts present
 - Unsure which approach is best
 
-**Use WEB SEARCH when:**
-- The user asks for current events, public web facts, or external information
-- The answer is not expected to exist in the user's captured local activity history
+**Use WEB SEARCH ONLY WHEN:**
+- User explicitly asks for web search or external research
+- The answer is definitely not in the user's captured local activity history
+- Current events, public facts, or live documentation is required
 - You need to verify something against the live web
-- The agent is uncertain and needs external knowledge to validate findings
-- Combining with memory search would provide a more complete answer
+- Combining with memory search would provide genuinely more complete answer
+
+**DO NOT use web search for:**
+- User's personal queries, workspace, or local code
+- Questions answerable from captured screen history
+- Local debugging, project setup, or personal data analysis
 
 **PROACTIVE web search:** Web search can run alongside memory searches.
 If a query could benefit from both personal history AND public information,

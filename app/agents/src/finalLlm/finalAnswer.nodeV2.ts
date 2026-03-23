@@ -121,7 +121,7 @@ ${rewrittenQuery ?? goal}
 ${stepBriefs}
 
 ## Citation Rules
-- Cite evidence using chunk_ids: [chunk_42], [chunk_45]
+- Cite evidence using chunk_ids: [[chunk_42]]
 - Multiple sources: [[chunk_42][chunk_45]]
 - Only cite chunks mentioned in step results
 - If evidence is from web search and has no chunk_id, do not invent chunk citations

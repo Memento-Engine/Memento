@@ -23,6 +23,12 @@ import {
   cleanupEventQueue,
 } from "./utils/eventQueue";
 import {
+  initTokenTracker,
+  logRequestSummary,
+  logFinalQuerySummary,
+  cleanupTokenTracker,
+} from "./utils/tokenTracker";
+import {
   initializeTelemetry,
   registerTelemetryShutdownHooks,
 } from "./telemetry/setup";
@@ -34,7 +40,7 @@ import {
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
 import { saveMessage, buildSourcesFromStepResults, getSessionMessages } from "./tools/chatPersistence";
-import { logCacheStatsSummary } from "./utils/cache";
+import { getCacheManager, logCacheStatsSummary } from "./utils/cache";
 import net from "net";
 
 declare const __DEV__: boolean | undefined;
@@ -345,6 +351,9 @@ async function startServer() {
 
               // Initialize event queue with stream writer for real-time streaming
               initializeEventQueue(requestId, streamWriter);
+              
+              // Initialize token tracking for this request
+              initTokenTracker(requestId);
 
               // Execute agent graph with event queue for streaming
               let result: any;
@@ -467,11 +476,13 @@ async function startServer() {
                   }) + "\n",
                 );
 
+                cleanupTokenTracker(requestId);
                 return res.end();
               }
 
 
               // Persist messages to DB in-order so reload preserves user -> assistant sequence.
+              let sources: any[] = [];
               if (sessionId) {
                 const persistSession = sessionId;
                 const finalResult = (result as any)?.finalResult;
@@ -485,7 +496,7 @@ async function startServer() {
 
                 // Save assistant message with chunk references
                 if (finalResult && stepResults) {
-                  const sources = buildSourcesFromStepResults(stepResults);
+                  sources = buildSourcesFromStepResults(stepResults);
                   await saveMessage(
                     persistSession,
                     "assistant",
@@ -493,8 +504,22 @@ async function startServer() {
                     sources,
                     persistedThinkingSteps,
                   );
+                  logger.info("Persisted message to DB", { sourceCount: sources.length, sessionId });
+                }
+              } else {
+                // Even if not persisting to DB, extract sources from stepResults for response
+                const stepResults = (result as any)?.stepResults;
+                if (stepResults) {
+                  sources = buildSourcesFromStepResults(stepResults);
                 }
               }
+
+              logger.info("Sending complete event", { 
+                requestId, 
+                duration, 
+                sourceCount: sources.length,
+                hasSources: sources.length > 0 
+              });
 
               res.write(
                 JSON.stringify({
@@ -506,6 +531,7 @@ async function startServer() {
                       duration,
                       timestamp: formatLocalTimestamp(),
                     },
+                    sources: sources.length > 0 ? sources : undefined,
                   },
                   timestamp: formatLocalTimestamp(),
                 }) + "\n",
@@ -513,6 +539,9 @@ async function startServer() {
 
               // Log cache statistics after execution
               await logCacheStatsSummary();
+              
+              // Log final query completion summary
+              await logFinalQuerySummary(requestId, duration);
 
               // Clean up event queue after successful completion
               cleanupEventQueue(requestId);
@@ -527,6 +556,7 @@ async function startServer() {
 
               // Clean up event queue on error
               cleanupEventQueue(requestId);
+              cleanupTokenTracker(requestId);
 
               res.write(
                 JSON.stringify({
@@ -592,7 +622,6 @@ async function startServer() {
      * Cache statistics endpoint
      */
     router.get<{}, any>("/cache/stats", async (req: Request, res: Response) => {
-      const { getCacheManager } = await import("./utils/cache");
       const manager = getCacheManager();
       const allStats = manager.getAllStats();
 
@@ -667,12 +696,8 @@ async function startServer() {
       );
     });
   } catch (error) {
-
-
-
     console.log("Got the error in start server catch", error);
 
-    console.log("Passsing to sentry")
     captureAgentException(error, {
       message: "Failed to start agents server",
       level: "fatal",

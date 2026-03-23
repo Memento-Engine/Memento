@@ -1,6 +1,6 @@
 import { SqlExecuteInput, SqlValidationResult } from "./types";
 import { getSqlExecuteUrl } from "../config/daemon";
-import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
+import { getLogger } from "../utils/logger";
 import { getConfig } from "../config/config";
 import axios from "axios";
 
@@ -166,21 +166,9 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
   const config = await getConfig();
   const startTime = Date.now();
 
-  logSeparator(logger, "SQL EXECUTION START", {
-    sql: input.sql,
-  });
-  logSectionLine(logger, "CALLED sqlExecutor.executeSql", {
-    sql: input.sql,
-  });
-
   // Validate first
   const validation = validateSql(input.sql);
   if (!validation.valid) {
-    logger.warn({ error: validation.error, sql: input.sql }, "SQL validation failed");
-    logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
-      success: false,
-      error: validation.error,
-    });
     return {
       success: false,
       error: validation.error,
@@ -188,15 +176,9 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
   }
 
   const safeSql = validation.normalized!;
-  logger.debug({ sql: safeSql }, "Executing SQL");
 
   try {
     const sqlEndpoint = await getSqlExecuteUrl();
-
-    logSectionLine(logger, "CALLED backend /api/v1/sql_execute", {
-      endpoint: sqlEndpoint,
-      timeoutMs: config.backend.timeout,
-    });
 
     const response = await axios.post(
       sqlEndpoint,
@@ -212,14 +194,7 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
     const executionTimeMs = Date.now() - startTime;
     const data = response.data;
 
-    logger.debug({ status: response.status, data: JSON.stringify(data).slice(0, 500) }, "SQL endpoint response");
-
     if (data.success === false) {
-      logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
-        success: false,
-        error: data.error || "SQL execution failed (no error message)",
-        executionTimeMs,
-      });
       return {
         success: false,
         error: data.error || "SQL execution failed (no error message)",
@@ -229,18 +204,6 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
 
     const rows = Array.isArray(data.rows) ? data.rows : (Array.isArray(data) ? data : []);
     const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-
-    logger.info({ rowCount: rows.length, executionTimeMs }, "SQL executed successfully");
-    logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
-      success: true,
-      rowCount: rows.length,
-      columns,
-      executionTimeMs,
-    });
-    logSeparator(logger, "SQL EXECUTION END", {
-      success: true,
-      rowCount: rows.length,
-    });
 
     return {
       success: true,
@@ -260,17 +223,6 @@ export async function executeSql(input: SqlExecuteInput): Promise<SqlExecuteResu
     } else {
       errorMessage = error instanceof Error ? error.message : String(error);
     }
-    
-    logger.error({ error: errorMessage, sql: safeSql }, "SQL execution failed");
-    logSectionLine(logger, "RESULT sqlExecutor.executeSql", {
-      success: false,
-      error: errorMessage,
-      executionTimeMs,
-    });
-    logSeparator(logger, "SQL EXECUTION END", {
-      success: false,
-      error: errorMessage,
-    });
 
     return {
       success: false,

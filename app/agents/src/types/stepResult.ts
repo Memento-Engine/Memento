@@ -1,4 +1,41 @@
 import { z } from "zod";
+import { SEARCH_MODE_CONFIG } from "../config/tokenBudgets";
+
+// ── Evidence Item Contract ───────────────────────────────
+// Each evidence chunk is stored as { chunk_id, whatItIsAbout }
+// ~50 tokens per item, auto-generated from metadata
+
+export const EvidenceItemSchema = z.object({
+  /** Chunk ID for citation [[chunk_N]] */
+  chunk_id: z.number(),
+  /** Brief description: app + window + preview (~50 tokens) */
+  whatItIsAbout: z.string(),
+});
+
+export type EvidenceItem = z.infer<typeof EvidenceItemSchema>;
+
+/**
+ * Generate evidence description from chunk metadata.
+ * Format: "app: title - preview" truncated to ~50 tokens (~200 chars)
+ */
+export function buildEvidenceDescription(chunk: {
+  app_name?: string;
+  window_name?: string;
+  window_title?: string;
+  text_content?: string;
+  browser_url?: string;
+}): string {
+  const app = chunk.app_name || "Unknown";
+  const title = chunk.window_name || chunk.window_title || "";
+  const preview = (chunk.text_content || "").slice(0, 100);
+  
+  let desc = app;
+  if (title) desc += `: ${title.slice(0, 60)}`;
+  if (preview) desc += ` - ${preview}`;
+  
+  // Truncate to ~200 chars (~50 tokens)
+  return desc.length > 200 ? desc.slice(0, 197) + "..." : desc;
+}
 
 // ── Step Output Contract ─────────────────────────────────
 // Every step in the plan produces this structure.
@@ -16,13 +53,14 @@ export const StepResultSchema = z.object({
   goal: z.string(),
   status: z.enum(["complete", "partial", "empty"]),
   summary: z.string(),
+  /** Chunk IDs for evidence (used for [[chunk_N]] citations) */
   evidenceChunkIds: z.array(z.number()),
-  evidence: z.array(z.any()).optional().nullable(),
+  /** Evidence items with descriptions (~50 tokens each) */
+  evidence: z.array(EvidenceItemSchema).optional().nullable(),
   gaps: z.array(z.string()),
   searchesPerformed: z.array(SearchPerformedSchema),
   chunksRead: z.array(z.number()),
   confidence: z.enum(["high", "medium", "low"]),
-
 });
 
 export type StepResult = z.infer<typeof StepResultSchema>;
@@ -46,19 +84,9 @@ export interface SearchModeConfig {
   maxReactTurns: number;
   maxReadMoreChunks: number;
   maxSearchCalls: number;
+  maxSearchResults: number;
+  maxEvidenceItems: number;
 }
 
-export const SEARCH_MODE_PRESETS: Record<SearchMode, SearchModeConfig> = {
-  search: {
-    maxPlanSteps: 3,
-    maxReactTurns: 4,
-    maxReadMoreChunks: 5,
-    maxSearchCalls: 3,
-  },
-  accurateSearch: {
-    maxPlanSteps: 6,
-    maxReactTurns: 8,
-    maxReadMoreChunks: 10,
-    maxSearchCalls: 7,
-  },
-};
+// Re-export from centralized config
+export const SEARCH_MODE_PRESETS: Record<SearchMode, SearchModeConfig> = SEARCH_MODE_CONFIG;

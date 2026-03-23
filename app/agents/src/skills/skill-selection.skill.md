@@ -1,102 +1,51 @@
 ---
 name: skill-selection
-description: Critical guide for choosing the right search strategy based on query type
+description: Guide for choosing the right search strategy.
 ---
 
-# Skill Selection Guide
+# Skill Selection
 
-## CRITICAL: Choose the Right Action
+## Choose Action Type
 
-### Use SEMANTIC Search When:
-- Query contains **fuzzy concepts**: "coding session", "deep work", "learning", "debugging"
-- Query is **conceptual**: "what did I learn about X", "when was I working on X"
-- **No exact keywords** to match
-- Looking for **related content** without knowing exact words
-- Previous SQL returned **empty results**
+### sql (FTS)
+- Exact keywords, error messages, specific terms
+- Quantitative: "how many", "count", "most used"
+- Time-based: "at 3pm", "yesterday"
 
-### Use SQL (FTS) When:
-- Query contains **exact keywords**: error messages, specific terms, file names
-- Query is **structural**: "show me all X grouped by Y"
-- Query is **quantitative**: "how many", "count of", "most used"
-- Query has **time constraints**: "at 3pm", "yesterday", "last week"
+### semantic
+- Fuzzy concepts: "coding session", "deep work"
+- Conceptual: "what did I learn about X"
+- No exact keywords known
 
-### Use HYBRID Search When:
-- Query has **both keywords AND concepts**
-- **Default fallback** when unsure
-- After SQL returns empty, retry with hybrid
-- User wants "search activities" - this is conceptual!
+### hybrid
+- Both keywords AND concepts present
+- Default fallback when unsure
+- After SQL returns empty
 
-### Use WEB Search When:
-- The user asks for **external or current information** not tied to captured screen history
-- The answer depends on the **public internet**: docs, release notes, news, websites, live facts
-- You need to **verify a public claim** against the web
-- Local search results are empty but the request is clearly about outside knowledge
-- **You are uncertain** and need external validation of your findings
-- The query **mixes personal + public knowledge** - search BOTH memory AND web
-- **Supplementing memory results** would provide a more complete answer
+### webSearch (ONLY When Needed)
+- User explicitly asks for web search
+- External/current web information not in screen history
+- Docs, releases, news, live facts required
+- Uncertain about external facts and need validation
+- Can run alongside memory searches
+- DO NOT use for personal queries or local data
 
-**PROACTIVE STRATEGY**: Web search can run alongside memory searches. Don't wait for memory search to fail - if the query could benefit from both personal history AND public information, use both.
+## App Name Mappings
 
-## APP NAME MAPPINGS (Critical Knowledge)
+**Always include ALL variants:**
 
-**⚠️ ALWAYS use ALL variants of an app name in filters!**
+| Category | Names |
+|----------|-------|
+| Editors | VS Code, Visual Studio Code, Cursor, Zed, IntelliJ |
+| Browsers | Chrome, Google Chrome, Firefox, Arc, Safari, Edge |
+| Terminals | Terminal, iTerm, Warp, PowerShell |
+| Social | X, Twitter (both!), Slack, Discord |
 
-**CODE EDITORS** (use for "coding", "programming", "development"):
-- VS Code / Visual Studio Code / Code / VSCode
-- Cursor / Cursor AI
-- Zed / Zed Editor
-- IntelliJ IDEA / IntelliJ, WebStorm, PyCharm, GoLand, RustRover
-- Sublime Text / Sublime, Atom, Neovim / nvim, Vim
-- Android Studio, Xcode
+## Retry Strategy
 
-**BROWSERS** (use for "browsing", "searching", "learning", "reading"):
-- Chrome / Google Chrome
-- Firefox / Mozilla Firefox
-- Arc / Arc Browser
-- Safari / Apple Safari
-- Edge / Microsoft Edge
-- Brave, Opera, Vivaldi
-
-**COMMUNICATION** (use for "meetings", "chat", "talking"):
-- Slack
-- Discord
-- Microsoft Teams / Teams / MS Teams
-- Zoom / Zoom Meeting
-- Google Meet (in browser)
-
-**TERMINALS** (use for "terminal", "command line", "shell"):
-- Terminal / iTerm / iTerm2
-- Warp / Warp Terminal
-- Alacritty, Kitty
-- PowerShell / pwsh, cmd / Command Prompt
-- Windows Terminal / wt
-
-**SOCIAL MEDIA (REBRANDS - search BOTH names!):**
-- X / Twitter (formerly Twitter) - ALWAYS search both!
-- Meta / Facebook (company rebranded)
-- Instagram / IG, LinkedIn, Reddit
-
-## LANGUAGE / FRAMEWORK DETECTION
-
-When user mentions a programming language, search for:
-- **Rust**: Look for code editors + files with ".rs", or text containing "cargo", "rustc", "fn main", "impl"
-- **Python**: Code editors + ".py", "pip", "import", "def ", "class"
-- **JavaScript/TypeScript**: Code editors + ".js", ".ts", "npm", "node", "const", "function"
-- **Go**: Code editors + ".go", "go mod", "func ", "package main"
-
-**IMPORTANT:** Don't just search for "rust" in window_title - the content/OCR text is more reliable!
-
-## RETRY STRATEGIES
-
-### When SQL Returns Empty:
-1. **Try semantic search** with the core concept
-2. **Broaden the query** - remove time filters, expand app list
-3. **Try hybrid search** with keywords + concept
-
-### When Semantic Returns Empty:
-1. **Try SQL with broader terms**
-2. **Check different time ranges**
-3. **Try related app categories**
+1. SQL empty → Try semantic
+2. Semantic empty → Broaden query, try hybrid
+3. Still empty → Try different time range or app filter
 
 ## QUERY INTERPRETATION EXAMPLES
 

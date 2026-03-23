@@ -3,6 +3,8 @@ export type ProviderName = "openrouter" | "openai" | "anthropic" | "gemini";
 export type ChatRole = "system" | "user" | "assistant";
 
 export type GatewayRole =
+  | "summarizer"
+  | "classifierAndRouter"
   | "clarifyAndRewriter"
   | "router"
   | "planner"

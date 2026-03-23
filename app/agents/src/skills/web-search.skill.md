@@ -1,52 +1,44 @@
 ---
 name: web-search
-description: Public web search for external, current, or non-local information.
+description: Public web search for external or current information.
 tools: web_search
 ---
 
-# Web Search Skill
+# Web Search
 
-Use this when the answer should come from the public web rather than the user's captured screen history.
+Search the public web for external, current, or live information.
 
-## When to Use
-- Current events, recent releases, breaking changes, live documentation
-- Public facts, websites, official docs, blog posts, changelogs
-- External verification when local results are missing or clearly not relevant
-- Questions that are not about the user's past activity
+## When to Use (Only When Needed)
+- User explicitly asks for web search or external research
+- Current events, recent releases, live docs
+- Public facts, official websites, changelogs that user didn't capture
+- External verification of uncertain info
+- Questions NOT about user's past activity
 
-## When Not to Use
-- Questions about what the user did, saw, wrote, or opened in the past
-- Requests that should be answered from local screen history
-- Cases where local search already provides the evidence
+## When NOT to Use (Default)
+- User's local queries and personal workspace questions
+- Questions about what user did/saw/wrote (use screen history)
+- Requests answerable from captured screen history
+- Code debugging, local project setup, personal data analysis
 
-## Execution Pattern
-
-Call the `web_search` tool with a focused public-web query.
+## Action
 
 ```json
-{
-  "query": "React 19 release notes official",
-  "limit": 5
-}
+{"action": "webSearch", "query": "React 19 release notes official", "limit": 5}
 ```
 
-## Query Guidance
-
-- Rewrite vague requests into concrete public-web queries
-- Prefer official sources when the user asks about APIs, releases, or documentation
+## Tips
+- Rewrite vague requests into concrete web queries
+- Prefer official sources for APIs/releases
 - Include time qualifiers if recency matters
-- Keep the query short and specific
+- Keep query short and specific
+- Do NOT invent chunk citations for web results
 
-## Examples
+## Proactive Use
 
-| User Query | Web Query |
-|------------|-----------|
-| "What changed in React 19?" | "React 19 release notes official" |
-| "Latest Tavily pricing" | "Tavily pricing official" |
-| "Next.js 16 release notes" | "Next.js 16 release notes" |
+Only use web search alongside memory searches when:
+- Query explicitly requires both personal history AND external facts
+- Local screen capture data alone is insufficient
+- User benefit clearly justifies the extra cost/latency
 
-## Result Handling
-
-- Use returned titles, URLs, and snippets as evidence
-- Summarize the findings directly
-- Do not fabricate chunk citations for web-only results
+Otherwise, default to local search only.

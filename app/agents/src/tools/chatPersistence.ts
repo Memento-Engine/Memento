@@ -112,7 +112,8 @@ export function buildSourcesFromStepResults(
 
   for (const [stepId, result] of Object.entries(stepResults)) {
     // Evidence chunks → citation
-    for (const chunkId of result.evidenceChunkIds) {
+    const evidenceIds = result.evidenceChunkIds ?? [];
+    for (const chunkId of evidenceIds) {
       const key = `${chunkId}:citation:${stepId}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -121,8 +122,9 @@ export function buildSourcesFromStepResults(
     }
 
     // Fully-read chunks that aren't evidence → reviewed
-    for (const chunkId of result.chunksRead) {
-      if (!result.evidenceChunkIds.includes(chunkId)) {
+    const readIds = result.chunksRead ?? [];
+    for (const chunkId of readIds) {
+      if (!evidenceIds.includes(chunkId)) {
         const key = `${chunkId}:reviewed:${stepId}`;
         if (!seen.has(key)) {
           seen.add(key);

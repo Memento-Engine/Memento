@@ -1,9 +1,18 @@
 import { getConfig } from "../config/config";
 import { AgentError, ErrorCode, RateLimitError } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
-import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
+import { getLogger } from "../utils/logger";
+import { logLlmCall, logError, recordTokenUsage } from "../utils/tokenTracker";
+import {
+  CLASSIFIER_BUDGETS,
+  CHAT_CONTEXT_BUDGETS,
+  REACT_BUDGETS,
+  FINAL_LLM_BUDGETS,
+} from "../config/tokenBudgets";
 
 export type LlmRole =
+  | "summarizer"
+  | "classifierAndRouter"
   | "clarifyAndRewriter"
   | "router"
   | "planner"
@@ -11,11 +20,56 @@ export type LlmRole =
   | "query_builder"
   | "final";
 
+// Map roles to token budgets and tracking stages
+type TokenStage = "chatContext" | "classifier" | "planner" | "react" | "finalLlm" | "total";
+
+function getRoleBudget(role: LlmRole): number {
+  switch (role) {
+    case "summarizer":
+      return CHAT_CONTEXT_BUDGETS.totalMaxTokens;
+    case "classifierAndRouter":
+    case "clarifyAndRewriter":
+    case "router":
+      return CLASSIFIER_BUDGETS.totalInputMaxTokens;
+    case "planner":
+      return REACT_BUDGETS.node1.totalMaxStandard;
+    case "executor":
+    case "query_builder":
+      return REACT_BUDGETS.node1.totalMaxAccurate; // worst case
+    case "final":
+      return FINAL_LLM_BUDGETS.totalInputStandard;
+    default:
+      return 65536;
+  }
+}
+
+function getRoleStage(role: LlmRole): TokenStage {
+  switch (role) {
+    case "summarizer":
+      return "chatContext";
+    case "classifierAndRouter":
+    case "clarifyAndRewriter":
+    case "router":
+      return "classifier";
+    case "planner":
+      return "planner";
+    case "executor":
+    case "query_builder":
+      return "react";
+    case "final":
+      return "finalLlm";
+    default:
+      return "total";
+  }
+}
+
 // Roles that require premium credits (more reasoning power)
 const PREMIUM_ROLES: Set<LlmRole> = new Set(["planner", "executor", "final"]);
 
 // Roles that use smaller/free models (lightweight tasks)
 const FREE_ROLES: Set<LlmRole> = new Set([
+  "summarizer",
+  "classifierAndRouter",
   "clarifyAndRewriter",
   "router",
   "query_builder",
@@ -226,18 +280,7 @@ export async function invokeRoleLlm({
   const logger = await getLogger();
   const messages = await toGatewayMessages(prompt);
   const usePremiumCredits = shouldUsePremiumCredits(role);
-
-  logSeparator(logger, `LLM CALL START | role=${role}`, {
-    requestId,
-    role,
-    messageCount: messages.length,
-    usePremiumCredits,
-  });
-  logSectionLine(logger, "CALLED ai-gateway /v1/chat", {
-    requestId,
-    role,
-    timeoutMs: config.aiGateway.timeoutMs,
-  });
+  const startTime = Date.now();
 
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
@@ -307,20 +350,23 @@ export async function invokeRoleLlm({
 
         const responseData = result.data;
         const usage = extractTokenUsage(responseData);
-
-        logSectionLine(logger, "RESULT ai-gateway /v1/chat", {
+        const durationMs = Date.now() - startTime;
+        const budget = getRoleBudget(role);
+        const stage = getRoleStage(role);
+        
+        // Log with token tracking
+        await logLlmCall(
           requestId,
           role,
-          contentLength: responseData.content?.length ?? 0,
-          attempts: responseData.attempts,
-          usage,
-          usePremiumCredits,
-          metadata: responseData.metadata,
-        });
-        logSeparator(logger, `LLM CALL END | role=${role}`, {
-          requestId,
-          role,
-        });
+          usage.promptTokens ?? 0,
+          usage.completionTokens ?? 0,
+          budget,
+          durationMs
+        );
+        
+        // Record for request summary
+        recordTokenUsage(requestId, stage, usage.promptTokens ?? 0, usage.completionTokens ?? 0, budget);
+        
         return responseData;
       } finally {
         clearTimeout(timeout);
@@ -335,18 +381,7 @@ export async function invokeRoleLlm({
       retryCount: Math.max(0, (response.attempts ?? 1) - 1),
     };
   } catch (error) {
-    logger.error(
-      {
-        requestId,
-        role,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      "ai-gateway invocation failed",
-    );
-    logSeparator(logger, `LLM CALL FAILED | role=${role}`, {
-      requestId,
-      role,
-    });
+    await logError(requestId, `LLM:${role}`, error instanceof Error ? error : String(error));
 
     // Re-throw rate limit errors as-is for proper handling upstream
     if (error instanceof RateLimitError) {
@@ -388,6 +423,7 @@ export async function invokeRoleLlmStreaming({
   const logger = await getLogger();
   const messages = await toGatewayMessages(prompt);
   const usePremiumCredits = shouldUsePremiumCredits(role);
+  const startTime = Date.now();
 
   const callMetrics: SpanAttributes = {
     ...spanAttributes,
@@ -476,12 +512,7 @@ export async function invokeRoleLlmStreaming({
 
               // Handle wrapped done message: { success: true, data: { done: true, ... } }
               if (json.success && json.data?.done) {
-                // Done message received, extract any metadata if needed
-                logSectionLine(logger, "RESULT ai-gateway stream done", {
-                  requestId,
-                  role,
-                  metadata: json.data.metadata,
-                });
+                // Done message received
               }
 
               // Handle legacy done format
@@ -518,18 +549,24 @@ export async function invokeRoleLlmStreaming({
           }
         }
 
-        logSectionLine(logger, "RESULT ai-gateway /v1/chat/stream", {
+        const durationMs = Date.now() - startTime;
+        const budget = getRoleBudget(role);
+        const stage = getRoleStage(role);
+        
+        // Log with token tracking (estimate tokens from content length)
+        const estimatedInputTokens = Math.ceil(messages.reduce((acc, m) => acc + m.content.length, 0) / 4);
+        const estimatedOutputTokens = Math.ceil(fullContent.length / 4);
+        await logLlmCall(
           requestId,
           role,
-          chunkCount,
-          contentLength: fullContent.length,
-        });
-        logSeparator(logger, `LLM STREAM END | role=${role}`, {
-          requestId,
-          role,
-        });
-
-
+          estimatedInputTokens,
+          estimatedOutputTokens,
+          budget,
+          durationMs
+        );
+        
+        // Record for request summary
+        recordTokenUsage(requestId, stage, estimatedInputTokens, estimatedOutputTokens, budget);
 
         return {
           response: {
@@ -543,18 +580,7 @@ export async function invokeRoleLlmStreaming({
       }
     });
   } catch (error) {
-    logger.error(
-      {
-        requestId,
-        role,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      "ai-gateway streaming invocation failed",
-    );
-    logSeparator(logger, `LLM STREAM FAILED | role=${role}`, {
-      requestId,
-      role,
-    });
+    await logError(requestId, `LLM:${role}:stream`, error instanceof Error ? error : String(error));
 
     // Re-throw rate limit errors as-is for proper handling upstream
     if (error instanceof RateLimitError) {

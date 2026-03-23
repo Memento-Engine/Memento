@@ -1,83 +1,47 @@
 ---
 name: multi-step-reasoning
-description: Guide for handling queries that require multiple dependent steps with LLM reasoning between them.
+description: Guide for multi-step queries with LLM reasoning between steps.
 tools: sql_execute, semantic_search
 ---
 
-# Multi-Step Reasoning Skill
+# Multi-Step Reasoning
 
-Handle complex queries that require multiple dependent steps with LLM reasoning between them.
-
-**IMPORTANT:** Every SQL query step MUST include `c.id as chunk_id` (or `MIN(c.id) as chunk_id` for aggregates). This is mandatory for citations.
-
-## When Multi-Step is Required
-
-**Single SQL can handle:**
+## When Single Step Suffices
 - Data dependencies (CTEs handle this)
 - Simple aggregations
 - Time-based sequences with known anchors
 
-**Multi-step with reasoning required when:**
+## When Multi-Step Required
 - LLM must interpret results before next query
-- Conditional logic ("if no results, try X")
-- Fuzzy concepts need resolution ("coding session" → actual times)
-- Current results inform what to query next
+- Conditional logic: "if no results, try X"
+- Fuzzy concepts need resolution: "coding session" → actual times
 
 ## Pattern 1: Fuzzy Concept Resolution
 
-**Query:** "Show me what I did during my coding sessions this week"
+"Show me what I did during coding sessions"
 
-"Coding session" is fuzzy. LLM must interpret.
-
-```
-Step 1: SQL - Find all VS Code/editor activity this week
-  → Returns: timestamps, app switches, durations
-
-Step 2: REASON - Identify session boundaries
-  → LLM analyzes: "User had 3 coding sessions:
-     - Monday 10am-12pm (2h)
-     - Tuesday 2pm-6pm (4h)  
-     - Wednesday 9am-1pm (4h)"
-
-Step 3: SQL - Get detailed activity for each session
-  → Uses session times from step 2
-```
+1. **Search**: Find VS Code/editor activity
+2. **Reason**: Identify session boundaries from timestamps
+3. **Search**: Get details for each session
 
 ## Pattern 2: Conditional Branching
 
-**Query:** "Find my most used app today, then show what I was doing in it yesterday"
+"Find my most used app today, then show yesterday's activity"
 
-```
-Step 1: SQL - Get app usage today
-  → Returns: VS Code (3h), Chrome (2h), Slack (1h)
-
-Step 2: REASON - Determine most used app
-  → If results empty: "No activity recorded today"
-  → If results: "Most used app is VS Code"
-
-Step 3: SQL - Query VS Code activity yesterday
-  → Uses "VS Code" from step 2
-```
-
-**Conditional detection:**
-- If step 1 returns 0 rows → different path
-- Cannot be a single CTE because decision requires interpretation
+1. **Search**: Get app usage today
+2. **Reason**: Extract most used app name
+3. **Search**: Query that app for yesterday
 
 ## Pattern 3: Semantic → SQL Chain
 
-**Query:** "Find where I learned about microservices, then show what I worked on after"
+"What did I work on after learning about microservices?"
 
-```
-Step 1: SEMANTIC - Find learning content about microservices
-  → Returns: chunk_ids, timestamps, similarity scores
+1. **Semantic**: Find microservices learning content
+2. **Reason**: Extract timestamp of learning moment
+3. **SQL**: Get activity after that timestamp
 
-Step 2: REASON - Identify the most relevant "learning moment"
-  → Analyzes content, picks best match
-  → "User was reading about microservices at 14:30 on Chrome"
-
-Step 3: SQL - Get activity after that time
-  → Uses timestamp from step 2
-```
+## Note
+Every SQL step MUST include `c.id as chunk_id` for citations.
 
 ## Pattern 4: Aggregation → Detail Drill-down
 

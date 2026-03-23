@@ -4,56 +4,42 @@ description: Full-text keyword search using FTS5. "Find mentions of error 404" "
 tools: sql_execute
 ---
 
-# FTS Search Skill
+# FTS Search
 
 Fast keyword-based search using SQLite FTS5 index.
 
 ## When to Use
-- User wants to find specific keywords or phrases
-- Exact text matching is needed
-- Searching for error messages, code snippets, specific terms
+- Specific keywords or phrases
+- Exact text matching
+- Error messages, code snippets, specific terms
 
-## Query Patterns
+## Pattern
 
-**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
+**Always include `c.id as chunk_id` for citations.**
 
-### Basic FTS Search
 ```sql
-SELECT 
-  c.id as chunk_id,  -- REQUIRED for citations
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
+SELECT c.id as chunk_id, f.captured_at, f.app_name, f.window_title,
   SUBSTR(c.text_content, 1, 150) as preview,
-  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
+  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
 JOIN frames f ON c.frame_id = f.id
-WHERE chunks_fts MATCH 'error'
-ORDER BY f.captured_at DESC
-LIMIT 20;
+WHERE chunks_fts MATCH 'search_term'
+ORDER BY f.captured_at DESC LIMIT 20;
 ```
 
-### Multi-term Search (AND)
-```sql
-SELECT 
-  c.id as chunk_id,
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
-  SUBSTR(c.text_content, 1, 150) as preview,
-  snippet(chunks_fts, 0, '>>>', '<<<', '...', 40) as matched_text
-FROM chunks_fts
-JOIN chunks c ON chunks_fts.rowid = c.id
-JOIN frames f ON c.frame_id = f.id
-WHERE chunks_fts MATCH 'authentication AND error'
-ORDER BY f.captured_at DESC
-LIMIT 20;
-```
+## FTS5 Syntax
+- `term1 term2` - implicit AND
+- `term1 AND term2` - explicit AND
+- `term1 OR term2` - either
+- `NOT term` - exclude
+- `"exact phrase"` - phrase match
+- `prefix*` - prefix match
+
+## Tips
+- Add app filter: `AND f.app_name IN ('VS Code', 'Cursor')`
+- Add time range: `AND date(f.captured_at) = date('now')`
+- If empty, try broader terms or semantic search
 
 ### Phrase Search (exact phrase)
 ```sql
