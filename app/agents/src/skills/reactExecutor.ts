@@ -4,7 +4,9 @@ import { getToolRegistry } from "../tools/registry";
 import { getLogger, logger, logSectionLine, logSeparator } from "../utils/logger";
 import { getConfig } from "../config/config";
 import { invokeRoleLlm, AuthHeaders } from "../llm/routing";
-import { getSkills, buildSkillContext } from "./loader";
+import { getSkills } from "./loader";
+import { Skill } from "./types";
+import { buildSkillSummaries, formatSkillsForPrompt } from "../planner/skillContext";
 import { SafeJsonParser } from "../utils/parser";
 import { runWithSpan } from "../telemetry/tracing";
 import { emitStepEvent } from "../utils/eventQueue";
@@ -384,35 +386,23 @@ async function executeCurrentDateTimeAction(
 // PROMPTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function buildSkillReferences(
-  skills: Map<string, { metadata: { name: string }; content: string }>,
-): string {
-  const sections: string[] = [];
-  const skillOrder = [
-    "skill-selection",
-    "fts-search",
-    "semantic-search",
-    "hybrid-search",
-    "web-search",
-    "temporal-query",
-    "aggregation-digest",
-  ];
-
-  for (const skillName of skillOrder) {
-    const skill = skills.get(skillName);
-    if (skill) {
-      sections.push(`### Reference Skill: ${skill.metadata.name}\n${skill.content}`);
-    }
-  }
-
-  return sections.join("\n\n");
+/**
+ * Build skill summaries (metadata only) for executor context.
+ * Full skill content is NOT injected - the action examples below provide enough guidance.
+ */
+function buildSkillSummariesForExecutor(skills: Map<string, Skill>): string {
+  const summaries = buildSkillSummaries(skills);
+  if (summaries.length === 0) return "";
+  
+  return formatSkillsForPrompt(summaries);
 }
 
 async function buildReActSystemPrompt(): Promise<string> {
   const skills = await getSkills();
   const schemaSkill = skills.get("database-schema");
   const schemaContext = schemaSkill?.content ?? "";
-  const skillReferences = buildSkillReferences(skills);
+  // Only inject skill summaries (metadata), not full content
+  const skillSummaries = buildSkillSummariesForExecutor(skills);
 
   return `You are a search agent with two retrieval modes:
 - Local screen activity search over the user's captured history
@@ -429,18 +419,18 @@ Choose the mode that best matches the user's request. Do not force local search 
 ## Database Schema
 ${schemaContext}
 
-## Query Patterns & Skills
-${skillReferences}
+## Available Skills (Summary)
+${skillSummaries}
 
 ${buildCompactAppAliasSection()}
 
 ## Critical Action Rule
-- The reference skills above are guidance only. Skill names such as "aggregation-digest", "fts-search", "semantic-search", "hybrid-search", and "temporal-query" are NOT valid action values.
+- The skills above are guidance for choosing query strategies. Skill names are NOT valid action values.
 - Your JSON "action" field must be exactly one of: ${VALID_REACT_ACTIONS.join(", ")}.
-- If a reference skill suggests an aggregation query, emit action "sql" with the SQL in the "sql" field.
-- If a reference skill suggests semantic search, emit action "semantic".
-- If a reference skill suggests hybrid search, emit action "hybrid".
-- If a reference skill suggests web search, emit action "webSearch".
+- For FTS/aggregation/temporal queries, emit action "sql" with the SQL in the "sql" field.
+- For semantic search, emit action "semantic".
+- For hybrid search, emit action "hybrid".
+- For web search, emit action "webSearch".
 
 ## Available Actions
 

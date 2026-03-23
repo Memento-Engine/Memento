@@ -179,8 +179,6 @@ function RenderMarkdownComponent({
     return preprocessCitations(normalized);
   }, [content]);
 
-  console.log("Part text", content);
-
   const mergedComponents = useMemo(
     () => ({
       ...components,
@@ -198,8 +196,6 @@ function RenderMarkdownComponent({
               return Number(parts.length > 1 ? parts[1] : parts[0]);
             });
 
-          console.log("chunkIds", chunkIds);
-          console.log("sourceMap", sourceMap);
           const citation = getCitationSummary(chunkIds, sourceMap);
 
           return (

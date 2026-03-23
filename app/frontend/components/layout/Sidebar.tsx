@@ -119,9 +119,12 @@ function LeftSidebar(): React.ReactElement {
     void refreshChats();
   }, [refreshChats]);
 
+  // Debounce refreshing chat list when session/messages change
   useEffect(() => {
-    // Keep sidebar list fresh when active session or message count changes.
-    void refreshChats();
+    const timeoutId = setTimeout(() => {
+      void refreshChats();
+    }, 300);
+    return () => clearTimeout(timeoutId);
   }, [chatId, messages.length, refreshChats]);
 
   const filteredSessions = chatSessions.filter((session) =>

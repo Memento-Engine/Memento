@@ -8,7 +8,7 @@ import { OpenRouterAdapter } from "@/providers/openrouter.adapter.ts";
 import type { LlmProviderAdapter } from "@/providers/provider.ts";
 import { RateLimiter, RateLimitError } from "@/rateLimiter.ts";
 import type { ChatRequest, ProviderName, UserRole, GatewayResponse } from "@/types.ts";
-import { UsageTracker, CREDIT_COSTS } from "@/usageTracker.ts";
+import { UsageTracker } from "@/usageTracker.ts";
 import unAuthorizedRouter from "@/routes/unAuthorized.ts";
 import authRouter from "@/routes/auth.ts";
 import { errorHandler } from "@/utils/errorHandler.ts";
@@ -129,6 +129,7 @@ async function startServer(): Promise<void> {
 
   app.post("/v1/chat", validateUserRequest, async (req: RequestContext, res: Response) => {
     try {
+      console.log("Request body", req.body);
       const parsed = chatSchema.parse(req.body);
       const deviceId = req.deviceId;
       const userId = req.user?.id;
@@ -161,17 +162,15 @@ async function startServer(): Promise<void> {
       // Estimate tokens for rate limiting
       const estimatedTokens = estimateConversationTokens(parsed.messages) + resolvedMaxTokens;
 
-      // Check rate limits
+      // Check rate limits (only RPM limiting now, quota exhaustion falls back to free models)
       const rateLimitResult = await rateLimiter.checkRateLimit({
         deviceId,
         userId,
         userRole,
         estimatedTokens,
-        isPremiumRequest: usePremiumModel,
       });
 
       if (!rateLimitResult.allowed) {
-        // Set retry-after header for rate limits
         if (rateLimitResult.retryAfterMs) {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
@@ -181,9 +180,7 @@ async function startServer(): Promise<void> {
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
-            type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
-              ? "daily_tokens"
-              : "requests_per_minute",
+            type: "requests_per_minute",
             tier: rateLimitResult.tier,
             retryAfterMs: rateLimitResult.retryAfterMs,
           },
@@ -224,12 +221,7 @@ async function startServer(): Promise<void> {
 
       const response = await modelRouter.chat(chatRequest);
 
-      // Only charge credits for expensive roles when using premium models
-      // Simple roles (router, clarifyAndRewriter, query_builder) use free models even in premium tier
-      const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
-      const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
-      const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
-
+      // Track usage - tokens are counted based on role (expensive roles count towards quota)
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -240,8 +232,6 @@ async function startServer(): Promise<void> {
         totalTokens: response.usage.total_tokens,
         role: parsed.role,
         fallbackUsed: response.fallback_used,
-        isPremiumRequest: usePremiumModel,
-        creditsCost,
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
 
@@ -253,8 +243,7 @@ async function startServer(): Promise<void> {
           ...responseWithoutModel,
           metadata: {
             tier: rateLimitResult.tier,
-            creditsUsed: creditsCost,
-            creditsRemaining: (rateLimitResult.remainingCredits ?? 0) - creditsCost,
+            quota: rateLimitResult.quota ?? null,
             contextShrinkApplied,
           },
         },
@@ -408,17 +397,15 @@ async function startServer(): Promise<void> {
       // Estimate tokens for rate limiting
       const estimatedTokens = estimateConversationTokens(parsed.messages) + resolvedMaxTokens;
 
-      // Check rate limits
+      // Check rate limits (only RPM limiting now, quota exhaustion falls back to free models)
       const rateLimitResult = await rateLimiter.checkRateLimit({
         deviceId,
         userId,
         userRole,
         estimatedTokens,
-        isPremiumRequest: usePremiumModel,
       });
 
       if (!rateLimitResult.allowed) {
-        // Set retry-after header for rate limits
         if (rateLimitResult.retryAfterMs) {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
@@ -428,9 +415,7 @@ async function startServer(): Promise<void> {
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
-            type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
-              ? "daily_tokens"
-              : "requests_per_minute",
+            type: "requests_per_minute",
             tier: rateLimitResult.tier,
             retryAfterMs: rateLimitResult.retryAfterMs,
           },
@@ -476,12 +461,7 @@ async function startServer(): Promise<void> {
         },
       );
 
-      // Only charge credits for expensive roles when using premium models
-      // Simple roles (router, clarifyAndRewriter, query_builder) use free models even in premium tier
-      const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
-      const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
-      const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
-
+      // Track usage - tokens are counted based on role (expensive roles count towards quota)
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -492,8 +472,6 @@ async function startServer(): Promise<void> {
         totalTokens: response.usage.total_tokens,
         role: parsed.role,
         fallbackUsed: response.fallback_used,
-        isPremiumRequest: usePremiumModel,
-        creditsCost,
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
 
@@ -509,8 +487,7 @@ async function startServer(): Promise<void> {
           usage: response.usage,
           metadata: {
             tier: rateLimitResult.tier,
-            creditsUsed: creditsCost,
-            creditsRemaining: (rateLimitResult.remainingCredits ?? 0) - creditsCost,
+            quota: rateLimitResult.quota ?? null,
             contextShrinkApplied,
           },
         },
@@ -532,7 +509,7 @@ async function startServer(): Promise<void> {
     }
   });
 
-  // Get usage stats and credits for the current user/device
+  // Get usage stats and quota for the current user/device
   app.get("/v1/usage", validateUserRequest, async (req: RequestContext, res: Response) => {
     try {
       const deviceId = req.deviceId;
@@ -540,7 +517,14 @@ async function startServer(): Promise<void> {
       const userRole = req.userRole as UserRole;
 
       const stats = await usageTracker.getUsageStats(deviceId, userId);
-      const tier = rateLimiter.resolveTier(userRole, stats.availableCredits > 0);
+      
+      // Get quota info for logged-in users
+      let quota = null;
+      if (userId && userRole === "logged") {
+        quota = await usageTracker.getQuotaInfo(userId, userRole);
+      }
+
+      const tier = rateLimiter.resolveTier(userRole, quota?.tokensRemaining ?? 0);
       const limits = config.limits[tier as keyof typeof config.limits];
 
       res.status(StatusCodes.OK).json({
@@ -554,16 +538,19 @@ async function startServer(): Promise<void> {
           deviceId,
           userRole,
           tier,
-          credits: {
-            total: userRole === "logged" ? 5 : 3, // LOGGED_IN_PREMIUM_CREDITS : ANONYMOUS_PREMIUM_CREDITS
-            used: stats.usedCredits,
-            available: stats.availableCredits,
-          },
+          // New quota-based system (percentage display)
+          quota: quota ? {
+            dailyQuota: quota.dailyQuota,
+            tokensUsed: quota.tokensUsed,
+            tokensRemaining: quota.tokensRemaining,
+            percentRemaining: quota.percentRemaining,
+            canMakeRequest: quota.canMakeRequest,
+            resetInMs: quota.resetInMs,
+          } : null,
           usage: {
             daily: {
               requests: stats.dailyRequests,
               tokens: stats.dailyTokens,
-              limit: limits.dailyTokenLimit,
             },
             minute: {
               requests: stats.minuteRequests,

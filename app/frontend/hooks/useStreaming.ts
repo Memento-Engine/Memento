@@ -126,11 +126,8 @@ export function useStreaming(
       const { chunk } = event.data;
 
       if (!chunk) {
-        console.warn("Received empty text chunk");
         return;
       }
-
-      console.log(`✅ Text chunk received: ${chunk.length} chars`);
 
       setMessages((prev) => {
         try {

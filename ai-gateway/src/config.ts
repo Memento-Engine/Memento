@@ -3,6 +3,22 @@ import { z } from "zod";
 import type { GatewayRole, ProviderName } from "@/types.ts";
 import { Router } from "express";
 dotenv.config();
+
+// ============ TOKEN QUOTA CONFIGURATION ============
+// Daily token quota for logged-in users (100% = this many tokens)
+// Easily adjustable based on cost monitoring
+export const DAILY_TOKEN_QUOTA = {
+  // Logged-in users get this quota per day
+  logged: parseInt(process.env.AI_GATEWAY_LOGGED_DAILY_QUOTA ?? "50000", 10),
+  // Anonymous users get a smaller quota
+  anonymous: parseInt(process.env.AI_GATEWAY_ANONYMOUS_DAILY_QUOTA ?? "10000", 10),
+} as const;
+
+// Roles that count towards quota (expensive models)
+export const QUOTA_COUNTED_ROLES = new Set(["planner", "executor", "final"]);
+
+// Roles that are free (cheap/free models)
+export const QUOTA_FREE_ROLES = new Set(["clarifyAndRewriter", "router", "query_builder"]);
 const providerSchema = z.object({
   name: z.enum(["openrouter", "openai", "anthropic", "gemini"]),
   baseUrl: z.string().url(),

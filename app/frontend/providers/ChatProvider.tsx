@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import * as Sentry from "@sentry/nextjs";
 import { isDesktopProductionMode } from "../lib/runtimeMode";
@@ -337,7 +337,6 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     try {
       const rows = await loadSessionMessages(targetSessionId, 100);
       const uiMessages = convertToUIMessages(rows);
-      console.log('UI MESSAGES', uiMessages);
       setMessages(uiMessages);
     } catch (error) {
       console.error("[ChatProvider] Failed to open chat session:", error);
@@ -349,7 +348,7 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     }
   }, [convertToUIMessages, pathname, router]);
 
-  const contextValue = {
+  const contextValue = useMemo(() => ({
     sendMessage,
     chatId: sessionId,
     isMessagesLoaded,
@@ -364,7 +363,22 @@ export default function ChatProvider({ children }: ChatProviderProps) {
     stepUpdates,
     searchQueries,
     sourceReview,
-  };
+  }), [
+    sendMessage,
+    sessionId,
+    isMessagesLoaded,
+    messages,
+    rewrite,
+    stopMessage,
+    startNewChat,
+    openChat,
+    isGenerating,
+    assistantStatus,
+    transitionStatus,
+    stepUpdates,
+    searchQueries,
+    sourceReview,
+  ]);
 
   return (
     <ChatContext.Provider value={contextValue}>

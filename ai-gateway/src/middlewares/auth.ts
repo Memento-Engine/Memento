@@ -5,16 +5,16 @@ import {
 } from "@memento/shared/errors.ts";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index.ts";
-import { user, premiumCredits, session } from "@/db/schema.ts";
+import { user, session } from "@/db/schema.ts";
 import { UserRole } from "@shared/types/gateway.ts";
 import { RequestContext } from "@/types/request-context.ts";
 import jwt from "jsonwebtoken";
-import { UsageTracker, LOGGED_IN_PREMIUM_CREDITS } from "@/usageTracker.ts";
+import { UsageTracker } from "@/usageTracker.ts";
 import { childLogger } from "@/utils/logger.ts";
 
 const log = childLogger("auth");
 
-// Initialize usage tracker for credit management
+// Initialize usage tracker for quota management
 const usageTracker = new UsageTracker();
 
 // Access token payload for authenticated users
@@ -154,23 +154,13 @@ export const validateUserRequest = async (
     req.userRole = "logged" as UserRole;
     req.deviceId = decoded.sessionId; // Use sessionId for tracking
 
-    // Get available premium credits for authenticated user
+    // Get available quota for authenticated user (used for model selection)
     try {
-      const credits = await db
-        .select()
-        .from(premiumCredits)
-        .where(eq(premiumCredits.userId, dbUser.id))
-        .limit(1);
-
-      if (credits.length) {
-        req.availablePremiumCredits = Math.max(0, credits[0].totalCredits - credits[0].usedCredits);
-      } else {
-        // Initialize credits for new user
-        await usageTracker.initializeCredits(decoded.sessionId, dbUser.id, "logged");
-        req.availablePremiumCredits = LOGGED_IN_PREMIUM_CREDITS;
-      }
+      const quotaInfo = await usageTracker.getQuotaInfo(dbUser.id, "logged");
+      // If user has remaining quota, they can use premium models
+      req.availablePremiumCredits = quotaInfo.canMakeRequest ? quotaInfo.tokensRemaining : 0;
     } catch (err) {
-      log.error({ err }, "Database error while fetching user credits");
+      log.error({ err }, "Error while fetching user quota");
       req.availablePremiumCredits = 0;
     }
 

@@ -70,7 +70,6 @@ function MessageItem({
   }
 
   const sourceList = Array.from(sourceMap.values());
-  console.log("Extracted sources from message parts:", sourceList);
   const messageSearchMode = getMessageSearchMode(message);
 
   // Get full text content for copy button

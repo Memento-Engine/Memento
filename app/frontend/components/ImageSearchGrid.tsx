@@ -1,5 +1,6 @@
 "use client"
 
+import React, { memo } from "react"
 import {
   Card,
   CardContent,
@@ -70,3 +71,5 @@ export default function ImageSearchGrid({ sources, onSelect }: ImageSearchGridPr
     </div>
   )
 }
+
+export default memo(ImageSearchGrid)

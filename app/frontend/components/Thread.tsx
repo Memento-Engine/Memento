@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import ChatInput from "./ChatInput";
 import type { SearchMode } from "./types";
@@ -33,6 +33,15 @@ function Thread(): React.ReactElement {
     },
     [sendMessage],
   );
+
+  // Stable callback for regenerate to avoid re-renders
+  const handleRegenerate = useCallback(
+    (messageId: string) => rewrite(messageId),
+    [rewrite],
+  );
+
+  // Stable no-op for edit since it's not implemented
+  const handleEdit = useCallback(() => {}, []);
 
   // Show loading bubble when last message is from user and we're waiting for assistant
   // Don't show if we're already streaming text (assistantStatus === "Streaming")
@@ -89,8 +98,8 @@ function Thread(): React.ReactElement {
               }
             >
               <MessageItem
-                onEdit={() => console.log("editing")}
-                onRegenerate={(messageId) => rewrite(messageId)}
+                onEdit={handleEdit}
+                onRegenerate={handleRegenerate}
                 message={m}
                 isFirstMessage={index === 0}
                 isLastMessage={index === messages.length - 1}

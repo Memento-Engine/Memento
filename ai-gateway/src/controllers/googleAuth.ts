@@ -14,7 +14,7 @@ import { StatusCodes } from "http-status-codes";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { db } from "@/db/index.ts";
-import { user, session, premiumCredits } from "@/db/schema.ts";
+import { user, session } from "@/db/schema.ts";
 import { and, desc, eq } from "drizzle-orm";
 import { childLogger } from "@/utils/logger.ts";
 import {
@@ -23,7 +23,6 @@ import {
   InternalServerError,
 } from "@memento/shared/errors.ts";
 import type { GatewayResponse } from "@memento/shared/types/gateway.ts";
-import { LOGGED_IN_PREMIUM_CREDITS } from "@/usageTracker.ts";
 
 const log = childLogger("googleAuth");
 
@@ -227,14 +226,7 @@ export async function googleLogin(req: Request, res: Response): Promise<Response
           updatedAt: new Date(),
         };
 
-        // Initialize premium credits for new user
-        await db.insert(premiumCredits).values({
-          userId: userId,
-          totalCredits: LOGGED_IN_PREMIUM_CREDITS,
-          usedCredits: 0,
-          lastRefillAt: new Date(),
-        });
-        log.info({ userId, credits: LOGGED_IN_PREMIUM_CREDITS }, "Initialized credits for new user");
+        log.info({ userId }, "Created new user");
       }
     }
 
@@ -442,14 +434,7 @@ export async function googleCodeExchange(req: Request, res: Response): Promise<R
           updatedAt: new Date(),
         };
 
-        // Initialize premium credits for new user
-        await db.insert(premiumCredits).values({
-          userId: userId,
-          totalCredits: LOGGED_IN_PREMIUM_CREDITS,
-          usedCredits: 0,
-          lastRefillAt: new Date(),
-        });
-        log.info({ userId, credits: LOGGED_IN_PREMIUM_CREDITS }, "Initialized credits for new user");
+        log.info({ userId }, "Created new user");
       }
     }
 

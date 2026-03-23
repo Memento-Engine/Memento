@@ -11,18 +11,18 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   "openai/gpt-4-turbo": 128_000,
   "openai/gpt-4": 8_192,
   "openai/gpt-3.5-turbo": 16_385,
-  
+
   // Anthropic models
   "anthropic/claude-3-opus": 200_000,
   "anthropic/claude-3-sonnet": 200_000,
   "anthropic/claude-3-haiku": 200_000,
   "anthropic/claude-3.5-sonnet": 200_000,
-  
+
   // Gemini models
   "google/gemini-pro": 32_000,
   "google/gemini-1.5-pro": 1_000_000,
   "google/gemini-1.5-flash": 1_000_000,
-  
+
   // Default fallback
   "default": 8_192,
 };
@@ -30,7 +30,7 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 /**
  * Shrinking strategies for context window management
  */
-export type ShrinkStrategy = 
+export type ShrinkStrategy =
   | "truncate_oldest"      // Remove oldest messages first
   | "truncate_middle"      // Keep system + recent, remove middle
   | "summarize_old"        // Summarize older messages (requires LLM call)
@@ -81,12 +81,12 @@ export function estimateConversationTokens(messages: ChatMessage[]): number {
  */
 export function getContextLimit(model?: string): number {
   if (!model) return MODEL_CONTEXT_LIMITS.default;
-  
+
   // Check exact match first
   if (MODEL_CONTEXT_LIMITS[model]) {
     return MODEL_CONTEXT_LIMITS[model];
   }
-  
+
   // Check partial matches
   const lowerModel = model.toLowerCase();
   for (const [key, limit] of Object.entries(MODEL_CONTEXT_LIMITS)) {
@@ -94,7 +94,7 @@ export function getContextLimit(model?: string): number {
       return limit;
     }
   }
-  
+
   return MODEL_CONTEXT_LIMITS.default;
 }
 
@@ -112,10 +112,10 @@ export function shrinkContextWindow(
     minMessages = 2,
     model,
   } = options;
-  
+
   const maxTokens = options.maxTokens || getContextLimit(model) - reserveForResponse;
   const originalTokens = estimateConversationTokens(messages);
-  
+
   // If already within limits, return as-is
   if (originalTokens <= maxTokens) {
     return {
@@ -126,9 +126,9 @@ export function shrinkContextWindow(
       strategy,
     };
   }
-  
+
   let shrunkMessages: ChatMessage[];
-  
+
   switch (strategy) {
     case "truncate_oldest":
       shrunkMessages = truncateOldest(messages, maxTokens, minMessages);
@@ -142,7 +142,7 @@ export function shrinkContextWindow(
     default:
       shrunkMessages = truncateOldest(messages, maxTokens, minMessages);
   }
-  
+
   return {
     messages: shrunkMessages,
     originalTokens,
@@ -163,20 +163,20 @@ function truncateOldest(
   if (messages.length <= minMessages) {
     return messages;
   }
-  
+
   // Always keep system message if present
   const systemMessages = messages.filter(m => m.role === "system");
   const nonSystemMessages = messages.filter(m => m.role !== "system");
-  
+
   // Start with system messages
   const result = [...systemMessages];
   let currentTokens = estimateConversationTokens(result);
-  
+
   // Add messages from newest to oldest
   for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
     const message = nonSystemMessages[i];
     const messageTokens = estimateTokens(message.content) + 4;
-    
+
     if (currentTokens + messageTokens <= maxTokens) {
       result.splice(systemMessages.length, 0, message);
       currentTokens += messageTokens;
@@ -184,7 +184,7 @@ function truncateOldest(
       break;
     }
   }
-  
+
   return result;
 }
 
@@ -199,29 +199,29 @@ function truncateMiddle(
   if (messages.length <= minMessages) {
     return messages;
   }
-  
+
   // Keep system messages
   const systemMessages = messages.filter(m => m.role === "system");
   const nonSystemMessages = messages.filter(m => m.role !== "system");
-  
+
   if (nonSystemMessages.length === 0) {
     return systemMessages;
   }
-  
+
   // Calculate budget
   const systemTokens = estimateConversationTokens(systemMessages);
   const remainingBudget = maxTokens - systemTokens;
-  
+
   // Reserve ~30% for the first message, 70% for recent
   const firstMessageBudget = Math.floor(remainingBudget * 0.3);
   const recentBudget = remainingBudget - firstMessageBudget;
-  
+
   const result = [...systemMessages];
-  
+
   // Add first user message (possibly truncated)
   const firstMessage = nonSystemMessages[0];
   const firstTokens = estimateTokens(firstMessage.content) + 4;
-  
+
   if (firstTokens <= firstMessageBudget) {
     result.push(firstMessage);
   } else {
@@ -232,15 +232,15 @@ function truncateMiddle(
     );
     result.push({ ...firstMessage, content: truncatedContent });
   }
-  
+
   // Add recent messages
   let recentTokens = 0;
   const recentMessages: ChatMessage[] = [];
-  
+
   for (let i = nonSystemMessages.length - 1; i >= 1; i--) {
     const message = nonSystemMessages[i];
     const messageTokens = estimateTokens(message.content) + 4;
-    
+
     if (recentTokens + messageTokens <= recentBudget) {
       recentMessages.unshift(message);
       recentTokens += messageTokens;
@@ -248,7 +248,7 @@ function truncateMiddle(
       break;
     }
   }
-  
+
   // Add indicator that messages were removed
   if (recentMessages.length < nonSystemMessages.length - 1) {
     const removedCount = nonSystemMessages.length - 1 - recentMessages.length;
@@ -257,9 +257,9 @@ function truncateMiddle(
       content: `[${removedCount} earlier messages removed for context management]`,
     });
   }
-  
+
   result.push(...recentMessages);
-  
+
   return result;
 }
 
@@ -274,15 +274,15 @@ function slidingWindow(
   // Always keep system messages
   const systemMessages = messages.filter(m => m.role === "system");
   const nonSystemMessages = messages.filter(m => m.role !== "system");
-  
+
   const result = [...systemMessages];
   let currentTokens = estimateConversationTokens(result);
-  
+
   // Add messages from newest to oldest
   for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
     const message = nonSystemMessages[i];
     const messageTokens = estimateTokens(message.content) + 4;
-    
+
     if (currentTokens + messageTokens <= maxTokens) {
       result.splice(systemMessages.length, 0, message);
       currentTokens += messageTokens;
@@ -290,7 +290,7 @@ function slidingWindow(
       break;
     }
   }
-  
+
   return result;
 }
 
@@ -301,19 +301,19 @@ function truncateText(text: string, maxChars: number): string {
   if (text.length <= maxChars) {
     return text;
   }
-  
+
   // Find a good break point (end of sentence or word)
   const truncated = text.slice(0, maxChars);
   const lastSentence = truncated.lastIndexOf(". ");
   const lastSpace = truncated.lastIndexOf(" ");
-  
+
   let breakPoint = maxChars;
   if (lastSentence > maxChars * 0.7) {
     breakPoint = lastSentence + 1;
   } else if (lastSpace > maxChars * 0.8) {
     breakPoint = lastSpace;
   }
-  
+
   return text.slice(0, breakPoint) + "...";
 }
 
@@ -325,6 +325,10 @@ export function needsShrinking(
   model?: string,
   reserveForResponse: number = 2048
 ): boolean {
+
+
+  console.log("Message.length", messages.length, 'model', model, "reserveForResponse", reserveForResponse);
+
   const maxTokens = getContextLimit(model) - reserveForResponse;
   const currentTokens = estimateConversationTokens(messages);
   return currentTokens > maxTokens;
@@ -336,7 +340,7 @@ export function needsShrinking(
 export function getContextStats(messages: ChatMessage[], model?: string) {
   const limit = getContextLimit(model);
   const used = estimateConversationTokens(messages);
-  
+
   return {
     limit,
     used,

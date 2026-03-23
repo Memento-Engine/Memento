@@ -1,5 +1,6 @@
 import type { GatewayConfig } from "@/config.ts";
-import { UsageTracker, CREDIT_COSTS, ANONYMOUS_PREMIUM_CREDITS, LOGGED_IN_PREMIUM_CREDITS } from "@/usageTracker.ts";
+import { DAILY_TOKEN_QUOTA } from "@/config.ts";
+import { UsageTracker, QuotaInfo } from "@/usageTracker.ts";
 import type { UserRole, UserTier } from "@/types.ts";
 
 export type { UserTier };
@@ -8,7 +9,7 @@ export type { UserTier };
 export class RateLimitError extends Error {
   constructor(
     message: string,
-    public readonly type: "requests_per_minute" | "daily_tokens" | "no_credits",
+    public readonly type: "requests_per_minute" | "daily_tokens" | "quota_exceeded",
     public readonly tier: UserTier,
     public readonly retryAfterMs?: number
   ) {
@@ -27,8 +28,8 @@ export interface RateLimitResult {
   reason?: string;
   tier: UserTier;
   remainingRequests?: number;
-  remainingTokens?: number;
-  remainingCredits?: number;
+  /** Quota info for the user */
+  quota?: QuotaInfo;
   retryAfterMs?: number;
 }
 
@@ -37,7 +38,6 @@ export interface EnforceOptions {
   userId?: string;
   userRole: UserRole;
   estimatedTokens: number;
-  isPremiumRequest?: boolean;
   now?: number;
 }
 
@@ -48,25 +48,18 @@ export class RateLimiter {
   ) {}
 
   /**
-   * Resolve user tier based on role and available credits
+   * Resolve user tier based on role and quota remaining
+   * Premium tier = logged in user with quota remaining
    */
-  resolveTier(userRole: UserRole, hasCredits: boolean): UserTier {
-    // Premium tier if user is logged in AND has credits
-    if (userRole === "logged" && hasCredits) {
+  resolveTier(userRole: UserRole, quotaRemaining: number): UserTier {
+    if (userRole === "logged" && quotaRemaining > 0) {
       return "premium";
     }
     return "free";
   }
 
   /**
-   * Get credit allowance based on user role
-   */
-  getCreditAllowance(userRole: UserRole): number {
-    return userRole === "logged" ? LOGGED_IN_PREMIUM_CREDITS : ANONYMOUS_PREMIUM_CREDITS;
-  }
-
-  /**
-   * Check if a request should be allowed (async version with DB)
+   * Check if a request should be allowed
    */
   async checkRateLimit(options: EnforceOptions): Promise<RateLimitResult> {
     const {
@@ -74,14 +67,19 @@ export class RateLimiter {
       userId,
       userRole,
       estimatedTokens,
-      isPremiumRequest = false,
       now = Date.now(),
     } = options;
 
     try {
       const stats = await this.usageTracker.getUsageStats(deviceId, userId);
-      const hasCredits = stats.availableCredits > 0;
-      const tier = this.resolveTier(userRole, hasCredits);
+      
+      // Get quota info for logged-in users
+      let quota: QuotaInfo | undefined;
+      if (userId && userRole === "logged") {
+        quota = await this.usageTracker.getQuotaInfo(userId, userRole);
+      }
+
+      const tier = this.resolveTier(userRole, quota?.tokensRemaining ?? 0);
       const limits = this.config.limits[tier];
 
       // Check requests per minute
@@ -89,41 +87,23 @@ export class RateLimiter {
         const retryAfterMs = 60_000 - (now % 60_000);
         return {
           allowed: false,
-          reason: `Rate limit exceeded: ${limits.requestsPerMinute} requests/minute for ${tier}`,
+          reason: `Rate limit exceeded: ${limits.requestsPerMinute} requests/minute`,
           tier,
           remainingRequests: 0,
+          quota,
           retryAfterMs,
         };
       }
 
-      // Check daily token limit
-      if (stats.dailyTokens + estimatedTokens > limits.dailyTokenLimit) {
-        return {
-          allowed: false,
-          reason: `Token limit exceeded: ${limits.dailyTokenLimit} daily tokens for ${tier} (used ${stats.dailyTokens})`,
-          tier,
-          remainingTokens: Math.max(0, limits.dailyTokenLimit - stats.dailyTokens),
-        };
-      }
-
-      // Check premium credits if needed for premium request
-      if (isPremiumRequest && stats.availableCredits < CREDIT_COSTS.premium) {
-        return {
-          allowed: false,
-          reason: `No premium credits available. You have ${stats.availableCredits} credits.`,
-          tier,
-          remainingCredits: stats.availableCredits,
-        };
-      }
+      // NOTE: We don't block on quota exhaustion - instead, the server will
+      // fallback to free models gracefully. The quota info is passed through
+      // so the server knows whether to use premium or free models.
 
       return {
         allowed: true,
         tier,
         remainingRequests: limits.requestsPerMinute - stats.minuteRequests - 1,
-        remainingTokens: limits.dailyTokenLimit - stats.dailyTokens - estimatedTokens,
-        remainingCredits: isPremiumRequest 
-          ? stats.availableCredits - CREDIT_COSTS.premium 
-          : stats.availableCredits,
+        quota,
       };
     } catch (error) {
       console.error("Error checking rate limit:", error);
@@ -137,28 +117,16 @@ export class RateLimiter {
    * @deprecated Use checkRateLimit() instead for proper tier resolution
    */
   enforce(userId: string, estimatedTokens: number, now: number = Date.now()): void {
-    // Legacy method defaults to free tier since we don't have user role context
     const tier: UserTier = "free";
     const limits = this.config.limits[tier];
 
     const requestCount = this.usageTracker.getUserRequestCountInLastMinute(userId, now);
     if (requestCount >= limits.requestsPerMinute) {
       throw new RateLimitError(
-        `Rate limit exceeded: ${limits.requestsPerMinute} requests/minute for ${tier}`,
+        `Rate limit exceeded: ${limits.requestsPerMinute} requests/minute`,
         "requests_per_minute",
         tier,
         60_000 - (now % 60_000)
-      );
-    }
-
-    const dayStart = startOfUtcDay(now);
-    const usedToday = this.usageTracker.getUserDailyTokens(userId, dayStart);
-
-    if (usedToday + estimatedTokens > limits.dailyTokenLimit) {
-      throw new RateLimitError(
-        `Token limit exceeded: ${limits.dailyTokenLimit} daily tokens for ${tier} (used ${usedToday})`,
-        "daily_tokens",
-        tier
       );
     }
   }
@@ -172,7 +140,6 @@ export class RateLimiter {
     estimatedTokens: number,
     now: number
   ): RateLimitResult {
-    // For in-memory, assume no premium credits available
     const tier: UserTier = "free";
     const limits = this.config.limits[tier];
 
@@ -180,22 +147,10 @@ export class RateLimiter {
     if (requestCount >= limits.requestsPerMinute) {
       return {
         allowed: false,
-        reason: `Rate limit exceeded: ${limits.requestsPerMinute} requests/minute for ${tier}`,
+        reason: `Rate limit exceeded: ${limits.requestsPerMinute} requests/minute`,
         tier,
         remainingRequests: 0,
         retryAfterMs: 60_000,
-      };
-    }
-
-    const dayStart = startOfUtcDay(now);
-    const usedToday = this.usageTracker.getUserDailyTokens(userId, dayStart);
-
-    if (usedToday + estimatedTokens > limits.dailyTokenLimit) {
-      return {
-        allowed: false,
-        reason: `Token limit exceeded: ${limits.dailyTokenLimit} daily tokens for ${tier} (used ${usedToday})`,
-        tier,
-        remainingTokens: Math.max(0, limits.dailyTokenLimit - usedToday),
       };
     }
 
@@ -203,9 +158,6 @@ export class RateLimiter {
       allowed: true,
       tier,
       remainingRequests: limits.requestsPerMinute - requestCount - 1,
-      remainingTokens: limits.dailyTokenLimit - usedToday - estimatedTokens,
-      remainingCredits: 0,
     };
   }
 }
-

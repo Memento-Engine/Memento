@@ -1,6 +1,6 @@
 "use client";
 
-import { Sparkles, Zap, Crown } from "lucide-react";
+import { Sparkles, Zap, Clock } from "lucide-react";
 import useCredits from "@/hooks/useCredits";
 import { cn } from "@/lib/utils";
 import {
@@ -15,8 +15,20 @@ interface PremiumCreditsProps {
   className?: string;
 }
 
+/**
+ * Format milliseconds to human readable time (e.g., "6h 23m")
+ */
+function formatResetTime(ms: number): string {
+  const hours = Math.floor(ms / (1000 * 60 * 60));
+  const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  return `${minutes}m`;
+}
+
 export function PremiumCredits({ collapsed = false, className }: PremiumCreditsProps) {
-  const { credits, tier, userRole, isLoading, hasPremiumCredits } = useCredits();
+  const { quota, tier, userRole, isLoading, hasQuotaRemaining } = useCredits();
 
   if (isLoading) {
     return (
@@ -27,21 +39,44 @@ export function PremiumCredits({ collapsed = false, className }: PremiumCreditsP
     );
   }
 
+  // For anonymous users, show login prompt
+  if (userRole === "anonymous" || !quota) {
+    return (
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors",
+          "border-muted bg-muted/50",
+          collapsed && "justify-center px-2",
+          className
+        )}
+      >
+        <Zap className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {!collapsed && (
+          <span className="text-xs text-muted-foreground">
+            Sign in for daily quota
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  const percentDisplay = Math.max(0, quota.percentRemaining);
+
   const creditDisplay = (
     <div
       className={cn(
         "flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors",
-        hasPremiumCredits
+        hasQuotaRemaining
           ? "border-amber-500/30 bg-amber-500/10"
-          : "border-muted bg-muted/50",
+          : "border-red-500/30 bg-red-500/10",
         collapsed && "justify-center px-2",
         className
       )}
     >
-      {hasPremiumCredits ? (
+      {hasQuotaRemaining ? (
         <Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
       ) : (
-        <Zap className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <Clock className="h-4 w-4 shrink-0 text-red-500" />
       )}
       
       {!collapsed && (
@@ -50,17 +85,18 @@ export function PremiumCredits({ collapsed = false, className }: PremiumCreditsP
             <span
               className={cn(
                 "text-sm font-medium",
-                hasPremiumCredits ? "text-amber-500" : "text-muted-foreground"
+                hasQuotaRemaining ? "text-amber-500" : "text-red-500"
               )}
             >
-              {credits.available}
+              {percentDisplay}%
             </span>
             <span className="text-xs text-muted-foreground">
-              / {credits.total} credits
+              daily quota
             </span>
           </div>
-          <span className="text-[10px] text-muted-foreground capitalize">
-            {userRole === "logged" ? "Pro" : "Free"} tier
+          <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            Resets in {formatResetTime(quota.resetInMs)}
           </span>
         </div>
       )}
@@ -74,17 +110,17 @@ export function PremiumCredits({ collapsed = false, className }: PremiumCreditsP
           <TooltipTrigger asChild>{creditDisplay}</TooltipTrigger>
           <TooltipContent side="right" className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              {hasPremiumCredits ? (
+              {hasQuotaRemaining ? (
                 <Sparkles className="h-3 w-3 text-amber-500" />
               ) : (
-                <Zap className="h-3 w-3 text-muted-foreground" />
+                <Clock className="h-3 w-3 text-red-500" />
               )}
               <span className="font-medium">
-                {credits.available} / {credits.total} Premium Credits
+                {percentDisplay}% daily quota remaining
               </span>
             </div>
-            <span className="text-xs text-muted-foreground capitalize">
-              {userRole === "logged" ? "Logged in" : "Anonymous"} • {tier} tier
+            <span className="text-xs text-muted-foreground">
+              Resets in {formatResetTime(quota.resetInMs)}
             </span>
           </TooltipContent>
         </Tooltip>
@@ -97,11 +133,13 @@ export function PremiumCredits({ collapsed = false, className }: PremiumCreditsP
 
 // Compact badge version for showing in headers/footers
 export function PremiumCreditsBadge({ className }: { className?: string }) {
-  const { credits, hasPremiumCredits, isLoading } = useCredits();
+  const { quota, hasQuotaRemaining, isLoading, userRole } = useCredits();
 
-  if (isLoading) {
+  if (isLoading || userRole === "anonymous" || !quota) {
     return null;
   }
+
+  const percentDisplay = Math.max(0, quota.percentRemaining);
 
   return (
     <TooltipProvider>
@@ -110,23 +148,26 @@ export function PremiumCreditsBadge({ className }: { className?: string }) {
           <div
             className={cn(
               "flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-              hasPremiumCredits
+              hasQuotaRemaining
                 ? "bg-amber-500/10 text-amber-500"
-                : "bg-muted text-muted-foreground",
+                : "bg-red-500/10 text-red-500",
               className
             )}
           >
-            {hasPremiumCredits ? (
-              <Crown className="h-3 w-3" />
+            {hasQuotaRemaining ? (
+              <Sparkles className="h-3 w-3" />
             ) : (
-              <Zap className="h-3 w-3" />
+              <Clock className="h-3 w-3" />
             )}
-            <span>{credits.available}</span>
+            <span>{percentDisplay}%</span>
           </div>
         </TooltipTrigger>
         <TooltipContent>
           <p>
-            {credits.available} premium credit{credits.available !== 1 ? "s" : ""} remaining
+            {percentDisplay}% daily quota remaining
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Resets in {formatResetTime(quota.resetInMs)}
           </p>
         </TooltipContent>
       </Tooltip>
