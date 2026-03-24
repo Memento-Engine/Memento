@@ -8,30 +8,11 @@ WORKDIR /app
 
 # Copy package files
 COPY ai-gateway/package*.json ./ai-gateway/
-COPY shared/package*.json ./shared/
+COPY shared/package*.json ./shared/ 2>/dev/null || true
 
 # Install dependencies
 WORKDIR /app/ai-gateway
 RUN npm ci --only=production && npm cache clean --force
-
-# Development dependencies for build (if needed)
-FROM base AS builder
-WORKDIR /app
-
-# Copy package files
-COPY ai-gateway/package*.json ./ai-gateway/
-COPY shared/package*.json ./shared/
-
-# Install all dependencies (including dev)
-WORKDIR /app/ai-gateway
-RUN npm ci
-
-# Copy source code
-WORKDIR /app
-COPY ai-gateway ./ai-gateway
-COPY shared ./shared
-
-# The application uses tsx to run TypeScript directly, no build step needed
 
 # Production image
 FROM base AS runner
@@ -46,9 +27,10 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 aigateway
 
-# Copy dependencies and source
+# Copy dependencies
 COPY --from=deps --chown=aigateway:nodejs /app/ai-gateway/node_modules ./ai-gateway/node_modules
-COPY --from=deps --chown=aigateway:nodejs /app/shared/node_modules ./shared/node_modules
+
+# Copy source code
 COPY --chown=aigateway:nodejs ai-gateway ./ai-gateway
 COPY --chown=aigateway:nodejs shared ./shared
 
