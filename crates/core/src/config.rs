@@ -133,6 +133,11 @@ pub fn cache_dir() -> PathBuf {
     data_dir().join("cache")
 }
 
+/// temp/ - temporary files for downloads and staging (in shared directory)
+pub fn temp_dir() -> PathBuf {
+    shared_dir().join("temp")
+}
+
 // =============================================================================
 // Logging (in shared directory for service access)
 // =============================================================================

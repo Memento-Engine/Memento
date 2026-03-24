@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 
 interface LocalModelsStatus {
   embedding_exists: boolean;
-  cross_encoder_exists: boolean;
   models_path: string;
 }
 
@@ -25,7 +24,7 @@ export default function OnboardingProvider({
   async function isOnboardingCompleted(): Promise<boolean> {
     try {
       const status = await invoke<LocalModelsStatus>("get_local_models_status");
-      const completed = status.embedding_exists && status.cross_encoder_exists;
+      const completed = status.embedding_exists;
 
       console.log("Local model status:", status);
       console.log("Onboarding completed:", completed, "Path:", status.models_path);

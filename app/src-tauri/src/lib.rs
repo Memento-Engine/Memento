@@ -238,20 +238,9 @@ fn embedding_model_exists() -> bool {
     )
 }
 
-fn cross_encoder_model_exists() -> bool {
-    has_model_dir_with_prefix(
-        &get_models_dir(),
-        &[
-            "models--jinaai--jina-reranker-v1-turbo-en",
-            "fast-jina-reranker-v1-turbo-en",
-        ],
-    )
-}
-
 #[derive(serde::Serialize)]
 struct LocalModelsStatus {
     embedding_exists: bool,
-    cross_encoder_exists: bool,
     models_path: String,
 }
 
@@ -644,7 +633,6 @@ fn get_local_models_status() -> Result<LocalModelsStatus, String> {
 
     Ok(LocalModelsStatus {
         embedding_exists: embedding_model_exists(),
-        cross_encoder_exists: cross_encoder_model_exists(),
         models_path: models_dir.to_string_lossy().to_string(),
     })
 }

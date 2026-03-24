@@ -22,7 +22,7 @@ use std::borrow::Cow;
 
 use crate::{
     core::{DaemonConfig, DaemonLifecycle, ShutdownController, set_process_priority},
-    embedding::{AsyncEmbeddingModel, AsyncCrossEncoder, ModelStateManager, start_model_watcher, start_periodic_validation},
+    embedding::{AsyncEmbeddingModel, ModelStateManager, start_model_watcher, start_periodic_validation},
     ocr::engine::WindowsOcrEngine,
     pipeline::{
         capture::continuous_capture_v2,
@@ -208,17 +208,6 @@ async fn run_standalone() {
         }
     };
     
-    let cross_encoder = match AsyncCrossEncoder::new() {
-        Ok(model) => {
-            info!("Cross-encoder initialized");
-            Some(Arc::new(model))
-        }
-        Err(e) => {
-            warn!("Cross-encoder not available: {:?}. Reranking will be disabled.", e);
-            None
-        }
-    };
-    
     // 10. Initialize database
     let db_path = database_path();
     let db_path_str = match db_path.to_str() {
@@ -288,7 +277,6 @@ async fn run_standalone() {
     let app_state = Arc::new(AppState::new(
         Arc::clone(&db),
         embedding_model.clone(),
-        cross_encoder.clone(),
         scheduler.clone(),
         Arc::clone(&privacy_manager),
         model_state,
@@ -500,17 +488,6 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
         }
     };
     
-    let cross_encoder = match AsyncCrossEncoder::new() {
-        Ok(model) => {
-            info!("Cross-encoder initialized");
-            Some(Arc::new(model))
-        }
-        Err(e) => {
-            warn!("Cross-encoder not available: {:?}. Reranking will be disabled.", e);
-            None
-        }
-    };
-    
     // 9. Initialize database
     let db_path = database_path();
     let db_path_str = match db_path.to_str() {
@@ -580,7 +557,6 @@ pub async fn run_daemon_logic(shutdown: Arc<ShutdownController>) -> Result<(), B
     let app_state = Arc::new(AppState::new(
         Arc::clone(&db),
         embedding_model.clone(),
-        cross_encoder.clone(),
         scheduler.clone(),
         Arc::clone(&privacy_manager),
         model_state,

@@ -24,8 +24,16 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { MementoLogo } from "@/components/Logo";
 import useOnboarding from "@/hooks/useOnboarding";
-import { checkModelsStatus, downloadModelsWithProgress, ModelDownloadProgress } from "@/api/models";
-import { checkSystemRequirements, RequirementCheck, SystemRequirementsResponse } from "@/api/system";
+import {
+  checkModelsStatus,
+  downloadModelsWithProgress,
+  ModelDownloadProgress,
+} from "@/api/models";
+import {
+  checkSystemRequirements,
+  RequirementCheck,
+  SystemRequirementsResponse,
+} from "@/api/system";
 import { cn } from "@/lib/utils";
 import useAuth from "@/hooks/useAuth";
 import { isDesktopProductionMode } from "@/lib/runtimeMode";
@@ -68,34 +76,41 @@ export default function OnboardingPage() {
   // Step 0: Welcome (always completable)
   // Step 1: Daemon Startup (must wait for daemon)
   // Step 2: System Requirements Check (must pass all checks)
-  // Step 3: Privacy (always completable)  
+  // Step 3: Privacy (always completable)
   // Step 4: Model Download (must complete download)
   // Step 5: Login/Skip (final step)
   const [stepStates, setStepStates] = useState<StepState[]>([
-    { completed: false, canProceed: true },  // Welcome
+    { completed: false, canProceed: true }, // Welcome
     { completed: false, canProceed: false }, // Daemon Startup
     { completed: false, canProceed: false }, // System Requirements
-    { completed: false, canProceed: true },  // Privacy
+    { completed: false, canProceed: true }, // Privacy
     { completed: false, canProceed: false }, // Model Download
-    { completed: false, canProceed: true },  // Login/Skip
+    { completed: false, canProceed: true }, // Login/Skip
   ]);
 
   // Mark a step as completed and allow proceeding
   const completeStep = useCallback((stepIndex: number) => {
-    setStepStates(prev => {
+    setStepStates((prev) => {
       const newStates = [...prev];
-      newStates[stepIndex] = { ...newStates[stepIndex], completed: true, canProceed: true };
+      newStates[stepIndex] = {
+        ...newStates[stepIndex],
+        completed: true,
+        canProceed: true,
+      };
       return newStates;
     });
   }, []);
 
   // Handler to go to next step (restricted by completion)
-  const goToNextStep = useCallback((fromStep: number) => {
-    if (stepStates[fromStep].canProceed) {
-      completeStep(fromStep);
-      setCurrentStep(fromStep + 1);
-    }
-  }, [stepStates, completeStep, setCurrentStep]);
+  const goToNextStep = useCallback(
+    (fromStep: number) => {
+      if (stepStates[fromStep].canProceed) {
+        completeStep(fromStep);
+        setCurrentStep(fromStep + 1);
+      }
+    },
+    [stepStates, completeStep, setCurrentStep],
+  );
 
   const handleModelsDownloaded = useCallback(() => {
     completeStep(4);
@@ -150,18 +165,12 @@ export default function OnboardingPage() {
 
         {currentStep === 5 && (
           <SlideWrapper key="login">
-            <LoginSlide 
-              onComplete={() => setIsOnboardingComplete(true)} 
-            />
+            <LoginSlide onComplete={() => setIsOnboardingComplete(true)} />
           </SlideWrapper>
         )}
       </AnimatePresence>
 
-      <ProgressDots 
-        step={currentStep} 
-        total={6} 
-        stepStates={stepStates}
-      />
+      <ProgressDots step={currentStep} total={6} stepStates={stepStates} />
     </div>
   );
 }
@@ -196,12 +205,12 @@ function ProgressDots({
           key={i}
           animate={{
             width: i === step ? 28 : 10,
-            opacity: stepStates[i]?.completed ? 1 : (i === step ? 1 : 0.4),
+            opacity: stepStates[i]?.completed ? 1 : i === step ? 1 : 0.4,
           }}
           transition={{ duration: 0.25 }}
           className={cn(
             "h-2 rounded-full",
-            stepStates[i]?.completed ? "bg-green-500" : "bg-primary"
+            stepStates[i]?.completed ? "bg-green-500" : "bg-primary",
           )}
         />
       ))}
@@ -238,7 +247,7 @@ function WelcomeSlide({ next }: { next: () => void }) {
     }, 400);
   };
 
-return (
+  return (
     <div className="min-h-screen flex items-center justify-center p-6 sm:p-12">
       <motion.div
         variants={container}
@@ -246,8 +255,10 @@ return (
         animate="show"
         className="relative z-10 w-full max-w-3xl flex flex-col items-center text-center"
       >
-        <motion.div variants={item} className="space-y-10 flex flex-col items-center">
-          
+        <motion.div
+          variants={item}
+          className="space-y-10 flex flex-col items-center"
+        >
           <div className="flex items-center justify-center gap-3">
             <MementoLogo size={60} />
             <span className="text-2xl font-semibold tracking-tight">
@@ -282,7 +293,6 @@ return (
               <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
             )}
           </Button>
-
         </motion.div>
       </motion.div>
     </div>
@@ -338,12 +348,19 @@ function PrivacySlide({ onContinue }: { onContinue: () => void }) {
   );
 }
 
-type DownloadState = "checking" | "ready" | "downloading" | "completed" | "error";
+type DownloadState =
+  | "checking"
+  | "ready"
+  | "downloading"
+  | "completed"
+  | "error";
 
 function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
   const [downloadState, setDownloadState] = useState<DownloadState>("checking");
   const [progress, setProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState("Checking model status...");
+  const [statusMessage, setStatusMessage] = useState(
+    "Checking model status...",
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Check if models are already downloaded on mount
@@ -351,7 +368,7 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
     const checkStatus = async () => {
       try {
         const status = await checkModelsStatus();
-        
+
         switch (status.status) {
           case "ready":
             setDownloadState("completed");
@@ -361,27 +378,38 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
           case "downloaded_not_loaded":
             // Models exist but need restart - treat as complete for onboarding
             setDownloadState("completed");
-            setStatusMessage("Models downloaded. They'll be loaded when the app restarts.");
+            setStatusMessage(
+              "Models downloaded. They'll be loaded when the app restarts.",
+            );
             setProgress(100);
             break;
           case "partial_download":
             setDownloadState("ready");
-            setStatusMessage("Some models are missing. Please complete the download.");
+            setStatusMessage(
+              "Some models are missing. Please complete the download.",
+            );
             break;
           case "corrupted":
             setDownloadState("error");
-            setErrorMessage("Model files appear corrupted. Please re-download.");
+            setErrorMessage(
+              "Model files appear corrupted. Please re-download.",
+            );
             break;
           case "not_downloaded":
           default:
             setDownloadState("ready");
-            setStatusMessage(status.message || "AI models need to be downloaded for local processing.");
+            setStatusMessage(
+              status.message ||
+                "AI models need to be downloaded for local processing.",
+            );
             break;
         }
       } catch (err) {
         // If daemon is not running, we still need to show the download option
         setDownloadState("ready");
-        setStatusMessage("AI models need to be downloaded for local processing.");
+        setStatusMessage(
+          "AI models need to be downloaded for local processing.",
+        );
       }
     };
 
@@ -396,13 +424,16 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
 
     const cleanup = downloadModelsWithProgress(
       (progressData: ModelDownloadProgress) => {
-        setProgress(Math.round(progressData.progress * 100));
+        setProgress(
+          progressData.progress_percent ??
+            Math.round(progressData.progress * 100),
+        );
         setStatusMessage(progressData.message);
-        
+
         if (progressData.completed) {
           setDownloadState("completed");
         }
-        
+
         if (progressData.error) {
           setDownloadState("error");
           setErrorMessage(progressData.error);
@@ -417,7 +448,7 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
         setDownloadState("error");
         setErrorMessage(error);
         setStatusMessage("Download failed");
-      }
+      },
     );
 
     // Cleanup on unmount
@@ -441,19 +472,19 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
       </div>
 
       <h1 className="text-3xl sm:text-4xl font-bold">
-        {downloadState === "completed" 
-          ? "Models Ready!" 
+        {downloadState === "completed"
+          ? "Models Ready!"
           : downloadState === "error"
-          ? "Download Failed"
-          : "Download AI Models"}
+            ? "Download Failed"
+            : "Download AI Models"}
       </h1>
 
       <p className="text-muted-foreground text-lg">
         {downloadState === "completed"
           ? "Your AI models are ready for local processing."
           : downloadState === "error"
-          ? "There was a problem downloading the models."
-          : "Memento uses local AI models to process your data privately on your device."}
+            ? "There was a problem downloading the models."
+            : "Memento uses local AI models to process your data privately on your device."}
       </p>
 
       {(downloadState === "downloading" || downloadState === "completed") && (
@@ -471,13 +502,9 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
 
       <div className="flex flex-col items-center gap-4 pt-4">
         {downloadState === "ready" && (
-          <Button
-            size="lg"
-            onClick={startDownload}
-            className="cursor-pointer"
-          >
+          <Button size="lg" onClick={startDownload} className="cursor-pointer">
             <Download className="mr-2 h-5 w-5" />
-            Download Models (~500 MB)
+            Download Embedding Model (~90 MB)
           </Button>
         )}
 
@@ -494,11 +521,7 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
         )}
 
         {downloadState === "completed" && (
-          <Button
-            size="lg"
-            onClick={onComplete}
-            className="cursor-pointer"
-          >
+          <Button size="lg" onClick={onComplete} className="cursor-pointer">
             Continue
             <ArrowRight className="ml-2 h-5 w-5" />
           </Button>
@@ -519,11 +542,7 @@ function ModelDownloadSlide({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-function LoginSlide({
-  onComplete,
-}: {
-  onComplete: () => void;
-}) {
+function LoginSlide({ onComplete }: { onComplete: () => void }) {
   const { loginWithGoogle, isAuthenticated, isLoading } = useAuth();
 
   // If user successfully authenticates, complete onboarding
@@ -590,7 +609,9 @@ type DaemonState = "starting" | "connecting" | "ready" | "error";
 
 function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
   const [daemonState, setDaemonState] = useState<DaemonState>("starting");
-  const [statusMessage, setStatusMessage] = useState("Starting Memento services...");
+  const [statusMessage, setStatusMessage] = useState(
+    "Starting Memento services...",
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const hasStarted = useRef(false);
 
@@ -604,15 +625,11 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
         console.log("Starting the daemon");
         setDaemonState("starting");
         setStatusMessage("Starting Memento services...");
-        
+
         console.log("Invoking the daemon");
         await invoke("start_daemon", { isDev: !isDesktopProductionMode() });
-        
-
 
         console.log("Waiting for daemon to be healthy");
-
-
 
         setDaemonState("connecting");
         setStatusMessage("Preparing your experience...");
@@ -639,10 +656,10 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
     setDaemonState("starting");
     setErrorMessage(null);
     setStatusMessage("Starting Memento services...");
-    
+
     // Trigger the effect again
     hasStarted.current = true;
-    
+
     try {
       await invoke("start_daemon", { isDev: !isDesktopProductionMode() });
       setDaemonState("connecting");
@@ -668,7 +685,10 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
         ) : (
           <div className="relative">
             <Cpu className="text-primary" size={48} />
-            <Loader2 className="absolute -bottom-1 -right-1 text-primary animate-spin" size={20} />
+            <Loader2
+              className="absolute -bottom-1 -right-1 text-primary animate-spin"
+              size={20}
+            />
           </div>
         )}
       </div>
@@ -677,16 +697,16 @@ function DaemonStartupSlide({ onReady }: { onReady: () => void }) {
         {daemonState === "ready"
           ? "All Set!"
           : daemonState === "error"
-          ? "Something Went Wrong"
-          : "Setting Things Up"}
+            ? "Something Went Wrong"
+            : "Setting Things Up"}
       </h1>
 
       <p className="text-muted-foreground text-lg">
         {daemonState === "ready"
           ? "Memento services are running and ready."
           : daemonState === "error"
-          ? "We couldn't start Memento's background services."
-          : statusMessage}
+            ? "We couldn't start Memento's background services."
+            : statusMessage}
       </p>
 
       {daemonState !== "ready" && daemonState !== "error" && (
@@ -725,7 +745,8 @@ type RequirementsState = "checking" | "passed" | "failed";
 
 function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
   const [state, setState] = useState<RequirementsState>("checking");
-  const [requirements, setRequirements] = useState<SystemRequirementsResponse | null>(null);
+  const [requirements, setRequirements] =
+    useState<SystemRequirementsResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const hasChecked = useRef(false);
 
@@ -737,7 +758,7 @@ function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
       try {
         const result = await checkSystemRequirements();
         setRequirements(result);
-        
+
         if (result.all_passed) {
           setState("passed");
           // Auto-advance after a short delay
@@ -759,13 +780,13 @@ function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
     setState("checking");
     setErrorMessage(null);
     setRequirements(null);
-    
+
     hasChecked.current = true;
-    
+
     try {
       const result = await checkSystemRequirements();
       setRequirements(result);
-      
+
       if (result.all_passed) {
         setState("passed");
         setTimeout(() => onPassed(), 1000);
@@ -788,7 +809,10 @@ function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
         ) : (
           <div className="relative">
             <Monitor className="text-primary" size={48} />
-            <Loader2 className="absolute -bottom-1 -right-1 text-primary animate-spin" size={20} />
+            <Loader2
+              className="absolute -bottom-1 -right-1 text-primary animate-spin"
+              size={20}
+            />
           </div>
         )}
       </div>
@@ -797,22 +821,24 @@ function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
         {state === "passed"
           ? "System Ready!"
           : state === "failed"
-          ? "System Requirements"
-          : "Checking System"}
+            ? "System Requirements"
+            : "Checking System"}
       </h1>
 
       <p className="text-muted-foreground text-lg">
         {state === "passed"
           ? "Your system meets all requirements."
           : state === "failed"
-          ? "Some requirements need attention before continuing."
-          : "Verifying your system is compatible with Memento..."}
+            ? "Some requirements need attention before continuing."
+            : "Verifying your system is compatible with Memento..."}
       </p>
 
       {state === "checking" && (
         <div className="flex items-center justify-center gap-3">
           <Loader2 className="animate-spin text-primary" size={20} />
-          <span className="text-sm text-muted-foreground">Checking requirements...</span>
+          <span className="text-sm text-muted-foreground">
+            Checking requirements...
+          </span>
         </div>
       )}
 
@@ -825,22 +851,34 @@ function SystemRequirementsSlide({ onPassed }: { onPassed: () => void }) {
                 "p-4 rounded-lg border",
                 check.passed
                   ? "bg-green-500/10 border-green-500/20"
-                  : "bg-destructive/10 border-destructive/20"
+                  : "bg-destructive/10 border-destructive/20",
               )}
             >
               <div className="flex items-start gap-3">
                 {check.passed ? (
-                  <CheckCircle2 className="text-green-500 mt-0.5 flex-shrink-0" size={20} />
+                  <CheckCircle2
+                    className="text-green-500 mt-0.5 flex-shrink-0"
+                    size={20}
+                  />
                 ) : (
-                  <XCircle className="text-destructive mt-0.5 flex-shrink-0" size={20} />
+                  <XCircle
+                    className="text-destructive mt-0.5 flex-shrink-0"
+                    size={20}
+                  />
                 )}
                 <div className="flex-1 min-w-0">
                   <h3 className="font-medium">{check.name}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">{check.message}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {check.message}
+                  </p>
                   {!check.passed && check.fix_suggestion && (
                     <div className="mt-2 text-sm bg-background/50 p-3 rounded border border-border/50">
-                      <p className="font-medium text-foreground mb-1">How to fix:</p>
-                      <p className="text-muted-foreground whitespace-pre-line">{check.fix_suggestion}</p>
+                      <p className="font-medium text-foreground mb-1">
+                        How to fix:
+                      </p>
+                      <p className="text-muted-foreground whitespace-pre-line">
+                        {check.fix_suggestion}
+                      </p>
                     </div>
                   )}
                 </div>

@@ -23,8 +23,6 @@ export interface ModelStatus {
   models_ready: boolean;
   /** Whether embedding model files exist on disk */
   embedding_exists: boolean;
-  /** Whether cross-encoder model files exist on disk */
-  cross_encoder_exists: boolean;
   /** Whether models are loaded in memory */
   models_loaded: boolean;
   /** Path where models are stored */
@@ -36,6 +34,7 @@ export interface ModelStatus {
 export interface ModelDownloadProgress {
   current_model: string;
   progress: number;
+  progress_percent: number;
   message: string;
   completed: boolean;
   error: string | null;
@@ -146,7 +145,6 @@ export async function downloadModelsSync(): Promise<{ success: boolean; message:
 export interface RealtimeModelState {
   status: ModelState;
   embedding_exists: boolean;
-  cross_encoder_exists: boolean;
   message: string;
   updated_at: number;
 }

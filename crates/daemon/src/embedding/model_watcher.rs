@@ -6,7 +6,6 @@
 //! - Periodic validation (reliability, every 30s)
 //! - Runtime validation on access (safety)
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +15,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
-use super::{embedding_model_exists, cross_encoder_model_exists};
+use super::embedding_model_exists;
 
 /// Model state that can be pushed to frontend
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -24,14 +23,8 @@ use super::{embedding_model_exists, cross_encoder_model_exists};
 pub enum ModelStateKind {
     /// Models not downloaded
     NotDownloaded,
-    /// Partial download (some models missing)
-    PartialDownload,
     /// All models downloaded and verified
     Ready,
-    /// Models being downloaded
-    Downloading,
-    /// Model files appear corrupted or invalid
-    Corrupted,
 }
 
 /// Full model state with details
@@ -39,7 +32,6 @@ pub enum ModelStateKind {
 pub struct ModelState {
     pub status: ModelStateKind,
     pub embedding_exists: bool,
-    pub cross_encoder_exists: bool,
     pub message: String,
     /// Timestamp of last state change (Unix ms)
     pub updated_at: i64,
@@ -49,38 +41,20 @@ impl ModelState {
     /// Check current model state from filesystem
     pub fn check_current() -> Self {
         let embedding_exists = embedding_model_exists();
-        let cross_encoder_exists = cross_encoder_model_exists();
-        
-        let (status, message) = if embedding_exists && cross_encoder_exists {
-            (ModelStateKind::Ready, "All models are ready.".to_string())
-        } else if embedding_exists || cross_encoder_exists {
-            (
-                ModelStateKind::PartialDownload,
-                "Some models are missing. Please complete the download.".to_string(),
-            )
+
+        let (status, message) = if embedding_exists {
+            (ModelStateKind::Ready, "Embedding model is ready.".to_string())
         } else {
             (
                 ModelStateKind::NotDownloaded,
-                "AI models need to be downloaded.".to_string(),
+                "Embedding model needs to be downloaded.".to_string(),
             )
         };
         
         ModelState {
             status,
             embedding_exists,
-            cross_encoder_exists,
             message,
-            updated_at: chrono::Utc::now().timestamp_millis(),
-        }
-    }
-    
-    /// Mark as downloading
-    pub fn downloading() -> Self {
-        ModelState {
-            status: ModelStateKind::Downloading,
-            embedding_exists: embedding_model_exists(),
-            cross_encoder_exists: cross_encoder_model_exists(),
-            message: "Downloading models...".to_string(),
             updated_at: chrono::Utc::now().timestamp_millis(),
         }
     }
@@ -125,7 +99,6 @@ impl ModelStateManager {
         // Only broadcast if status actually changed
         if state.status != new_state.status 
             || state.embedding_exists != new_state.embedding_exists
-            || state.cross_encoder_exists != new_state.cross_encoder_exists 
         {
             info!(
                 "Model state changed: {:?} -> {:?}",
@@ -142,11 +115,6 @@ impl ModelStateManager {
     pub fn refresh(&self) {
         let new_state = ModelState::check_current();
         self.update_state(new_state);
-    }
-    
-    /// Mark as downloading
-    pub fn set_downloading(&self) {
-        self.update_state(ModelState::downloading());
     }
 }
 
@@ -262,7 +230,7 @@ mod tests {
         let state = ModelState::check_current();
         assert!(matches!(
             state.status,
-            ModelStateKind::Ready | ModelStateKind::PartialDownload | ModelStateKind::NotDownloaded
+            ModelStateKind::Ready | ModelStateKind::NotDownloaded
         ));
     }
     

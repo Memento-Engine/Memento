@@ -18,7 +18,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tracing::{info, error};
 
-use crate::embedding::{ModelDownloadStatus, cross_encoder_model_exists, download_all_models, embedding_model_exists, models_already_downloaded};
+use crate::embedding::{ModelDownloadStatus, download_all_models, embedding_model_exists, models_already_downloaded};
 use crate::server::app_state::AppState;
 
 /// Model status enum for frontend to determine UI state
@@ -27,14 +27,10 @@ use crate::server::app_state::AppState;
 pub enum ModelState {
     /// Models not downloaded - show onboarding download UI
     NotDownloaded,
-    /// Models partially downloaded - show download UI with resume option
-    PartialDownload,
     /// Models downloaded but not loaded (daemon needs restart or error occurred)
     DownloadedNotLoaded,
     /// Models downloaded and loaded - ready to use
     Ready,
-    /// Models exist but appear corrupted
-    Corrupted,
 }
 
 /// Response for model status check
@@ -46,8 +42,6 @@ pub struct ModelStatusResponse {
     pub models_ready: bool,
     /// Whether the embedding model files exist on disk
     pub embedding_exists: bool,
-    /// Whether the cross-encoder model files exist on disk  
-    pub cross_encoder_exists: bool,
     /// Whether models are loaded in memory and ready for use
     pub models_loaded: bool,
     /// Path where models are stored
@@ -62,9 +56,8 @@ pub async fn check_models_status(
 ) -> Json<ModelStatusResponse> {
     let models_path = app_core::config::models_dir();
     let embedding_exists = embedding_model_exists();
-    let cross_encoder_exists = cross_encoder_model_exists();
     let models_loaded = state.models_ready();
-    let all_exist = embedding_exists && cross_encoder_exists;
+    let all_exist = embedding_exists;
     
     // Determine status
     let (status, message) = if models_loaded {
@@ -75,17 +68,11 @@ pub async fn check_models_status(
             ModelState::DownloadedNotLoaded,
             "Models are downloaded but not loaded. Try restarting the app.".to_string()
         )
-    } else if embedding_exists || cross_encoder_exists {
-        // Partial download
-        (
-            ModelState::PartialDownload,
-            "Some models are missing. Please complete the download.".to_string()
-        )
     } else {
         // Nothing downloaded
         (
             ModelState::NotDownloaded,
-            "AI models need to be downloaded for local processing.".to_string()
+            "Embedding model needs to be downloaded for local processing.".to_string()
         )
     };
     
@@ -93,7 +80,6 @@ pub async fn check_models_status(
         status,
         models_ready: models_loaded,
         embedding_exists,
-        cross_encoder_exists,
         models_loaded,
         models_path: models_path.to_string_lossy().to_string(),
         message,
@@ -129,6 +115,7 @@ pub async fn download_models_sse(
                 let status = ModelDownloadStatus {
                     current_model: String::new(),
                     progress: 1.0,
+                    progress_percent: 100,
                     message: "Download stream ended".to_string(),
                     completed: true,
                     error: None,

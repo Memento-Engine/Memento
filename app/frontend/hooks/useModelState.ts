@@ -115,7 +115,6 @@ export function useModelState(options: UseModelStateOptions = {}): UseModelState
       const newState: RealtimeModelState = {
         status: status.status,
         embedding_exists: status.embedding_exists,
-        cross_encoder_exists: status.cross_encoder_exists,
         message: status.message,
         updated_at: Date.now() / 1000,
       };

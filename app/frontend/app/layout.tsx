@@ -15,6 +15,7 @@ import UpdateProvider from "@/providers/UpdateProvider";
 import CreditsProvider from "@/providers/CreditsProvider";
 import AuthProvider from "@/providers/AuthProvider";
 import UpdateNotification from "@/components/UpdateNotification";
+import OnboardingPage from "@/app/onboarding/page";
 import type { Metadata } from "next";
 
 import { Inter } from "next/font/google";
@@ -30,11 +31,21 @@ const inter = Inter({
 
 const metadata: Metadata = {
   title: "Memento AI — Where memories become knowledge",
-  description: "A personal AI search engine that captures your screen activity, extracts text with OCR, and answers your questions using retrieval-augmented generation. Local-first, privacy-focused.",
-  keywords: ["AI", "personal search engine", "memory", "local-first", "privacy", "OCR", "RAG", "Windows"],
-  icons : {
+  description:
+    "A personal AI search engine that captures your screen activity, extracts text with OCR, and answers your questions using retrieval-augmented generation. Local-first, privacy-focused.",
+  keywords: [
+    "AI",
+    "personal search engine",
+    "memory",
+    "local-first",
+    "privacy",
+    "OCR",
+    "RAG",
+    "Windows",
+  ],
+  icons: {
     icon: "/logo.png",
-  }
+  },
 };
 
 export default function RootLayout({
@@ -73,27 +84,24 @@ function LayoutRoot({ children }: { children: React.ReactNode }) {
 }
 
 function LayoutInner({ children }: { children: React.ReactNode }) {
-  const { isOnboardingComplete, isOnboardingResolved } = useOnboarding();
+  const { isOnboardingComplete } = useOnboarding();
   const router = useRouter();
   const pathname = usePathname();
 
-  useEffect(() => {
-    if (!isOnboardingResolved) {
-      return;
-    }
-
-    if (!isOnboardingComplete && pathname !== "/onboarding") {
-      router.push("/onboarding");
-      return;
-    }
-
+  // Redirect away from /onboarding if already completed
+  useEffect((): void => {
     if (isOnboardingComplete && pathname === "/onboarding") {
       router.push("/");
     }
-  }, [isOnboardingComplete, isOnboardingResolved, pathname, router]);
+  }, [isOnboardingComplete, router, pathname]);
 
-  if (!isOnboardingResolved || !isOnboardingComplete) {
-    return <>{children}</>;
+  // Render onboarding directly - no routing needed, no blank page
+  if (!isOnboardingComplete) {
+    return (
+      <div className="h-dvh w-full flex items-center justify-center">
+        <OnboardingPage />
+      </div>
+    );
   }
 
   return (

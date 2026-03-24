@@ -13,5 +13,5 @@ pub mod logging;
 // Re-export commonly used types
 pub use core::{DaemonConfig, DaemonLifecycle, ShutdownController};
 pub use throttle::{AdaptiveScheduler, CpuMonitor};
-pub use embedding::{AsyncEmbeddingModel, AsyncCrossEncoder};
+pub use embedding::AsyncEmbeddingModel;
 pub use logging::{LogConfig, init_logging, init_default_logging, LatencyGuard};
