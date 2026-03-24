@@ -8,11 +8,15 @@ WORKDIR /app
 
 # Copy package files
 COPY ai-gateway/package*.json ./ai-gateway/
-COPY shared/package*.json ./shared/ 2>/dev/null || true
+COPY shared/package*.json ./shared/
 
 # Install dependencies
 WORKDIR /app/ai-gateway
 RUN npm ci --only=production && npm cache clean --force
+
+# Install shared dependencies if they exist
+WORKDIR /app/shared
+RUN if [ -f package.json ]; then npm ci --only=production && npm cache clean --force; fi
 
 # Production image
 FROM base AS runner
@@ -29,6 +33,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 
 # Copy dependencies
 COPY --from=deps --chown=aigateway:nodejs /app/ai-gateway/node_modules ./ai-gateway/node_modules
+COPY --from=deps --chown=aigateway:nodejs /app/shared ./shared
 
 # Copy source code
 COPY --chown=aigateway:nodejs ai-gateway ./ai-gateway
