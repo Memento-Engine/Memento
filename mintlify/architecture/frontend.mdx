@@ -1,0 +1,93 @@
+---
+title: "Frontend & Desktop"
+description: "The Next.js UI and Tauri desktop shell that power the Memento AI user experience."
+---
+
+## Overview
+
+The user-facing layer is a **Next.js 16** application running inside a **Tauri 2** desktop shell. Users can also run it as a standalone web app at `http://localhost:3000`.
+
+---
+
+## Stack
+
+| Technology | Version | Role |
+|---|---|---|
+| Next.js | 16 | React framework, routing, SSR |
+| React | 19 | UI rendering |
+| Tailwind CSS | 3 | Utility-first styling |
+| Radix UI | latest | Accessible component primitives |
+| Framer Motion | latest | Animations |
+| Tauri | 2 | Native desktop shell |
+| Sentry | latest | Error monitoring |
+
+---
+
+## Directory structure
+
+```
+app/frontend/
+├── app/               Next.js App Router pages
+├── components/        Reusable UI components
+├── contexts/          React context providers
+├── hooks/             Custom React hooks
+├── lib/               API clients, utilities
+├── providers/         App-level providers (auth, theme)
+├── styles/            Global CSS
+├── public/            Static assets
+└── __tests__/         Unit + integration tests
+```
+
+---
+
+## Running the frontend
+
+```bash
+cd app/frontend
+npm run dev     # development (http://localhost:3000)
+npm run build   # production build
+npm start       # serve production build
+```
+
+---
+
+## Tauri desktop app
+
+The Tauri shell (`app/src-tauri/`) wraps the Next.js frontend into a native desktop window.
+
+```bash
+# Dev mode (hot-reload)
+cd app && npm run tauri dev
+
+# Production build
+cd app && npm run tauri build
+```
+
+Built installers land in `app/src-tauri/target/release/bundle/`:
+
+| Platform | Installer format |
+|---|---|
+| Windows | `.msi`, `.exe` (NSIS) |
+| macOS | `.dmg`, `.app` |
+| Linux | `.AppImage`, `.deb` |
+
+### Tauri capabilities
+
+Tauri capabilities (fine-grained OS permission grants) are defined in `app/src-tauri/capabilities/`. They control which Tauri APIs the frontend JS can call — e.g., `fs:read`, `dialog:open`.
+
+---
+
+## Agents (`app/agents/`)
+
+LangChain + LangGraph agents run as a Node.js process and handle multi-step query planning:
+
+1. **Query rewriting** — normalise and expand user queries
+2. **Tool selection** — decide between local search, file lookup, or LLM answer
+3. **Result synthesis** — merge multiple tool outputs into a ranked, cited response
+
+```bash
+cd app/agents
+npm run dev
+```
+
+Agents communicate with the AI Gateway over HTTP and with the Rust daemon via the local REST API on `localhost:5100`.

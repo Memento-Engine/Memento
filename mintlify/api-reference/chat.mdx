@@ -1,0 +1,519 @@
+---
+title: "Chat API"
+description: "Manage chat sessions and messages with AI-powered responses grounded in your local memory."
+api: "POST /chat/messages"
+---
+
+## Overview
+
+The Chat API allows you to save and retrieve chat conversations with AI responses grounded in your screen captures. Messages are persisted locally and linked to source chunks for citations.
+
+<Info>
+  **Base URL**: `http://localhost:7070`  
+  **Storage**: SQLite database in `%APPDATA%\Memento\data\memento.db`
+</Info>
+
+---
+
+## List Chat Sessions
+
+Get all chat sessions ordered by most recent.
+
+<RequestExample>
+
+```bash cURL
+curl http://localhost:7070/chat/sessions
+```
+
+```typescript TypeScript
+const sessions = await fetch('http://localhost:7070/chat/sessions')
+  .then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "sessions": [
+    {
+      "session_id": "uuid-1234",
+      "title": "Privacy features discussion",
+      "pinned": true,
+      "created_at": 1711234567,
+      "updated_at": 1711236789,
+      "message_count": 8
+    },
+    {
+      "session_id": "uuid-5678",
+      "title": "Search architecture",
+      "pinned": false,
+      "created_at": 1711000000,
+      "updated_at": 1711100000,
+      "message_count": 3
+    }
+  ],
+  "total": 2
+}
+```
+
+</ResponseExample>
+
+<ResponseField name="sessions" type="array">
+  Array of chat sessions
+  
+  <Expandable>
+    <ResponseField name="session_id" type="string">
+      UUID v4 session identifier
+    </ResponseField>
+    <ResponseField name="title" type="string">
+      Session title (auto-generated or user-set)
+    </ResponseField>
+    <ResponseField name="pinned" type="boolean">
+      Whether session is pinned to top
+    </ResponseField>
+    <ResponseField name="created_at" type="number">
+      Unix timestamp of first message
+    </ResponseField>
+    <ResponseField name="updated_at" type="number">
+      Unix timestamp of last message
+    </ResponseField>
+    <ResponseField name="message_count" type="number">
+      Total messages in session
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Create Chat Session
+
+Create a new chat session.
+
+<ParamField body="title" type="string">
+  Optional session title (auto-generated if omitted)
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/chat/sessions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Privacy features discussion"
+  }'
+```
+
+```typescript TypeScript
+const session = await fetch('http://localhost:7070/chat/sessions', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    title: 'Privacy features discussion'
+  })
+}).then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 201 Created
+{
+  "session_id": "uuid-1234",
+  "title": "Privacy features discussion",
+  "created_at": 1711234567
+}
+```
+
+</ResponseExample>
+
+---
+
+## Get Messages
+
+Retrieve all messages in a chat session.
+
+<ParamField path="session_id" type="string" required>
+  Session UUID
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl http://localhost:7070/chat/messages/uuid-1234
+```
+
+```typescript TypeScript
+const messages = await fetch('http://localhost:7070/chat/messages/uuid-1234')
+  .then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "session_id": "uuid-1234",
+  "messages": [
+    {
+      "id": 1,
+      "role": "user",
+      "content": "Tell me about privacy features",
+      "created_at": 1711234567,
+      "sources": []
+    },
+    {
+      "id": 2,
+      "role": "assistant",
+      "content": "Memento AI has several privacy features:\\n\\n1. All data stays local...",
+      "created_at": 1711234580,
+      "thinking_steps": [
+        {
+          "step": 1,
+          "thought": "Searching for privacy-related docs",
+          "action": "semantic_search('privacy features')"
+        }
+      ],
+      "sources": [
+        {
+          "chunk_id": 1234,
+          "frame_id": 567,
+          "text_content": "Memento AI Privacy...",
+          "app_name": "chrome.exe",
+          "window_title": "Memento AI - Privacy",
+          "image_path": "images/20240324/567.jpg",
+          "captured_at": 1711200000,
+          "usage_type": "citation"
+        }
+      ]
+    }
+  ]
+}
+```
+
+</ResponseExample>
+
+<ResponseField name="messages" type="array">
+  Array of messages in chronological order
+  
+  <Expandable>
+    <ResponseField name="id" type="number">
+      Unique message identifier
+    </ResponseField>
+    <ResponseField name="role" type="string">
+      `"user"`, `"assistant"`, or `"system"`
+    </ResponseField>
+    <ResponseField name="content" type="string">
+      Message text content
+    </ResponseField>
+    <ResponseField name="created_at" type="number">
+      Unix timestamp
+    </ResponseField>
+    <ResponseField name="thinking_steps" type="array" optional>
+      AI reasoning steps (assistant messages only)
+    </ResponseField>
+    <ResponseField name="sources" type="array">
+      Linked source chunks (citations)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Save Message
+
+Save a new message to a chat session.
+
+<ParamField body="session_id" type="string" required>
+  Session UUID
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  Message role: `"user"` or `"assistant"`
+</ParamField>
+
+<ParamField body="content" type="string" required>
+  Message text content
+</ParamField>
+
+<ParamField body="thinking_steps" type="array">
+  Optional reasoning steps (for assistant messages)
+</ParamField>
+
+<ParamField body="source_chunk_ids" type="number[]">
+  Array of chunk IDs to link as citations
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/chat/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "uuid-1234",
+    "role": "assistant",
+    "content": "Based on your screen captures, here are the privacy features...",
+    "source_chunk_ids": [1234, 5678],
+    "thinking_steps": [
+      {
+        "step": 1,
+        "thought": "Searching for privacy docs",
+        "action": "semantic_search"
+      }
+    ]
+  }'
+```
+
+```typescript TypeScript
+const message = await fetch('http://localhost:7070/chat/messages', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    session_id: 'uuid-1234',
+    role: 'assistant',
+    content: 'Based on your screen captures...',
+    source_chunk_ids: [1234, 5678],
+    thinking_steps: [
+      {
+        step: 1,
+        thought: 'Searching for privacy docs',
+        action: 'semantic_search'
+      }
+    ]
+  })
+}).then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 201 Created
+{
+  "message_id": 123,
+  "session_id": "uuid-1234",
+  "created_at": 1711234600
+}
+```
+
+</ResponseExample>
+
+---
+
+## Update Session
+
+Update session metadata (title, pinned status).
+
+<ParamField path="session_id" type="string" required>
+  Session UUID
+</ParamField>
+
+<ParamField body="title" type="string">
+  New session title
+</ParamField>
+
+<ParamField body="pinned" type="boolean">
+  Pin/unpin session
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X PATCH http://localhost:7070/chat/sessions/uuid-1234 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Privacy & Security Discussion",
+    "pinned": true
+  }'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "session_id": "uuid-1234",
+  "title": "Privacy & Security Discussion",
+  "pinned": true,
+  "updated_at": 1711234700
+}
+```
+
+</ResponseExample>
+
+---
+
+## Delete Session
+
+Delete a chat session and all its messages.
+
+<Warning>
+  **Irreversible**: This permanently deletes the session and all messages. Citations to source chunks are removed but the chunks themselves remain.
+</Warning>
+
+<ParamField path="session_id" type="string" required>
+  Session UUID to delete
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X DELETE http://localhost:7070/chat/sessions/uuid-1234
+```
+
+```typescript TypeScript
+await fetch('http://localhost:7070/chat/sessions/uuid-1234', {
+  method: 'DELETE'
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "session_id": "uuid-1234",
+  "deleted_messages": 8,
+  "message": "Session deleted successfully"
+}
+```
+
+</ResponseExample>
+
+---
+
+## Complete Chat Flow
+
+Here's a complete example of creating a session, searching for context, and saving an AI response.
+
+```typescript
+// 1. Create a new chat session
+const session = await fetch('http://localhost:7070/chat/sessions', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ title: 'Privacy Discussion' })
+}).then(r => r.json());
+
+const sessionId = session.session_id;
+
+// 2. Save user message
+await fetch('http://localhost:7070/chat/messages', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    session_id: sessionId,
+    role: 'user',
+    content: 'What privacy features does Memento AI have?'
+  })
+});
+
+// 3. Search for relevant context
+const searchResults = await fetch('http://localhost:7070/semantic_search', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: 'privacy features',
+    limit: 5
+  })
+}).then(r => r.json());
+
+// 4. Send to AI Gateway for response
+const aiResponse = await fetch('http://localhost:4180/v1/chat/completions', {
+  method: 'POST',
+  headers: { 
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`
+  },
+  body: JSON.stringify({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: `You are Memento AI. Answer based on context:\n\n${
+          searchResults.results.map(r => r.text_content).join('\n\n')
+        }`
+      },
+      {
+        role: 'user',
+        content: 'What privacy features does Memento AI have?'
+      }
+    ]
+  })
+}).then(r => r.json());
+
+// 5. Save assistant response with citations
+await fetch('http://localhost:7070/chat/messages', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    session_id: sessionId,
+    role: 'assistant',
+    content: aiResponse.choices[0].message.content,
+    source_chunk_ids: searchResults.results.map(r => r.chunk_id)
+  })
+});
+
+// 6. Retrieve full conversation
+const conversation = await fetch(`http://localhost:7070/chat/messages/${sessionId}`)
+  .then(r => r.json());
+
+console.log(conversation.messages);
+```
+
+---
+
+## Best Practices
+
+<Card title="Link Sources" icon="link">
+  Always link source chunks to assistant messages for citation tracking:
+  ```typescript
+  const sourceChunkIds = searchResults.results.map(r => r.chunk_id);
+  ```
+</Card>
+
+<Card title="Auto-Generate Titles" icon="heading">
+  If title is omitted, auto-generate from first user message:
+  ```typescript
+  const title = userMessage.substring(0, 50) + '...';
+  ```
+</Card>
+
+<Card title="Pin Important Chats" icon="thumbtack">
+  Pin frequently accessed sessions to keep them at the top:
+  ```typescript
+  await updateSession(sessionId, { pinned: true });
+  ```
+</Card>
+
+<Card title="Clean Up Old Sessions" icon="broom">
+  Periodically delete old, unpinned sessions:
+  ```typescript
+  const oldSessions = sessions.filter(s => 
+    !s.pinned && s.updated_at < Date.now() / 1000 - (90 * 24 * 60 * 60)
+  );
+  ```
+</Card>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Search API" icon="magnifying-glass" href="/api-reference/search">
+    Find context chunks for chat responses.
+  </Card>
+  <Card title="AI Gateway" icon="cloud" href="/architecture/ai-gateway">
+    Learn about LLM integration.
+  </Card>
+  <Card title="Database Schema" icon="database" href="/architecture/database-schema">
+    Explore chat tables structure.
+  </Card>
+  <Card title="Data Flow" icon="diagram-project" href="/architecture/data-flow">
+    See how chat messages flow through the system.
+  </Card>
+</CardGroup>

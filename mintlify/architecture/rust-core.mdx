@@ -1,0 +1,97 @@
+---
+title: "Rust Core"
+description: "The high-performance indexing engine and hybrid search library powering Memento AI."
+---
+
+## Overview
+
+The Rust core (`crates/core`) is the heart of Memento AI's search capability. It exposes a Rust library consumed by the daemon and, via FFI / local HTTP, by the Node.js AI Gateway.
+
+### Responsibilities
+
+- **Chunking** — split documents into overlapping text chunks for embedding
+- **Embedding** — generate dense vectors using a local sentence-transformer model
+- **Indexing** — upsert chunks into a local vector store + inverted BM25 index
+- **Retrieval** — fuse semantic ANN search and BM25 keyword search via Reciprocal Rank Fusion
+- **Privacy** — all data stays on disk; no network calls from the core
+
+---
+
+## Index architecture
+
+```
+Document
+   │  chunk()
+   ▼
+Chunks (512 tokens, 64-token overlap)
+   │  embed()
+   ▼
+Dense vectors (384 dims, all-MiniLM-L6-v2)
+   │                       │
+   ▼                       ▼
+Vector index (HNSW)    BM25 inverted index
+   │                       │
+   └───────────┬───────────┘
+               │  Reciprocal Rank Fusion
+               ▼
+          Top-k results
+```
+
+---
+
+## Build
+
+```bash
+# Debug
+cargo build -p core
+
+# Release (optimised)
+cargo build -p core --release
+```
+
+### Feature flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `gpu` | off | Enable GPU-accelerated embedding via CUDA |
+| `metrics` | off | Expose Prometheus metrics endpoint |
+
+```bash
+cargo build -p core --features gpu,metrics --release
+```
+
+---
+
+## Daemon (`crates/daemon`)
+
+The daemon wraps the core library in a long-running process that:
+
+1. Watches configured folders using `notify` (cross-platform file-system events)
+2. Debounces changes (default 500 ms) to avoid redundant re-indexing
+3. Calls `core::index()` for new/modified files
+4. Exposes a local HTTP API on `localhost:5100` for index status and manual triggers
+
+### Daemon endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Daemon status and index stats |
+| `POST` | `/index` | Trigger a full re-index of all configured paths |
+| `DELETE` | `/index/:id` | Remove a document from the index |
+| `GET` | `/search?q=` | Run a raw local search query (diagnostic) |
+
+---
+
+## Service helper (`crates/service-helper`)
+
+On Windows, Memento AI can register the daemon as a Windows Service so it starts automatically at login.
+
+```powershell
+# Install as a Windows service (run as Administrator)
+.\target\release\service-helper.exe install
+
+# Remove the service
+.\target\release\service-helper.exe uninstall
+```
+
+See [WINDOWS_SERVICE_ARCHITECTURE.md](../docs/WINDOWS_SERVICE_ARCHITECTURE.md) for a deep-dive.

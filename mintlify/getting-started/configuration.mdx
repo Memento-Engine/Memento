@@ -1,0 +1,147 @@
+---
+title: "Configuration"
+description: "Environment variables, file-based config, daemon settings, and logging."
+---
+
+## Environment variables
+
+Create `ai-gateway/.env` from the example file:
+
+```bash
+cp ai-gateway/.env.example ai-gateway/.env
+```
+
+### Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | — | PostgreSQL connection string, e.g. `postgres://user:pass@localhost:5432/memento_ai` |
+
+### AI / LLM
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | — | Your OpenAI API key. Required for the OpenAI provider. |
+| `DEFAULT_MODEL` | `gpt-4o-mini` | Default model for query augmentation. |
+| `MAX_TOKENS` | `2048` | Maximum tokens per LLM response. |
+
+### Gateway server
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `4000` | Port the AI Gateway listens on. |
+| `NODE_ENV` | `development` | Set to `production` for hardened settings. |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limiting window in milliseconds. |
+| `RATE_LIMIT_MAX_REQUESTS` | `100` | Maximum requests per window per IP. |
+
+### Auth / Sessions
+
+| Variable | Default | Description |
+|---|---|---|
+| `SESSION_SECRET` | — | Secret for signing session cookies. Use a long random string. |
+| `GOOGLE_CLIENT_ID` | — | OAuth 2.0 client ID (Google sign-in). |
+| `GOOGLE_CLIENT_SECRET` | — | OAuth 2.0 client secret. |
+
+### Frontend (`app/frontend/.env.local`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:4000` | URL of the AI Gateway. |
+| `NEXT_PUBLIC_APP_NAME` | `Memento AI` | Displayed app name. |
+
+---
+
+## File-based config
+
+Beyond environment variables, Memento reads a persistent `config.json` from the platform app-data directory:
+
+| Platform | Path |
+|---|---|
+| Windows | `%APPDATA%\memento-ai\config.json` |
+| macOS | `~/Library/Application Support/memento-ai/config.json` |
+| Linux | `~/.config/memento-ai/config.json` |
+
+### Schema
+
+```json
+{
+  "indexPaths": [
+    "~/Documents",
+    "~/Downloads",
+    "~/Desktop"
+  ],
+  "excludePatterns": [
+    "node_modules",
+    ".git",
+    "*.log"
+  ],
+  "daemonPort": 5100,
+  "llmProvider": "openai",
+  "enableUsageTracking": true,
+  "maxIndexSizeGb": 5
+}
+```
+
+### Options reference
+
+<ParamField path="indexPaths" type="string[]" default='["~/Documents"]'>
+  Folders to index. Supports `~` home-directory expansion. Changes take effect after the daemon restarts.
+</ParamField>
+
+<ParamField path="excludePatterns" type="string[]" default='["node_modules", ".git"]'>
+  Glob patterns to exclude from indexing. Supports `*` wildcards.
+</ParamField>
+
+<ParamField path="daemonPort" type="number" default="5100">
+  Port number the Rust daemon's local HTTP API listens on.
+</ParamField>
+
+<ParamField path="llmProvider" type='"openai" | "local"' default='"openai"'>
+  Which LLM backend to use for AI-augmented answers.
+</ParamField>
+
+<ParamField path="enableUsageTracking" type="boolean" default="true">
+  Track query counts for the usage dashboard.
+</ParamField>
+
+<ParamField path="maxIndexSizeGb" type="number" default="5">
+  Hard cap on index storage in GB. The daemon pauses indexing when this is reached.
+</ParamField>
+
+---
+
+## Daemon config
+
+The Rust daemon reads compile-time settings from `crates/daemon/src/config.rs`. Override with environment variables at build time:
+
+| Setting | Env var | Default | Description |
+|---|---|---|---|
+| Watch debounce | `MEMENTO_WATCH_DEBOUNCE_MS` | `500ms` | Wait after a file change before re-indexing. |
+| Batch size | `MEMENTO_BATCH_SIZE` | `50` | Files processed per indexing batch. |
+| Embedding model | `MEMENTO_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local sentence-transformer for semantic embeddings. |
+
+```bash
+MEMENTO_WATCH_DEBOUNCE_MS=200 cargo build -p daemon
+```
+
+---
+
+## Logging
+
+Memento uses [Pino](https://getpino.io/) in Node services and `tracing` in Rust.
+
+```bash
+# Node services
+LOG_LEVEL=debug npm run dev          # ai-gateway or agents
+
+# Rust daemon
+RUST_LOG=debug cargo run -p daemon
+```
+
+Log files are written to:
+
+| Component | Log path |
+|---|---|
+| AI Gateway | `ai-gateway/logs/` |
+| Agents | `app/agents/logs/` |
+| Tauri / Desktop | `app/src-tauri/logs/` |

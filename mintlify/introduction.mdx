@@ -1,0 +1,113 @@
+---
+title: "Introduction"
+description: "Memento AI — your private, local-first AI search engine. Find anything you've ever seen, instantly."
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.png"
+  alt="Memento AI hero"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.png"
+  alt="Memento AI hero"
+/>
+
+## What is Memento AI?
+
+**Memento AI** is a privacy-first desktop application that indexes everything on your machine — files, notes, documents, browser history — and lets you retrieve it with natural language queries in milliseconds.
+
+Unlike cloud-based tools, **your data never leaves your device**. Memento runs a Rust-powered daemon locally, builds a hybrid semantic + keyword index in real time, and optionally routes through a local AI Gateway for synthesised, cited answers.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Get Memento AI running on your machine in minutes.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/getting-started/configuration">
+    Configure folders, LLM keys, and runtime preferences.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/overview">
+    Understand how the Rust core, AI Gateway, and frontend work together.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Integrate Memento into your own tools via the local REST API.
+  </Card>
+</CardGroup>
+
+---
+
+## Why Memento AI?
+
+<CardGroup cols={3}>
+  <Card title="Privacy First" icon="lock">
+    All data stays on your machine. Only minimal, opt-in context is ever sent to an LLM.
+  </Card>
+  <Card title="Blazing Fast" icon="bolt">
+    Rust-powered indexing and sub-millisecond local search. No network round-trips.
+  </Card>
+  <Card title="AI-Augmented" icon="sparkles">
+    Get synthesised, cited answers — not just links — powered by OpenAI or a local model.
+  </Card>
+  <Card title="Desktop Native" icon="desktop">
+    Runs as a native Tauri app with a background daemon. Always available, always fast.
+  </Card>
+  <Card title="Open Source" icon="github">
+    MIT-licensed and built in public. Swap providers, add connectors, or fork it.
+  </Card>
+  <Card title="Works Offline" icon="wifi-slash">
+    Core search never needs the internet. AI augmentation is always optional.
+  </Card>
+</CardGroup>
+
+---
+
+## How it works
+
+```
+    Your Files, Notes & History
+               │
+               ▼
+    ┌──────────────────────┐
+    │   Rust Daemon        │  watches folders, real-time indexing
+    │   (crates/daemon)    │
+    └───────────┬──────────┘
+                │  local hybrid index
+                ▼
+    ┌──────────────────────┐
+    │   Rust Core          │  semantic + keyword search, sub-ms
+    │   (crates/core)      │
+    └───────────┬──────────┘
+                │  optional AI augmentation
+                ▼
+    ┌──────────────────────┐
+    │   AI Gateway         │  Node.js · auth · rate-limiting
+    │   (ai-gateway/)      │  routes to OpenAI or local LLM
+    └───────────┬──────────┘
+                │
+                ▼
+    ┌──────────────────────┐
+    │   Desktop UI         │  Next.js 16 + React 19 + Tauri
+    │   (app/frontend/)    │
+    └──────────────────────┘
+```
+
+1. **Index** — The daemon watches your configured folders and continuously rebuilds the index.  
+2. **Search** — Queries hit the local index first — results in under a millisecond.  
+3. **Augment** — Optionally send a query to the AI Gateway for a cited, synthesised answer.  
+4. **Display** — Results surface in the Tauri desktop app or the local Next.js UI.
+
+---
+
+## Tech stack at a glance
+
+| Layer | Technology |
+|---|---|
+| Desktop shell | Tauri 2 |
+| Frontend UI | Next.js 16 · React 19 · Tailwind CSS · Radix UI |
+| Agent logic | LangChain · LangGraph |
+| AI Gateway | Node.js · Express · TypeScript |
+| Database | PostgreSQL · Drizzle ORM |
+| Search core | Rust (`crates/core`) |
+| Background daemon | Rust (`crates/daemon`) |
+| Observability | Sentry · Pino |

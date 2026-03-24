@@ -1,0 +1,646 @@
+---
+title: "Data Flow"
+description: "Complete end-to-end data flows for screen capture, search, and chat in Memento AI."
+---
+
+## Overview
+
+This document traces data as it flows through Memento AI's architecture, from screen capture to search results to AI-powered responses.
+
+---
+
+## Flow 1: Screen Capture to Storage
+
+```mermaid
+sequenceDiagram
+    participant OS as Windows OS
+    participant Daemon as Rust Daemon
+    participant Hash as Hash Checker
+    participant OCR as Windows OCR
+    participant Embed as Embedding Model
+    participant DB as SQLite Database
+    participant FS as File System
+    
+    loop Every 2 seconds
+        Daemon->>OS: xcap::Window::all()
+        OS-->>Daemon: List of visible windows
+        
+        loop For each window
+            Daemon->>OS: window.capture_image()
+            OS-->>Daemon: Screenshot (DynamicImage)
+            
+            Daemon->>Hash: calculate_hash(image)
+            Hash-->>Daemon: blake3 hash
+            
+            alt Hash matches previous
+                Daemon->>Daemon: Skip (duplicate frame)
+            else New or changed frame
+                Daemon->>FS: Save JPEG (75% quality)
+                FS-->>Daemon: image_path
+                
+                Daemon->>OCR: extract_text(image)
+                OCR-->>Daemon: OcrResult { text, lines[] }
+                
+                Daemon->>Daemon: chunk_text(text, 300 words)
+                
+                par For each chunk
+                    Daemon->>Embed: generate_embedding(chunk_text)
+                    Embed-->>Daemon: Vec<f32>[384]
+                end
+                
+                Daemon->>DB: Begin transaction
+                Daemon->>DB: INSERT INTO frames
+                DB-->>Daemon: frame_id
+                
+                loop For each chunk
+                    Daemon->>DB: INSERT INTO chunks
+                    DB-->>Daemon: chunk_id
+                    Daemon->>DB: INSERT INTO vec_chunks (embedding)
+                    Daemon->>DB: INSERT INTO chunks_fts (text)
+                end
+                
+                Daemon->>DB: Commit transaction
+            end
+        end
+    end
+```
+
+### Step-by-Step
+
+<Steps>
+  <Step title="Window Enumeration">
+    Daemon queries Windows for all visible windows using `xcap::Window::all()`. Filters out:
+    - Hidden windows
+    - System UI elements
+    - Windows below size threshold (50x50 px)
+  </Step>
+  
+  <Step title="Screen Capture">
+    For each window, captures a screenshot as `DynamicImage` (PNG in memory).
+    
+    **Metadata extracted**:
+    - App name (e.g., `chrome.exe`)
+    - Window title
+    - Window bounds (x, y, width, height)
+    - Browser URL (if applicable)
+  </Step>
+  
+  <Step title="Hash Deduplication">
+    Computes Blake3 hash of image bytes. If hash matches the previous frame:
+    - **Skip** OCR and storage
+    - Continue to next window
+    
+    This prevents indexing static screens.
+  </Step>
+  
+  <Step title="Image Storage">
+    Saves image as JPEG with 75% quality to:
+    ```
+    %APPDATA%\Memento\images\{YYYYMMDD}\{frame_id}.jpg
+    ```
+    
+    Organized by date for easy cleanup.
+  </Step>
+  
+  <Step title="OCR Extraction">
+    Passes image to Windows OCR engine:
+    - Returns text content
+    - Line-level bounding boxes
+    - Confidence scores
+    
+    **Languages supported**: English (default), Spanish, French, German, Chinese, etc.
+  </Step>
+  
+  <Step title="Text Chunking">
+    Splits OCR text into overlapping chunks:
+    - **Chunk size**: 300 words
+    - **Overlap**: 50 words
+    
+    Ensures semantic coherence and prevents information loss at boundaries.
+  </Step>
+  
+  <Step title="Embedding Generation">
+    For each chunk, generates a dense vector embedding:
+    - **Model**: `sentence-transformers/all-MiniLM-L6-v2`
+    - **Dimensions**: 384 (float32)
+    - **Backend**: ONNX Runtime with DirectML GPU acceleration
+    
+    Embeddings enable semantic similarity search.
+  </Step>
+  
+  <Step title="Database Insertion">
+    Stores everything in SQLite within a single transaction:
+    1. Insert frame metadata → get `frame_id`
+    2. For each chunk:
+       - Insert into `chunks` table → get `chunk_id`
+       - Insert embedding into `vec_chunks`
+       - Insert text into `chunks_fts` (full-text index)
+    
+    **Transaction ensures**: All-or-nothing consistency.
+  </Step>
+</Steps>
+
+---
+
+## Flow 2: Search Query
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend as Next.js UI
+    participant Port as Port Discovery
+    participant Daemon as Rust Daemon
+    participant Vec as Vector Index
+    participant FTS as FTS5 Index
+    participant DB as SQLite
+    
+    User->>Frontend: Type search query
+    Frontend->>Port: Read daemon.port file
+    Port-->>Frontend: http://localhost:7072
+    
+    Frontend->>Daemon: POST /hybrid_search
+    Note over Frontend,Daemon: { query: "privacy features", limit: 10 }
+    
+    par Parallel Search
+        Daemon->>Embed: generate_embedding(query)
+        Embed-->>Daemon: query_vector[384]
+        Daemon->>Vec: SELECT * FROM vec_chunks<br/>WHERE embedding MATCH query_vector<br/>LIMIT 20
+        Vec-->>Daemon: 20 semantic results
+    and
+        Daemon->>FTS: SELECT * FROM chunks_fts<br/>WHERE chunks_fts MATCH 'privacy AND features'<br/>LIMIT 20
+        FTS-->>Daemon: 20 keyword results
+    end
+    
+    Daemon->>Daemon: Reciprocal Rank Fusion (RRF)
+    Note over Daemon: Merge and re-rank results
+    
+    Daemon->>DB: Hydrate results<br/>JOIN chunks, frames<br/>for metadata + image paths
+    DB-->>Daemon: Full result objects
+    
+    Daemon->>Daemon: Apply privacy filters<br/>Exclude masked items
+    
+    Daemon-->>Frontend: JSON response with top 10 results
+    
+    Frontend->>User: Display results with:
+    Note over Frontend,User: - Text snippets<br/>- Screenshots<br/>- Timestamps<br/>- Source app/window
+```
+
+### Search Pipeline
+
+<Tabs>
+  <Tab title="1. Query Embedding">
+    The search query is embedded using the same model as indexing:
+    
+    ```rust
+    let query_embedding = embedding_model
+        .embed(vec![&query], None)?
+        .into_iter()
+        .next()
+        .unwrap();
+    ```
+    
+    This ensures vector space consistency.
+  </Tab>
+  
+  <Tab title="2. Vector Search">
+    Performs approximate nearest neighbor (ANN) search:
+    
+    ```sql
+    SELECT 
+        chunk_id,
+        distance
+    FROM vec_chunks
+    WHERE embedding MATCH ?
+    ORDER BY distance ASC
+    LIMIT 20;
+    ```
+    
+    Uses cosine distance metric.
+  </Tab>
+  
+  <Tab title="3. Keyword Search">
+    Performs BM25-ranked full-text search:
+    
+    ```sql
+    SELECT 
+        chunk_id,
+        bm25(chunks_fts) as score
+    FROM chunks_fts
+    WHERE chunks_fts MATCH ?
+    ORDER BY score DESC
+    LIMIT 20;
+    ```
+    
+    Supports operators: `AND`, `OR`, `NOT`, `"exact phrase"`.
+  </Tab>
+  
+  <Tab title="4. Reciprocal Rank Fusion">
+    Merges results using RRF algorithm:
+    
+    ```rust
+    fn reciprocal_rank_fusion(
+        semantic: Vec<Result>,
+        keyword: Vec<Result>,
+        k: f32
+    ) -> Vec<Result> {
+        let mut scores = HashMap::new();
+        
+        for (rank, result) in semantic.iter().enumerate() {
+            *scores.entry(result.id).or_insert(0.0) += 
+                1.0 / (k + rank as f32);
+        }
+        
+        for (rank, result) in keyword.iter().enumerate() {
+            *scores.entry(result.id).or_insert(0.0) += 
+                1.0 / (k + rank as f32);
+        }
+        
+        scores.into_iter()
+            .sorted_by(|a, b| b.1.partial_cmp(&a.1).unwrap())
+            .take(10)
+            .collect()
+    }
+    ```
+    
+    **k = 60** is the standard constant.
+  </Tab>
+  
+  <Tab title="5. Hydration">
+    Fetches full metadata for matched chunks:
+    
+    ```sql
+    SELECT 
+        c.id as chunk_id,
+        c.text_content,
+        c.text_json,
+        f.id as frame_id,
+        f.app_name,
+        f.window_title,
+        f.browser_url,
+        f.image_path,
+        f.captured_at
+    FROM chunks c
+    JOIN frames f ON f.id = c.frame_id
+    WHERE c.id IN (?, ?, ..., ?)
+    ```
+  </Tab>
+  
+  <Tab title="6. Privacy Filtering">
+    Removes results matching masked items:
+    
+    ```rust
+    results.retain(|r| {
+        !is_masked(&r.app_name, &masked_apps) &&
+        !is_masked(&r.browser_url, &masked_domains)
+    });
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Flow 3: AI Chat Response
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Daemon as Rust Daemon
+    participant Gateway as AI Gateway
+    participant RateLimit as Rate Limiter
+    participant Auth as Auth Service
+    participant Router as Model Router
+    participant LLM as OpenAI API
+    participant DB as SQLite
+    
+    User->>Frontend: Send chat message
+    
+    Frontend->>Daemon: POST /semantic_search
+    Note over Frontend,Daemon: Search for relevant context
+    Daemon-->>Frontend: Top 5 chunks with sources
+    
+    Frontend->>Gateway: POST /v1/chat/completions
+    Note over Frontend,Gateway: Include:<br/>- User message<br/>- Context chunks<br/>- Conversation history
+    
+    Gateway->>Auth: Validate JWT token
+    Auth-->>Gateway: User + device info
+    
+    Gateway->>RateLimit: Check limits
+    Note over RateLimit: Per-minute: 120 req<br/>Per-day: 50K tokens
+    
+    alt Quota exceeded
+        RateLimit-->>Gateway: 429 Too Many Requests
+        Gateway-->>Frontend: Rate limit error
+        Frontend->>User: Show upgrade prompt
+    else Within limits
+        Gateway->>Router: Route request
+        Note over Router: Role: 'executor'<br/>Select model: gpt-4o
+        
+        Router->>LLM: Stream request
+        Note over Router,LLM: POST /v1/chat/completions<br/>stream: true
+        
+        loop For each chunk
+            LLM-->>Router: SSE chunk
+            Router-->>Gateway: Forward chunk
+            Gateway-->>Frontend: Stream to UI
+            Frontend->>User: Display incrementally
+        end
+        
+        LLM-->>Gateway: [DONE] + usage stats
+        Gateway->>RateLimit: Log usage
+        Note over RateLimit: Update dailyUsage<br/>Create usageLog entry
+        
+        Gateway-->>Frontend: Complete response
+        
+        Frontend->>Daemon: POST /chat/messages
+        Note over Frontend,Daemon: Save message + sources
+        Daemon->>DB: INSERT INTO messages
+        Daemon->>DB: INSERT INTO message_sources
+        
+        Frontend->>User: Show complete answer with citations
+    end
+```
+
+### Chat Pipeline
+
+<Steps>
+  <Step title="Context Retrieval">
+    Frontend performs a semantic search to find relevant screen captures:
+    
+    ```typescript
+    const context = await daemonApi.semanticSearch({
+      query: userMessage,
+      limit: 5,
+      timeRange: { days: 30 }  // Last 30 days
+    });
+    ```
+  </Step>
+  
+  <Step title="Request Construction">
+    Builds chat completion request with system prompt:
+    
+    ```typescript
+    const messages = [
+      {
+        role: 'system',
+        content: `You are Memento AI. Answer based on the user's personal memory:
+          
+Context:
+${context.map(c => c.text_content).join('\n\n')}
+
+Always cite sources using [frame_id] notation.`
+      },
+      ...conversationHistory,
+      {
+        role: 'user',
+        content: userMessage
+      }
+    ];
+    ```
+  </Step>
+  
+  <Step title="Authentication">
+    Gateway validates JWT and retrieves user/device info:
+    
+    ```typescript
+    const { userId, deviceId } = await verifyJWT(authToken);
+    ```
+  </Step>
+  
+  <Step title="Rate Limiting">
+    Checks per-minute and per-day quotas:
+    
+    ```typescript
+    const tier = await getRateLimitTier(deviceId);
+    
+    if (tier.requestsThisMinute >= tier.maxRequestsPerMinute) {
+      throw new RateLimitError('Per-minute limit exceeded');
+    }
+    
+    if (tier.tokensToday >= tier.maxTokensPerDay) {
+      // Downgrade to free tier
+      tier.currentTier = 'free';
+    }
+    ```
+  </Step>
+  
+  <Step title="Model Selection">
+    Router chooses model based on role and tier:
+    
+    ```typescript
+    const model = selectModel({
+      role: 'executor',  // Main response generation
+      tier: user.tier,   // 'free' | 'premium'
+      fallbackChain: ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo']
+    });
+    ```
+  </Step>
+  
+  <Step title="LLM Streaming">
+    Forwards request to OpenAI with streaming:
+    
+    ```typescript
+    const stream = await openai.chat.completions.create({
+      model,
+      messages,
+      stream: true
+    });
+    
+    for await (const chunk of stream) {
+      res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    }
+    ```
+  </Step>
+  
+  <Step title="Usage Tracking">
+    Records token usage for quota enforcement:
+    
+    ```typescript
+    await db.usageLog.create({
+      deviceId,
+      modelName: model,
+      role: 'executor',
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens
+    });
+    
+    await db.dailyUsage.increment({
+      deviceId,
+      date: today,
+      totalTokens: usage.total_tokens
+    });
+    ```
+  </Step>
+  
+  <Step title="Message Persistence">
+    Saves conversation to local SQLite:
+    
+    ```rust
+    let message_id = sqlx::query!(
+        "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
+        session_id, "assistant", response_text
+    ).execute(&pool).await?.last_insert_rowid();
+    
+    // Link to source chunks
+    for chunk_id in cited_chunks {
+        sqlx::query!(
+            "INSERT INTO message_sources (message_id, chunk_id, usage_type) 
+             VALUES (?, ?, 'citation')",
+            message_id, chunk_id
+        ).execute(&pool).await?;
+    }
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Flow 4: Port Discovery
+
+```mermaid
+sequenceDiagram
+    participant Daemon as Rust Daemon
+    participant Tauri as Tauri App
+    participant FS as File System
+    participant Frontend as Next.js UI
+    
+    Note over Daemon: On startup
+    Daemon->>Daemon: Find available port (7070-7077)
+    Daemon->>FS: Write port to file
+    Note over FS: C:\ProgramData\memento\ports\daemon.port
+    
+    Note over Tauri: On startup (every 30s)
+    Tauri->>FS: Read daemon.port
+    FS-->>Tauri: "7072"
+    Tauri->>Tauri: Update in-memory cache
+    
+    Note over Frontend: On API call
+    Frontend->>Tauri: invoke('get_daemon_url')
+    Tauri-->>Frontend: "http://localhost:7072"
+    
+    Frontend->>Frontend: Construct API URL
+    Frontend->>Daemon: HTTP request to discovered port
+```
+
+### Why Port Discovery?
+
+Multiple instances of the daemon might run (development + production), and ports could be occupied. Port files enable:
+
+1. **Automatic port selection**: Daemon picks first available port
+2. **No hardcoding**: Frontend adapts to any port
+3. **Multi-instance support**: Dev daemon on 7070, prod on 7071
+
+<CodeGroup>
+
+```rust Daemon: Write Port
+// On server startup
+let port = find_available_port(7070..=7077)?;
+let server = Server::bind(&format!("127.0.0.1:{}", port));
+
+// Write port to shared location
+let port_file = PathBuf::from(r"C:\ProgramData\memento\ports\daemon.port");
+fs::write(&port_file, port.to_string())?;
+```
+
+```rust Tauri: Read Port
+// Refreshed every 30 seconds
+#[tauri::command]
+fn get_daemon_url() -> Result<String, String> {
+    let port_file = PathBuf::from(r"C:\ProgramData\memento\ports\daemon.port");
+    let port = fs::read_to_string(&port_file)
+        .map_err(|e| format!("Failed to read port file: {}", e))?;
+    
+    Ok(format!("http://localhost:{}", port.trim()))
+}
+```
+
+```typescript Frontend: Use Port
+// API client (app/frontend/api/base.ts)
+export async function getDaemonUrl(): Promise<string> {
+  if (window.__TAURI__) {
+    return await invoke<string>('get_daemon_url');
+  }
+  
+  // Fallback for web mode
+  return 'http://localhost:7070';
+}
+
+// Usage
+const url = await getDaemonUrl();
+const response = await fetch(`${url}/semantic_search`, { ... });
+```
+
+</CodeGroup>
+
+---
+
+## Flow 5: Auto-Update
+
+```mermaid
+sequenceDiagram
+    participant App as Tauri App
+    participant Velopack
+    participant GitHub
+    participant Daemon as Daemon Service
+    participant Installer
+    
+    Note over App: Every 6 hours
+    App->>Velopack: Check for updates
+    Velopack->>GitHub: GET /releases/latest
+    GitHub-->>Velopack: Latest version info
+    
+    alt New version available
+        Velopack-->>App: Update available
+        App->>User: Show update prompt
+        
+        User->>App: Click "Update"
+        
+        App->>Daemon: POST /capture/pause
+        Daemon-->>App: Paused
+        
+        App->>Daemon: Stop service
+        Note over Daemon: Graceful shutdown (WM_CLOSE)
+        
+        App->>Velopack: downloadUpdates()
+        Velopack->>GitHub: Download delta patch
+        GitHub-->>Velopack: Binary diff
+        
+        Velopack->>Installer: Apply updates
+        Note over Installer: Patches files in-place
+        
+        Installer->>App: Restart app
+        
+        App->>Daemon: Start service
+        Daemon->>Daemon: Apply migrations
+        Daemon->>App: Ready
+        
+        App->>User: Update complete
+    else Already latest
+        Velopack-->>App: No updates
+    end
+```
+
+**Key points**:
+- **Delta updates**: Only download changed bytes (typically < 5 MB)
+- **Service coordination**: Daemon must stop before binary replacement
+- **Rollback support**: Can revert to previous version if update fails
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="diagram-project" href="/architecture/overview">
+    Return to architecture overview.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Explore REST API endpoints.
+  </Card>
+  <Card title="Database Schema" icon="database" href="/architecture/database-schema">
+    Deep dive into data models.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/deployment/troubleshooting">
+    Common issues and solutions.
+  </Card>
+</CardGroup>

@@ -1,0 +1,332 @@
+---
+title: "Capture Control API"
+description: "Control screen capture, check status, and manage disk usage."
+api: "GET /capture/status"
+---
+
+## Overview
+
+The Capture Control API allows you to pause/resume screen capture, check capture status, and monitor disk usage.
+
+<Info>
+  **Base URL**: `http://localhost:7070`
+</Info>
+
+---
+
+## Get Capture Status
+
+Returns current capture state and statistics.
+
+<RequestExample>
+
+```bash cURL
+curl http://localhost:7070/capture/status
+```
+
+```typescript TypeScript
+const status = await fetch('http://localhost:7070/capture/status')
+  .then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "paused": false,
+  "frames_captured_today": 1247,
+  "total_frames": 45623,
+  "disk_usage_mb": 3420,
+  "last_capture_at": 1711234567,
+  "capture_interval_seconds": 2,
+  "adaptive_throttling_active": true
+}
+```
+
+</ResponseExample>
+
+<ResponseField name="paused" type="boolean">
+  Whether capture is currently paused
+</ResponseField>
+
+<ResponseField name="frames_captured_today" type="number">
+  Number of frames captured today
+</ResponseField>
+
+<ResponseField name="total_frames" type="number">
+  Total frames in database
+</ResponseField>
+
+<ResponseField name="disk_usage_mb" type="number">
+  Total storage used (MB)
+</ResponseField>
+
+<ResponseField name="last_capture_at" type="number">
+  Unix timestamp of last capture
+</ResponseField>
+
+<ResponseField name="capture_interval_seconds" type="number">
+  Current capture interval (adaptive)
+</ResponseField>
+
+<ResponseField name="adaptive_throttling_active" type="boolean">
+  Whether adaptive throttling is enabled
+</ResponseField>
+
+---
+
+## Pause Capture
+
+Temporarily stop screen capture.
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/capture/pause
+```
+
+```typescript TypeScript
+await fetch('http://localhost:7070/capture/pause', {
+  method: 'POST'
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "status": "paused",
+  "message": "Screen capture paused"
+}
+```
+
+</ResponseExample>
+
+<Note>
+  Pausing capture stops the daemon from taking new screenshots but keeps the indexing and search services running.
+</Note>
+
+---
+
+## Resume Capture
+
+Resume screen capture after pausing.
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/capture/resume
+```
+
+```typescript TypeScript
+await fetch('http://localhost:7070/capture/resume', {
+  method: 'POST'
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "status": "running",
+  "message": "Screen capture resumed"
+}
+```
+
+</ResponseExample>
+
+---
+
+## Get Disk Usage
+
+Detailed breakdown of storage usage.
+
+<RequestExample>
+
+```bash cURL
+curl http://localhost:7070/disk_usage
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "total_mb": 4580,
+  "breakdown": {
+    "images_mb": 3420,
+    "database_mb": 980,
+    "models_mb": 150,
+    "logs_mb": 30
+  },
+  "frames_count": 45623,
+  "chunks_count": 137890,
+  "oldest_frame": 1708567890,
+  "newest_frame": 1711234567
+}
+```
+
+</ResponseExample>
+
+<ResponseField name="total_mb" type="number">
+  Total storage used across all components
+</ResponseField>
+
+<ResponseField name="breakdown" type="object">
+  Storage breakdown by component type
+  
+  <Expandable>
+    <ResponseField name="images_mb" type="number">
+      JPEG screenshots
+    </ResponseField>
+    <ResponseField name="database_mb" type="number">
+      SQLite database size
+    </ResponseField>
+    <ResponseField name="models_mb" type="number">
+      ONNX embedding models
+    </ResponseField>
+    <ResponseField name="logs_mb" type="number">
+      Application logs
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="frames_count" type="number">
+  Total frames stored
+</ResponseField>
+
+<ResponseField name="chunks_count" type="number">
+  Total text chunks indexed
+</ResponseField>
+
+<ResponseField name="oldest_frame" type="number">
+  Unix timestamp of oldest frame
+</ResponseField>
+
+<ResponseField name="newest_frame" type="number">
+  Unix timestamp of newest frame
+</ResponseField>
+
+---
+
+## Delete Old Data
+
+Remove frames older than a specified date.
+
+<ParamField body="before_timestamp" type="number" required>
+  Unix timestamp - delete all frames before this time
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+# Delete frames older than 90 days
+curl -X DELETE http://localhost:7070/capture/cleanup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "before_timestamp": 1703456789
+  }'
+```
+
+```typescript TypeScript
+// Delete frames older than 90 days
+const ninetyDaysAgo = Date.now() / 1000 - (90 * 24 * 60 * 60);
+
+await fetch('http://localhost:7070/capture/cleanup', {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    before_timestamp: ninetyDaysAgo
+  })
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "deleted_frames": 12340,
+  "deleted_chunks": 37020,
+  "freed_space_mb": 1250,
+  "message": "Cleanup completed successfully"
+}
+```
+
+</ResponseExample>
+
+<Warning>
+  **Irreversible**: Deleted frames and chunks cannot be recovered. Consider backing up your data before cleanup.
+</Warning>
+
+---
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Privacy Mode" icon="eye-slash">
+    Pause capture during sensitive activities:
+    
+    ```typescript
+    // Pause before banking
+    await pauseCapture();
+    
+    // Do sensitive work...
+    
+    // Resume after
+    await resumeCapture();
+    ```
+  </Accordion>
+  
+  <Accordion title="Storage Management" icon="hard-drive">
+    Monitor and manage disk usage:
+    
+    ```typescript
+    const usage = await getDiskUsage();
+    
+    if (usage.total_mb > 5000) {
+      // Delete frames older than 60 days
+      const cutoff = Date.now() / 1000 - (60 * 24 * 60 * 60);
+      await cleanupOldFrames(cutoff);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Battery Saving" icon="battery-half">
+    Pause during low battery:
+    
+    ```typescript
+    if (batteryLevel < 20) {
+      await pauseCapture();
+      showNotification('Capture paused to save battery');
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Privacy API" icon="shield" href="/api-reference/privacy">
+    Configure exclusion rules for sensitive apps/sites.
+  </Card>
+  <Card title="Models API" icon="microchip" href="/api-reference/models">
+    Manage embedding models.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/daemon">
+    Learn how the capture pipeline works.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/getting-started/configuration">
+    Configure capture settings.
+  </Card>
+</CardGroup>

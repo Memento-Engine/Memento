@@ -1,0 +1,292 @@
+---
+title: "Changelog"
+description: "Version history and release notes for Memento AI."
+---
+
+## [1.0.0] - 2024-03-24
+
+<Note>
+  **Initial stable release** - Production-ready with complete feature set.
+</Note>
+
+### ✨ Features
+
+- **Continuous Screen Capture**: Automatic screen recording with adaptive throttling
+- **OCR Processing**: Windows OCR API integration with 25+ language support
+- **Semantic Search**: Vector search using ONNX Runtime with DirectML GPU acceleration
+- **Hybrid Search**: Combined semantic + keyword search with reciprocal rank fusion
+- **AI Chat**: GPT-4o and Claude integration with conversation memory
+- **Privacy Controls**: Application and website exclusions with retroactive filtering
+- **Auto-Updates**: Velopack integration with delta patches (90%+ size reduction)
+- **Windows Service**: 24/7 background operation with automatic startup
+- **System Tray**: Minimal UI for quick access
+- **Dark Mode**: Vercel-inspired design system
+
+### 🏗️ Architecture
+
+- **Rust Daemon**: Core capture and indexing engine
+- **AI Gateway**: Node.js/Express API with PostgreSQL
+- **Next.js Frontend**: React 19 with Tailwind CSS
+- **Tauri Desktop**: Cross-platform wrapper with IPC
+- **SQLite Database**: Local data storage with sqlite-vec
+- **ONNX Models**: Sentence transformers for embeddings
+
+### 📊 Performance
+
+- **Capture Interval**: 2-5 seconds (adaptive)
+- **OCR Latency**: <100ms per frame
+- **Search Speed**: <50ms for semantic search
+- **Database Size**: ~100MB per 10,000 frames
+- **Memory Usage**: ~200MB idle, ~500MB active
+
+### 🔒 Security
+
+- **Local-First**: All data stored locally by default
+- **Privacy Masking**: Exclude sensitive apps/sites
+- **OAuth Integration**: Google Sign-In for gateway
+- **Rate Limiting**: Token bucket + sliding window
+
+### 📦 Deployment
+
+- **Installer Size**: 85 MB (full), 3-8 MB (delta updates)
+- **Supported OS**: Windows 10/11 (64-bit)
+- **Requirements**: 4GB RAM, 2GB disk space
+- **GPU**: Optional DirectML acceleration
+
+---
+
+## [0.9.0] - 2024-03-10
+
+### 🎯 Beta Release
+
+- ✅ All core features implemented
+- ✅ Internal testing complete
+- ✅ Documentation complete
+- ⚠️ Known issues with service stability
+
+### Added
+
+- Windows Service integration
+- Auto-update system
+- Rate limiting in AI Gateway
+- Usage tracking and analytics
+- Session management
+
+### Fixed
+
+- Service crash on Windows shutdown
+- Memory leak in OCR pipeline
+- Database lock issues
+- Port conflict resolution
+
+### Changed
+
+- Switched from Actix to Axum for HTTP server
+- Migrated from OpenAI SDK to direct API calls
+- Updated Tauri to v2.0
+- Redesigned system tray UI
+
+---
+
+## [0.8.0] - 2024-02-20
+
+### Alpha Release
+
+- 🚀 First public release
+- 🧪 Experimental features
+- 📝 Limited documentation
+
+### Added
+
+- Basic screen capture
+- Simple keyword search
+- SQLite database
+- Command-line interface
+
+### Known Issues
+
+- No automatic updates
+- Service must be started manually
+- OCR performance issues
+- Limited error handling
+
+---
+
+## Upcoming Releases
+
+### [1.1.0] - Planned for 2024-04
+
+**Themes**:
+- Multi-monitor support
+- Custom model swapping UI
+- Enhanced privacy controls
+
+**Features**:
+- [ ] Capture specific monitors
+- [ ] Model marketplace
+- [ ] Schedule-based exclusions (work hours)
+- [ ] Export/import settings
+- [ ] Backup/restore database
+
+### [1.2.0] - Planned for 2024-05
+
+**Themes**:
+- Cross-platform support
+- Cloud sync
+
+**Features**:
+- [ ] macOS support
+- [ ] Linux support
+- [ ] Optional cloud backup
+- [ ] Multi-device search
+- [ ] Browser extension
+
+---
+
+## Version Support
+
+| Version | Release Date | End of Support | Status |
+|---------|--------------|----------------|--------|
+| **1.0.x** | 2024-03-24 | 2025-03-24 | ✅ Supported |
+| **0.9.x** | 2024-03-10 | 2024-06-10 | ⚠️ Limited |
+| **0.8.x** | 2024-02-20 | 2024-05-20 | ❌ EOL |
+
+---
+
+## Migration Guides
+
+### 0.9.x → 1.0.0
+
+No breaking changes. Update automatically via built-in updater.
+
+**Optional**: Reindex for improved search quality
+```powershell
+.\memento-daemon.exe reindex
+```
+
+### 0.8.x → 0.9.0
+
+**Breaking**: Database schema change requires migration
+
+<Steps>
+  <Step title="Backup database">
+    ```powershell
+    Copy-Item $env:APPDATA\Memento\memento.db $env:APPDATA\Memento\memento.db.bak
+    ```
+  </Step>
+  
+  <Step title="Run migration">
+    ```powershell
+    .\memento-daemon.exe migrate --from 0.8.0 --to 0.9.0
+    ```
+  </Step>
+  
+  <Step title="Verify">
+    ```sql
+    sqlite3 memento.db "SELECT COUNT(*) FROM chunks;"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Semantic Versioning
+
+Memento AI follows [Semantic Versioning 2.0.0](https://semver.org/):
+
+**MAJOR.MINOR.PATCH**
+
+- **MAJOR**: Breaking changes (database schema, API changes)
+- **MINOR**: New features (backward compatible)
+- **PATCH**: Bug fixes (backward compatible)
+
+**Examples**:
+- `1.0.0 → 1.0.1`: Bug fix (auto-update)
+- `1.0.1 → 1.1.0`: New feature (auto-update)
+- `1.1.0 → 2.0.0`: Breaking change (manual migration required)
+
+---
+
+## Release Channels
+
+Subscribe to different release channels:
+
+<Tabs>
+  <Tab title="Stable">
+    **Recommended for production**
+    
+    - Fully tested releases
+    - Update frequency: Monthly
+    - Automatic updates: Yes
+    
+    ```rust
+    let channel = "stable";
+    ```
+  </Tab>
+  
+  <Tab title="Beta">
+    **Early access to new features**
+    
+    - Pre-release testing
+    - Update frequency: Weekly
+    - May have bugs
+    
+    ```rust
+    let channel = "beta";
+    ```
+  </Tab>
+  
+  <Tab title="Nightly">
+    **Latest development builds**
+    
+    - Cutting-edge features
+    - Update frequency: Daily
+    - Unstable
+    
+    ```rust
+    let channel = "nightly";
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Contributing
+
+Report bugs and request features on [GitHub Issues](https://github.com/your-org/memento-ai/issues).
+
+**Bug Report Template**:
+```markdown
+**Version**: 1.0.0
+**OS**: Windows 11 22H2
+**Steps to Reproduce**:
+1. ...
+2. ...
+
+**Expected**: ...
+**Actual**: ...
+
+**Logs**: (attach daemon.log)
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Download Latest" icon="download" href="https://github.com/your-org/memento-ai/releases/latest">
+    Get the newest version.
+  </Card>
+  
+  <Card title="Migration Guide" icon="arrow-right" href="/getting-started/installation">
+    Upgrade from older versions.
+  </Card>
+  
+  <Card title="Release Notes" icon="newspaper" href="https://github.com/your-org/memento-ai/releases">
+    Full release history.
+  </Card>
+  
+  <Card title="Roadmap" icon="map" href="https://github.com/your-org/memento-ai/projects">
+    Upcoming features.
+  </Card>
+</CardGroup>

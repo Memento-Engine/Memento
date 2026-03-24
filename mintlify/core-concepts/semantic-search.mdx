@@ -1,0 +1,267 @@
+---
+title: "Semantic Search"
+description: "How Memento AI uses vector embeddings for intelligent, meaning-based search."
+---
+
+## Overview
+
+Semantic search finds content by meaning, not just keyword matching. Memento AI generates dense vector embeddings for all text, enabling you to search using natural language queries.
+
+<Info>
+  **Model**: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)  
+  **Backend**: ONNX Runtime with DirectML GPU acceleration
+</Info>
+
+---
+
+## How Semantic Search Works
+
+```mermaid
+graph LR
+    A[Query Text] -->|Embedding Model| B[Query Vector<br/>float[384]]
+    C[Database Chunks] -->|Pre-computed| D[Chunk Vectors<br/>float[384]]
+    B -->|Cosine Similarity| E[Top-K Results]
+    D -->|Cosine Similarity| E
+    
+    style B fill:#0A0A0A,stroke:#525252,color:#fff
+    style E fill:#0A0A0A,stroke:#525252,color:#fff
+```
+
+<Steps>
+  <Step title="Text Embedding">
+    Both your query and stored chunks are converted to 384-dimensional vectors using the same embedding model.
+  </Step>
+  
+  <Step title="Vector Similarity">
+    Compute cosine similarity between query vector and all chunk vectors to find the most semantically similar content.
+  </Step>
+  
+  <Step title="Ranking">
+    Results are ranked by similarity score (0-1, higher is better) and returned to you.
+  </Step>
+</Steps>
+
+---
+
+## Embedding Generation
+
+Memento uses ONNX Runtime to generate embeddings locally and efficiently.
+
+```rust
+use fastembed::{EmbeddingModel, Init};
+
+pub struct EmbeddingService {
+    model: EmbeddingModel,
+}
+
+impl EmbeddingService {
+    pub async fn new() -> Result<Self> {
+        let model = EmbeddingModel::new(Init::new(
+            fastembed::EmbeddingModel::AllMiniLML6V2
+        ))?;
+        
+        Ok(Self { model })
+    }
+    
+    pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let embeddings = self.model.embed(vec![text], None)?;
+        Ok(embeddings.into_iter().next().unwrap())
+    }
+}
+```
+
+**Performance**:
+- **CPU**: ~120 embeddings/second
+- **GPU (RTX 3060)**: ~1,050 embeddings/second
+- **Latency**: Single embedding in ~10ms (GPU)
+
+---
+
+## Vector Storage
+
+Embeddings are stored in SQLite using the `sqlite-vec` extension.
+
+```sql
+-- Virtual table for vector storage
+CREATE VIRTUAL TABLE vec_chunks USING vec0(
+    chunk_id INTEGER PRIMARY KEY,
+    embedding FLOAT[384]  -- 384-dimensional vector
+);
+
+-- Insert embedding
+INSERT INTO vec_chunks VALUES (1234, vector_from_blob(?));
+
+-- Similarity search (cosine distance)
+SELECT 
+    chunk_id,
+    distance
+FROM vec_chunks
+WHERE embedding MATCH ?  -- Query vector
+ORDER BY distance ASC
+LIMIT 10;
+```
+
+**Storage**:
+- **Per embedding**: 384 floats × 4 bytes = 1,536 bytes
+- **Per 1,000 chunks**: ~1.5 MB
+- **Per 100,000 chunks**: ~150 MB
+
+---
+
+## Hybrid Search
+
+For best results, Memento combines semantic and keyword search:
+
+```mermaid
+graph TB
+    Query[\"User Query\"]
+    
+    subgraph Semantic
+        SemEmbed[\"Generate Embedding\"]
+        SemSearch[\"Vector Search\"]
+        SemResults[\"Top 20 Results\"]
+    end
+    
+    subgraph Keyword
+        FTS[\"Full-Text Search\"]
+        FTSResults[\"Top 20 Results\"]
+    end
+    
+    Query --> SemEmbed
+    Query --> FTS
+    SemEmbed --> SemSearch
+    SemSearch --> SemResults
+    FTS --> FTSResults
+    
+    SemResults --> RRF[\"Reciprocal Rank Fusion\"]
+    FTSResults --> RRF
+    
+    RRF --> Final[\"Top 10 Combined Results\"]
+    
+    style RRF fill:#0A0A0A,stroke:#525252,color:#fff
+    style Final fill:#0A0A0A,stroke:#525252,color:#fff
+```
+
+**Reciprocal Rank Fusion** (RRF) combines rankings:
+
+```rust
+fn reciprocal_rank_fusion(
+    semantic: Vec<Result>,
+    keyword: Vec<Result>,
+    k: f32
+) -> Vec<Result> {
+    let mut scores = HashMap::new();
+    
+    // Add semantic scores
+    for (rank, result) in semantic.iter().enumerate() {
+        *scores.entry(result.id).or_insert(0.0) += 
+            1.0 / (k + rank as f32 + 1.0);
+    }
+    
+    // Add keyword scores
+    for (rank, result) in keyword.iter().enumerate() {
+        *scores.entry(result.id).or_insert(0.0) += 
+            1.0 / (k + rank as f32 + 1.0);
+    }
+    
+    // Sort by combined score
+    scores.into_iter()
+        .sorted_by(|a, b| b.1.partial_cmp(&a.1).unwrap())
+        .take(10)
+        .collect()
+}
+```
+
+**Why RRF?**:
+- Semantic finds conceptually similar content
+- Keyword finds exact matches
+- Combining both gives best of both worlds
+
+---
+
+## Query Examples
+
+<Tabs>
+  <Tab title="Natural Language">
+    ```typescript
+    // Find conceptually related content
+    const results = await search({
+      query: "how to configure privacy settings",
+      mode: "semantic"
+    });
+    ```
+    
+    Matches:
+    - "Privacy configuration guide"
+    - "Setting up exclusion rules"
+    - "Configuring masked websites"
+  </Tab>
+  
+  <Tab title="Technical Terms">
+    ```typescript
+    // Find technical documentation
+    const results = await search({
+      query: "vector embeddings ONNX",
+      mode: "hybrid"  // Best for technical queries
+    });
+    ```
+    
+    Combines semantic understanding with exact keyword matching.
+  </Tab>
+  
+  <Tab title="Time-Based">
+    ```typescript
+    // Search recent content only
+    const results = await search({
+      query: "deployment documentation",
+      time_range: { days: 7 }
+    });
+    ```
+    
+    Filters to last 7 days before searching.
+  </Tab>
+</Tabs>
+
+---
+
+## Best Practices
+
+<Card title="Use Natural Language" icon="message">
+  Describe what you're looking for naturally:
+  - ✅ "How to set up privacy exclusions"
+  - ❌ "privacy exclusion setup config"
+</Card>
+
+<Card title="Combine with Filters" icon="filter">
+  Use time ranges and app filters for better results:
+  ```typescript
+  {
+    query: "architecture diagrams",
+    time_range: { days: 30 },
+    filters: { app_names: ["chrome.exe"] }
+  }
+  ```
+</Card>
+
+<Card title="Prefer Hybrid Search" icon="merge">
+  Unless you specifically need semantic=only, use hybrid search for best accuracy.
+</Card>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Search API" icon="code" href="/api-reference/search">
+    Use semantic search via REST API.
+  </Card>
+  <Card title="Models" icon="microchip" href="/api-reference/models">
+    Manage and switch embedding models.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/daemon">
+    Learn how embeddings are generated.
+  </Card>
+  <Card title="Advanced" icon="layer-group" href="/advanced/custom-models">
+    Use custom embedding models.
+  </Card>
+</CardGroup>

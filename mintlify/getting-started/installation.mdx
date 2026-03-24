@@ -1,0 +1,217 @@
+---
+title: "Installation"
+description: "A complete guide to installing Memento AI on Windows, macOS, and Linux."
+---
+
+## Prerequisites
+
+<AccordionGroup>
+  <Accordion title="Node.js 20 LTS" icon="node-js">
+    Required for the AI Gateway, agents, and frontend.  
+    Download from [nodejs.org](https://nodejs.org) or install via `nvm`:
+    ```bash
+    nvm install 20
+    nvm use 20
+    ```
+  </Accordion>
+  <Accordion title="Rust 1.76+" icon="gear">
+    Required to build the Rust core and daemon crates.
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+    On Windows, use [rustup-init.exe](https://rustup.rs).
+  </Accordion>
+  <Accordion title="PostgreSQL 15+" icon="database">
+    Used by the AI Gateway for session, auth, and usage data.  
+    macOS: `brew install postgresql@15`  
+    Windows: [postgresql.org/download/windows](https://www.postgresql.org/download/windows/)  
+    Linux: `sudo apt install postgresql-15`
+  </Accordion>
+</AccordionGroup>
+
+### Platform-specific requirements
+
+<Tabs>
+  <Tab title="Windows">
+    - **Visual Studio Build Tools 2022** — needed by Rust for native compilation.  
+      Install via [vs2022 BuildTools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) and select *"Desktop development with C++"*.
+    - **WebView2 Runtime** — pre-installed on Windows 11; download for Windows 10 from Microsoft.
+    - Add the MSVC target:
+      ```powershell
+      rustup target add x86_64-pc-windows-msvc
+      ```
+  </Tab>
+  <Tab title="macOS">
+    Install Xcode command-line tools:
+    ```bash
+    xcode-select --install
+    ```
+    Then add the macOS target (Apple Silicon):
+    ```bash
+    rustup target add aarch64-apple-darwin
+    ```
+  </Tab>
+  <Tab title="Linux">
+    Install system dependencies for Tauri:
+    ```bash
+    sudo apt update
+    sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev \
+      librsvg2-dev patchelf
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Step 1 — Clone the repository
+
+```bash
+git clone https://github.com/pavan/memento-ai.git
+cd memento-ai
+```
+
+---
+
+## Step 2 — Install Node.js dependencies
+
+```bash
+npm install
+```
+
+This resolves the full monorepo workspace, including:
+
+| Workspace | Path | Description |
+|---|---|---|
+| Frontend | `app/frontend/` | Next.js search UI |
+| Agents | `app/agents/` | LangChain query agents |
+| AI Gateway | `ai-gateway/` | Express API gateway |
+| Shared | `shared/` | Shared TypeScript utilities |
+
+---
+
+## Step 3 — Build Rust components
+
+```bash
+cargo build --workspace
+```
+
+<Tip>
+  For a production-optimised binary, add `--release`:
+  ```bash
+  cargo build --workspace --release
+  ```
+  Binaries land in `target/release/`.
+</Tip>
+
+The workspace contains three crates:
+
+| Crate | Description |
+|---|---|
+| `crates/core` | Indexing engine and hybrid search library |
+| `crates/daemon` | Background file-watching and indexing service |
+| `crates/service-helper` | Windows service registration helper |
+
+---
+
+## Step 4 — Set up the database
+
+```bash
+# Create the database
+createdb memento_ai
+
+# Run all migrations
+cd ai-gateway
+npx drizzle-kit migrate
+cd ..
+```
+
+Migrations run in order:
+
+```
+migrations/
+  001_init.sql
+  002_privacy_masking.sql
+  003_messages.sql
+  004_chats.sql
+  005_message_thinking_steps.sql
+  006_chat_summaries.sql
+  007_message_followups.sql
+```
+
+---
+
+## Step 5 — Configure environment
+
+```bash
+cp ai-gateway/.env.example ai-gateway/.env
+```
+
+At minimum, set these two variables in `ai-gateway/.env`:
+
+```env
+DATABASE_URL=postgres://postgres:password@localhost:5432/memento_ai
+OPENAI_API_KEY=sk-...
+```
+
+See [Configuration](/getting-started/configuration) for the full reference.
+
+---
+
+## Step 6 — Start all services
+
+<Tabs>
+  <Tab title="Development (3 terminals)">
+    ```bash
+    # Terminal 1 — AI Gateway (port 4000)
+    cd ai-gateway && npm run dev
+
+    # Terminal 2 — Next.js frontend (port 3000)
+    cd app/frontend && npm run dev
+
+    # Terminal 3 — Rust daemon
+    cargo run -p daemon
+    ```
+    Open **http://localhost:3000**.
+  </Tab>
+  <Tab title="Desktop app (Tauri)">
+    ```bash
+    # Starts the frontend + Tauri shell together
+    cd app && npm run tauri dev
+    ```
+    The native desktop window opens automatically.
+  </Tab>
+</Tabs>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="cargo build fails with linker errors on Windows">
+    Ensure **MSVC Build Tools** are installed with the *"Desktop development with C++"* workload.  
+    Run `rustup show` to confirm the `x86_64-pc-windows-msvc` target is active.
+  </Accordion>
+  <Accordion title="Database connection refused">
+    Check PostgreSQL is running:
+    ```powershell
+    # Windows
+    Get-Service postgresql*
+
+    # macOS / Linux
+    pg_ctl status
+    ```
+    Ensure `DATABASE_URL` in `.env` matches your PostgreSQL user, password, and port.
+  </Accordion>
+  <Accordion title="Port already in use">
+    Default ports: Gateway = `4000`, Frontend = `3000`, Daemon = `5100`.  
+    Override any of them in `ai-gateway/.env`:
+    ```env
+    PORT=4001
+    ```
+    And in `shared/config/fileConfig.ts` for the daemon port.
+  </Accordion>
+  <Accordion title="WebView2 not found (Windows)">
+    Download and install the WebView2 Runtime from  
+    [developer.microsoft.com/microsoft-edge/webview2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+  </Accordion>
+</AccordionGroup>

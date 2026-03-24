@@ -1,0 +1,123 @@
+---
+title: "AI Gateway"
+description: "The Node.js service that handles auth, rate-limiting, model routing, and usage tracking."
+---
+
+## Overview
+
+The AI Gateway (`ai-gateway/`) is an Express/TypeScript service that sits between the frontend/agents and your configured LLM provider. It acts as a secure, rate-limited proxy.
+
+### Responsibilities
+
+- **Authentication** — session-based auth + optional Google OAuth
+- **Rate limiting** — per-IP sliding-window throttle
+- **Model routing** — pick the right model based on query context and user tier
+- **Usage tracking** — record token/request counts per user, stored in PostgreSQL
+- **Privacy** — strips PII from prompts before forwarding to the LLM
+
+---
+
+## Directory structure
+
+```
+ai-gateway/
+├── src/
+│   ├── server.ts          Express app setup
+│   ├── config.ts          Environment config
+│   ├── modelRouter.ts     Model selection logic
+│   ├── rateLimiter.ts     Sliding-window rate limiter
+│   ├── usageTracker.ts    Per-user usage accounting
+│   ├── types.ts           Shared TypeScript types
+│   ├── controllers/       Route handler logic
+│   ├── db/                Drizzle ORM schema + client
+│   ├── middlewares/       Auth, logging, error middleware
+│   ├── providers/         OpenAI, local LLM adapters
+│   ├── routes/            Express router definitions
+│   └── utils/             Helpers
+├── migrations/            SQL migration files
+└── drizzle.config.ts      Drizzle ORM config
+```
+
+---
+
+## Authentication
+
+The gateway supports two auth strategies:
+
+<Tabs>
+  <Tab title="Session-based">
+    Stateful sessions via `express-session` backed by PostgreSQL.
+    ```env
+    SESSION_SECRET=your-long-random-secret
+    ```
+  </Tab>
+  <Tab title="Google OAuth">
+    OAuth 2.0 flow via Google. Add credentials to `.env`:
+    ```env
+    GOOGLE_CLIENT_ID=...
+    GOOGLE_CLIENT_SECRET=...
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Rate limiting
+
+Default: **100 requests per 60-second window per IP**. Override via `.env`:
+
+```env
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_REQUESTS=100
+```
+
+---
+
+## Model routing
+
+`modelRouter.ts` selects a model based on:
+
+1. Query complexity (token count heuristic)
+2. User tier (free / pro)
+3. `DEFAULT_MODEL` env var fallback
+
+```typescript
+// Override the model for a single request
+POST /v1/chat
+{
+  "model": "gpt-4o",
+  "messages": [...]
+}
+```
+
+---
+
+## Database schema
+
+Migrations live in `ai-gateway/migrations/` and are applied with Drizzle Kit:
+
+```bash
+cd ai-gateway
+npx drizzle-kit migrate
+```
+
+| Migration | Description |
+|---|---|
+| `0000_init_base_tables.sql` | Users, sessions |
+| `0001_create_usage_table.sql` | Per-user usage rows |
+| `0002_usage_tracking_system.sql` | Aggregation views |
+| `0003_add_daily_usage_constraint.sql` | Daily cap enforcement |
+| `0004_add_session_and_google_auth.sql` | Google OAuth tables |
+
+---
+
+## Running in production
+
+```bash
+NODE_ENV=production npm run build
+NODE_ENV=production node dist/server.js
+```
+
+<Warning>
+  In production, always set a strong `SESSION_SECRET` and restrict `CORS_ORIGIN` to your actual frontend domain.
+</Warning>
