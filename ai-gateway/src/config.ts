@@ -144,9 +144,9 @@ export function loadConfig(): GatewayConfig {
   const config: GatewayConfig = {
     db: {
       url:
-        process.env.NODE_ENV === "production"
-          ? process.env.NEON_DATABASE_URL!
-          : process.env.DATABASE_URL!,
+        // process.env.NODE_ENV === "production"
+        //   ? process.env.NEON_DATABASE_URL!
+          process.env.DATABASE_URL!,
     },
     env: (process.env.NODE_ENV === "production" ? "production" : "development"),
     server: {

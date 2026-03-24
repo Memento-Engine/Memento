@@ -1,0 +1,90 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-gateway-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aigateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-aigateway}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-gateway-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aigateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:5432:5432"  # Only expose to localhost
+
+  ai-gateway:
+    image: ${DOCKER_IMAGE:-yourusername/ai-gateway:latest}
+    container_name: ai-gateway
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4180:4180"
+    environment:
+      # Server Configuration
+      AI_GATEWAY_HOST: 0.0.0.0
+      AI_GATEWAY_PORT: 4180
+      NODE_ENV: production
+      
+      # Database (uses service name 'postgres' as hostname)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aigateway}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aigateway}
+      
+      # Provider Credentials
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      AI_GATEWAY_OPENROUTER_BASE_URL: ${AI_GATEWAY_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      
+      # Model Configuration
+      AI_GATEWAY_DEFAULT_MODEL: ${AI_GATEWAY_DEFAULT_MODEL:-openai/gpt-4o-mini}
+      AI_GATEWAY_DEFAULT_TEMPERATURE: ${AI_GATEWAY_DEFAULT_TEMPERATURE:-0}
+      
+      # Rate Limiting
+      AI_GATEWAY_FREE_RPM: ${AI_GATEWAY_FREE_RPM:-20}
+      AI_GATEWAY_FREE_DAILY_TOKENS: ${AI_GATEWAY_FREE_DAILY_TOKENS:-40000}
+      AI_GATEWAY_PRO_RPM: ${AI_GATEWAY_PRO_RPM:-120}
+      AI_GATEWAY_PRO_DAILY_TOKENS: ${AI_GATEWAY_PRO_DAILY_TOKENS:-300000}
+      
+      # JWT Secrets
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      
+      # Optional: Tavily API
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      
+      # Optional: Sentry
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    
+    networks:
+      - ai-gateway-network
+    
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4180/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    labels:
+      - "com.docker.compose.project=ai-gateway"
+      - "service=ai-gateway"
+
+networks:
+  ai-gateway-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
