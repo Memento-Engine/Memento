@@ -1,17 +1,15 @@
 import "dotenv/config";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import postgres from "postgres";
 import { neon } from "@neondatabase/serverless";
 import { loadConfig } from "@/config.ts";
 
-let client;
-
 const config = loadConfig();
-if (process.env.NODE_ENV === "production") {
-  client = neon(config.db.url);
-} else {
-  console.log("Dev URl", config.db.url);
-  client = postgres(config.db.url);
-}
 
-export const db = drizzle(client);
+export const db = process.env.NODE_ENV === "production"
+  ? drizzleNeon(neon(config.db.url))
+  : (() => {
+      console.log("Dev URL", config.db.url);
+      return drizzlePostgres(postgres(config.db.url));
+    })();
