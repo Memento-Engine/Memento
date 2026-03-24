@@ -58,7 +58,7 @@ export async function loadConfig(): Promise<Config> {
       environment: devMode ? "development" : "production",
     },
     aiGateway: {
-      baseUrl: "http://127.0.0.1:4180",
+      baseUrl: devMode ? "http://127.0.0.1:4180" : "https://trymemento.in",
       timeoutMs: 30000,
       userId: "agents-service",
     },
