@@ -103,6 +103,7 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER || 'ec2-user' }}
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
           IMAGE_NAME: ghcr.io/${{ github.repository }}/ai-gateway
         run: |
           # Setup SSH
@@ -111,19 +112,19 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
           
-          # Deploy script
-          ssh $EC2_USER@$EC2_HOST << 'ENDSSH'
+          # Deploy script - export variables to remote
+          ssh $EC2_USER@$EC2_HOST "bash -s" << EOF
             set -e
             
             # Login to GitHub Container Registry
-            echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo '$GITHUB_TOKEN' | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
             
             # Pull latest image
             docker pull $IMAGE_NAME:latest
             
             # Stop and remove old container
-            docker stop ai-gateway || true
-            docker rm ai-gateway || true
+            docker stop ai-gateway 2>/dev/null || true
+            docker rm ai-gateway 2>/dev/null || true
             
             # Run new container
             docker run -d \
@@ -142,7 +143,7 @@ jobs:
             sleep 10
             curl -f http://localhost:4180/health || exit 1
             echo "Deployment successful!"
-          ENDSSH
+          EOF
       
       # Uncomment if you want Slack notifications
       # - name: Slack Notification
