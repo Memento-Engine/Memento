@@ -101,15 +101,8 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER || 'ec2-user' }}
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
-        run: |
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-          IMAGE_NAME: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}/ai-gateway
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
@@ -118,14 +111,14 @@ jobs:
           ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
           
           # Deploy script
-          ssh $EC2_USER@$EC2_HOST << ENDSSH
+          ssh $EC2_USER@$EC2_HOST << 'ENDSSH'
             set -e
             
             # Login to GitHub Container Registry
             echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
             # Pull latest image
-            docker pull ${IMAGE_NAME}:latest
+            docker pull $IMAGE_NAME:latest
             
             # Stop and remove old container
             docker stop ai-gateway || true
@@ -136,9 +129,20 @@ jobs:
               --name ai-gateway \
               --restart unless-stopped \
               -p 4180:4180 \
-              --env-file /home/${EC2_USER}/ai-gateway/.env \
+              --env-file /home/$EC2_USER/ai-gateway/.env \
               --network ai-gateway-network \
-              ${IMAGE_NAME
+              $IMAGE_NAME:latest
+            
+            # Cleanup old images
+            docker image prune -af
+            
+            # Health check
+            echo "Waiting for health check..."
+            sleep 10
+            curl -f http://localhost:4180/health || exit 1
+            echo "Deployment successful!"
+          ENDSSH
+      
       # Uncomment if you want Slack notifications
       # - name: Slack Notification
       #   if: always()
@@ -147,8 +151,4 @@ jobs:
       #     status: ${{ job.status }}
       #     text: 'AI Gateway deployment to EC2: ${{ job.status }}'
       #   env:
-      #     status: ${{ job.status }}
-          text: 'AI Gateway deployment to EC2: ${{ job.status }}'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
