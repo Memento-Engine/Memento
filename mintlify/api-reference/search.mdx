@@ -1,0 +1,200 @@
+---
+title: "Search API"
+description: "Comprehensive search endpoints for semantic, keyword, and hybrid search."
+api: "POST /semantic_search"
+---
+
+## Overview
+
+The Search API provides three search modes:
+
+- **Semantic Search**: Vector similarity using embeddings
+- **Keyword Search**: BM25-ranked full-text search
+- **Hybrid Search**: Combined semantic + keyword with rank fusion
+
+<Info>
+  **Base URL**: `http://localhost:7070` (or use [port discovery](/advanced/port-discovery))
+</Info>
+
+---
+
+## Semantic Search
+
+Find content by meaning, not just keywords.
+
+<ParamField path="query" type="string" required>
+  Natural language search query
+</ParamField>
+
+<ParamField path="limit" type="number" default={10}>
+  Maximum number of results (1-100)
+</ParamField>
+
+<ParamField path="time_range" type="object">
+  Filter by time period
+  
+  <Expandable title="properties">
+    <ParamField path="start" type="number">
+      Unix timestamp (inclusive)
+    </ParamField>
+    
+    <ParamField path="end" type="number">
+      Unix timestamp (inclusive)
+    </ParamField>
+    
+    <ParamField path="days" type="number">
+      Last N days (shorthand)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="filters" type="object">
+  Filter results by metadata
+  
+  <Expandable title="properties">
+    <ParamField path="app_names" type="string[]">
+      Filter by application (e.g., `["chrome.exe", "Code.exe"]`)
+    </ParamField>
+    
+    <ParamField path="domains" type="string[]">
+      Filter by domain (e.g., `["github.com"]`)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/semantic_search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "privacy features in the documentation",
+    "limit": 10,
+    "time_range": { "days": 30 },
+    "filters": {
+      "app_names": ["chrome.exe"]
+    }
+  }'
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:7070/semantic_search', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: 'privacy features in the documentation',
+    limit: 10,
+    time_range: { days: 30 },
+    filters: {
+      app_names: ['chrome.exe']
+    }
+  })
+});
+
+const results = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'http://localhost:7070/semantic_search',
+    json={
+        'query': 'privacy features in the documentation',
+        'limit': 10,
+        'time_range': {'days': 30},
+        'filters': {'app_names': ['chrome.exe']}
+    }
+)
+
+results = response.json();
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "results": [
+    {
+      "chunk_id": 1234,
+      "frame_id": 567,
+      "text_content": "Memento AI Privacy Features\n\nAll data stays local on your machine...",
+      "score": 0.89,
+      "app_name": "chrome.exe",
+      "window_title": "Memento AI - Privacy",
+      "browser_url": "https://docs.memento.ai/privacy",
+      "image_path": "images/20240324/567.jpg",
+      "captured_at": 1711234567,
+      "window_bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080
+      }
+    }
+  ],
+  "total": 1,
+  "query_time_ms": 45
+}
+```
+
+</ResponseExample>
+
+---
+
+## Hybrid Search
+
+Combines semantic and keyword search with Reciprocal Rank Fusion.
+
+<Info>
+  **Recommended**: Use hybrid search for best results. It combines the semantic understanding of vector search with the precision of keyword matching.
+</Info>
+
+<ParamField path="query" type="string" required>
+  Search query (used for both semantic and keyword)
+</ParamField>
+
+<ParamField path="limit" type="number" default={10}>
+  Maximum results after fusion
+</ParamField>
+
+<RequestExample>
+
+```typescript TypeScript
+const results = await fetch('http://localhost:7070/hybrid_search', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: 'machine learning embeddings',
+    limit: 10
+  })
+}).then(r => r.json());
+      "snippet": "...the main priorities for Q3 were shipping the daemon ...",
+      "lastModified": "2025-10-12T14:32:00Z"
+    }
+  ],
+  "aiAnswer": {
+    "text": "Your Q3 review from October 2025 highlights three priorities...",
+    "citations": ["doc_abc123"]
+  },
+  "latencyMs": 42
+}
+```
+
+### Response fields
+
+| Field | Type | Description |
+|---|---|---|
+| `results` | `Result[]` | Ranked list of matching documents |
+| `results[].id` | `string` | Unique document ID in the index |
+| `results[].score` | `number` | Fusion score (0–1, higher is better) |
+| `results[].title` | `string` | Document filename or title |
+| `results[].path` | `string` | Absolute path on disk |
+| `results[].snippet` | `string` | Highlighted excerpt with match context |
+| `results[].lastModified` | `string` | ISO 8601 timestamp |
+| `aiAnswer` | `object \| null` | Present when `augment: true` |
+| `aiAnswer.text` | `string` | Synthesised answer |
+| `aiAnswer.citations` | `string[]` | Document IDs cited in the answer |
+| `latencyMs` | `number` | Total query latency in milliseconds |

@@ -1,7 +1,13 @@
 "use client";
 
 import type { ChatStatus } from "ai";
-import { RefreshCwIcon, Share2, ThumbsDown, ThumbsUp } from "lucide-react";
+import {
+  CornerDownRight,
+  RefreshCwIcon,
+  Share2,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import React, { useCallback, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -25,6 +31,7 @@ export type MessageItemProps = {
   status: ChatStatus;
   onRegenerate?: (messageId: string) => void;
   onEdit?: (messageId: string, newText: string) => void;
+  onFollowupClick?: (query: string) => void;
 };
 
 const CONTENT_TYPE = {
@@ -38,6 +45,7 @@ function MessageItem({
   status,
   onRegenerate,
   onEdit,
+  onFollowupClick,
 }: MessageItemProps): React.ReactElement {
   const { assistantStatus, searchQueries, sourceReview } = useChatContext();
   const { setReferenceMeta, setSourceList } = useReferenceContext();
@@ -70,7 +78,6 @@ function MessageItem({
   }
 
   const sourceList = Array.from(sourceMap.values());
-  console.log("Extracted sources from message parts:", sourceList);
   const messageSearchMode = getMessageSearchMode(message);
 
   // Get full text content for copy button
@@ -123,24 +130,13 @@ function MessageItem({
     return (
       <div key={`${message.id}-${partIndex}`} className="w-full">
         {message.role === "user" ? (
-    <div className="flex w-full justify-end mb-4">
-  <div className="bg-secondary text-secondary-foreground px-4 py-2 rounded-2xl inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
-    
-    {/* {messageSearchMode && (
-      <div className="mb-3">
-        <span className="inline-flex items-center gap-1.5 rounded-md bg-background/50 px-2 py-1 text-xs font-medium text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-          {messageSearchMode === "accurateSearch" ? "Accurate Search" : "Search"}
-        </span>
-      </div>
-    )} */}
-
-    <div className="select-text text-[15px] whitespace-pre-wrap leading-relaxed break-words">
-      {part.text}
-    </div>
-
-  </div>
-</div>
+          <div className="flex w-full justify-end mb-4">
+            <div className="bg-secondary text-secondary-foreground px-3 py-1 rounded-lg inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
+              <div className="select-text text-[14px] whitespace-pre-wrap leading-relaxed break-words">
+                {part.text}
+              </div>
+            </div>
+          </div>
         ) : (
           <RenderMarkdown
             sourceMap={sourceMap}
@@ -231,6 +227,44 @@ function MessageItem({
     return null;
   };
 
+  const renderFollowups = (): React.ReactElement => {
+    if (message.role !== "assistant") {
+      return <></>;
+    }
+
+    const followups = message.parts
+      .filter((part) => part.type === "data-followups")
+      .flatMap((part) => (Array.isArray(part.data) ? part.data : []))
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (followups.length === 0) {
+      return <></>;
+    }
+
+    return (
+      <div className="mt-6 pt-4 border-t border-border/40">
+        <div className="mb-3 text-sm font-medium text-foreground">
+          Follow-ups
+        </div>
+        <div className="flex flex-col gap-1">
+          {followups.map((item, idx) => (
+            <button
+              key={`${message.id}-followup-${idx}`}
+              type="button"
+              onClick={() => onFollowupClick?.(item)}
+              className="flex items-start gap-2 py-2 text-sm text-muted-foreground text-left hover:text-foreground transition-colors cursor-pointer group"
+            >
+              <CornerDownRight className="h-4 w-4 mt-0.5 flex-shrink-0 opacity-60 group-hover:opacity-100" />
+              <span>{item}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const renderImageGrid = (): React.ReactElement => {
     if (
       message.role === "assistant" &&
@@ -277,6 +311,8 @@ function MessageItem({
           }
           return null;
         })}
+
+        {renderFollowups()}
 
         {/* Message actions for user messages */}
         {message.role === "user" && showControls && (

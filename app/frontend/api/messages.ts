@@ -10,6 +10,7 @@ export interface MessageRow {
   content: string;
   created_at: string;
   thinking_steps: ThinkingStep[];
+  followups: string[];
   sources: MessageSourceRow[];
 }
 

@@ -1,0 +1,411 @@
+---
+title: "Building from Source"
+description: "Compile and package Memento AI for distribution."
+---
+
+## Overview
+
+Memento AI is built with Rust (daemon) and Node.js (frontend/gateway). This guide covers building production releases.
+
+<Info>
+  **Build Time**: ~10 minutes (incremental), ~30 minutes (clean)  
+  **Targets**: Windows x64, macOS (Intel + Apple Silicon), Linux x64
+</Info>
+
+---
+
+## Prerequisites
+
+<Tabs>
+  <Tab title="Windows">
+    ```powershell
+    # Install Rust
+    winget install Rustlang.Rustup
+    
+    # Install Node.js
+    winget install OpenJS.NodeJS.LTS
+    
+    # Install Visual Studio Build Tools
+    winget install Microsoft.VisualStudio.2022.BuildTools
+    
+    # Install Tauri CLI
+    cargo install tauri-cli
+    
+    # Install Velopack
+    dotnet tool install -g vpk
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    # Install Homebrew
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    
+    # Install dependencies
+    brew install rust node
+    
+    # Install Tauri CLI
+    cargo install tauri-cli
+    
+    # Install Velopack
+    dotnet tool install -g vpk
+    ```
+  </Tab>
+  
+  <Tab title="Linux">
+    ```bash
+    # Install Rust
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    
+    # Install Node.js
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt install -y nodejs
+    
+    # Install dependencies
+    sudo apt install -y \
+      libwebkit2gtk-4.1-dev \
+      build-essential \
+      curl \
+      wget \
+      file \
+      libssl-dev \
+      libayatana-appindicator3-dev \
+      librsvg2-dev
+    
+    # Install Tauri CLI
+    cargo install tauri-cli
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Project Structure
+
+```
+search_engine/
+├── crates/
+│   ├── core/           # Rust daemon
+│   ├── daemon/         # HTTP server
+│   └── service-helper/ # Windows service installer
+├── app/
+│   ├── frontend/       # Next.js UI
+│   └── src-tauri/      # Tauri wrapper
+├── ai-gateway/         # Express API
+└── scripts/
+    └── build-release.ps1
+```
+
+---
+
+## Build Steps
+
+<Steps>
+  <Step title="Clone repository">
+    ```bash
+    git clone https://github.com/your-org/memento-ai.git
+    cd memento-ai
+    ```
+  </Step>
+  
+  <Step title="Install dependencies">
+    ```bash
+    # Root dependencies
+    npm install
+    
+    # Frontend dependencies
+    cd app/frontend
+    npm install
+    cd ../..
+    
+    # Gateway dependencies
+    cd ai-gateway
+    npm install
+    cd ..
+    ```
+  </Step>
+  
+  <Step title="Build Rust daemon">
+    ```bash
+    cargo build --release -p memento-daemon
+    
+    # Output: target/release/memento-daemon.exe
+    ```
+  </Step>
+  
+  <Step title="Build service helper">
+    ```bash
+    cargo build --release -p service-helper
+    
+    # Output: target/release/service-helper.exe
+    ```
+  </Step>
+  
+  <Step title="Build frontend">
+    ```bash
+    cd app/frontend
+    npm run build
+    
+    # Output: .next/ directory
+    cd ../..
+    ```
+  </Step>
+  
+  <Step title="Build Tauri app">
+    ```bash
+    cd app
+    cargo tauri build
+    
+    # Output: src-tauri/target/release/bundle/
+    cd ..
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Automated Build Script
+
+Use the provided PowerShell script:
+
+```powershell
+.\scripts\build-release.ps1 -Version "1.0.0" -Target "windows"
+```
+
+**Parameters**:
+- `-Version`: Semantic version (e.g., "1.2.3")
+- `-Target`: Platform (windows, macos, linux)
+- `-Clean`: Clean build (removes target/)
+
+**Output**:
+```
+release-staging/
+├── memento-1.0.0-setup.exe     # Installer
+├── memento-daemon.exe
+├── service-helper.exe
+├── DirectML.dll
+└── models/
+    └── all-MiniLM-L6-v2/
+```
+
+---
+
+## Build Configurations
+
+### Development Build
+
+Fast incremental builds for testing:
+
+```bash
+cargo build -p memento-daemon
+npm run dev
+```
+
+### Release Build
+
+Optimized for production:
+
+```toml
+[profile.release]
+opt-level = 3
+lto = true           # Link-time optimization
+codegen-units = 1    # Better optimization
+strip = true         # Remove debug symbols
+panic = 'abort'      # Smaller binaries
+```
+
+### Size Optimization
+
+Reduce binary size:
+
+```toml
+[profile.release-min]
+inherits = "release"
+opt-level = "z"      # Optimize for size
+lto = true
+strip = true
+```
+
+```bash
+cargo build --profile release-min
+```
+
+---
+
+## Cross-Compilation
+
+### Windows → Linux
+
+```bash
+# Install target
+rustup target add x86_64-unknown-linux-gnu
+
+# Install linker
+sudo apt install gcc-mingw-w64-x86-64
+
+# Build
+cargo build --release --target x86_64-unknown-linux-gnu
+```
+
+### macOS Universal Binary
+
+```bash
+# Build for both architectures
+cargo build --release --target x86_64-apple-darwin
+cargo build --release --target aarch64-apple-darwin
+
+# Combine into universal binary
+lipo -create \
+  target/x86_64-apple-darwin/release/memento-daemon \
+  target/aarch64-apple-darwin/release/memento-daemon \
+  -output memento-daemon-universal
+```
+
+---
+
+## Packaging with Velopack
+
+<Steps>
+  <Step title="Prepare release directory">
+    ```powershell
+    $releaseDir = ".\release-staging"
+    Copy-Item .\target\release\memento-daemon.exe $releaseDir\
+    Copy-Item .\target\release\service-helper.exe $releaseDir\
+    Copy-Item .\DirectML.dll $releaseDir\
+    ```
+  </Step>
+  
+  <Step title="Package installer">
+    ```powershell
+    vpk pack `
+      --packId memento `
+      --packVersion 1.0.0 `
+      --packDir .\release-staging `
+      --mainExe memento.exe `
+      --releaseDir .\velopack-output
+    ```
+  </Step>
+  
+  <Step title="Generate delta package">
+    ```powershell
+    # Requires previous version
+    vpk delta `
+      --baseVersion 0.9.0 `
+      --newVersion 1.0.0 `
+      --outputDir .\velopack-output
+    ```
+  </Step>
+  
+  <Step title="Verify output">
+    ```
+    velopack-output/
+    ├── Setup.exe                    # Full installer
+    ├── RELEASES                     # Update manifest
+    ├── memento-1.0.0-full.nupkg    # Full package
+    └── memento-1.0.0-delta.nupkg   # Delta patch
+    ```
+  </Step>
+</Steps>
+
+---
+
+## CI/CD Pipeline
+
+### GitHub Actions
+
+```yaml
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Build
+        run: |
+          npm install
+          cargo build --release
+          cd app && cargo tauri build
+      
+      - name: Package with Velopack
+        run: vpk pack --packId memento --packVersion ${{ github.ref_name }}
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: memento-${{ matrix.os }}
+          path: velopack-output/
+```
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Linker errors" icon="link">
+    **Error**: `LNK1181: cannot open input file`
+    
+    **Solution**: Install Visual Studio Build Tools
+    ```powershell
+    winget install Microsoft.VisualStudio.2022.BuildTools
+    ```
+  </Accordion>
+  
+  <Accordion title="Out of memory during build" icon="memory">
+    **Issue**: Large project causes OOM
+    
+    **Solution**: Increase codegen units
+    ```toml
+    [profile.release]
+    codegen-units = 4  # Default: 1
+    ```
+  </Accordion>
+  
+  <Accordion title="DirectML.dll missing" icon="file">
+    **Error**: `DirectML.dll not found`
+    
+    **Solution**: Copy from NuGet package
+    ```powershell
+    nuget install Microsoft.AI.DirectML -OutputDirectory packages
+    Copy-Item .\packages\Microsoft.AI.DirectML.*\bin\x64-win\DirectML.dll .\release-staging\
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Distribution" icon="box" href="/deployment/distribution">
+    Distribute to users.
+  </Card>
+  <Card title="Auto-Updates" icon="download" href="/advanced/auto-updates">
+    Setup Velopack updates.
+  </Card>
+  <Card title="Windows Service" icon="gear" href="/advanced/windows-service">
+    Install as service.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/deployment/troubleshooting">
+    Debug build issues.
+  </Card>
+</CardGroup>

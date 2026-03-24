@@ -13,6 +13,7 @@ export const ActionTypeEnum = z.enum([
   "sql",          // Running SQL/FTS query
   "semantic",     // Vector semantic search
   "hybrid",       // Combined FTS + semantic
+  "webSearch",    // External web search
   "readMore",     // Reading full content of chunks
   "thinking",     // Agent is analyzing/reasoning
   "summarizing",  // Generating final answer
@@ -99,6 +100,7 @@ export type CompletionEventData = {
   stepType?: StreamStepType;
   title?: string;
   message?: string;
+  followups?: string[];
   metadata?: {
     requestId?: string;
     duration?: number;

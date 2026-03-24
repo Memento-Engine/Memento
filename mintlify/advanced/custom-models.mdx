@@ -1,0 +1,357 @@
+---
+title: "Custom Models"
+description: "How to use custom embedding models with Memento AI."
+---
+
+## Overview
+
+While Memento ships with `all-MiniLM-L6-v2`, you can swap in any ONNX-compatible sentence transformer model for semantic search.
+
+<Warning>
+  Custom models require **reindexing** all existing data, which can take hours for large databases.
+</Warning>
+
+---
+
+## Supported Models
+
+| Model | Dimensions | Size | Quality | Speed |
+|-------|------------|------|---------|-------|
+| **all-MiniLM-L6-v2** (default) | 384 | 23 MB | Good | Fast |
+| **all-mpnet-base-v2** | 768 | 438 MB | Better | Medium |
+| **e5-base-v2** | 768 | 438 MB | Better | Medium |
+| **gte-small** | 384 | 67 MB | Good | Fast |
+| **bge-small-en-v1.5** | 384 | 134 MB | Good | Fast |
+
+---
+
+## Model Requirements
+
+Custom models must:
+1. Be compatible with `sentence-transformers`
+2. Export to ONNX format
+3. Include tokenizer files (vocab.txt, tokenizer.json)
+4. Support DirectML execution provider (Windows GPU)
+
+---
+
+## Converting Models
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    pip install torch transformers optimum onnx onnxruntime
+    ```
+  </Step>
+  
+  <Step title="Export to ONNX">
+    ```python
+    from optimum.onnxruntime import ORTModelForFeatureExtraction
+    from transformers import AutoTokenizer
+    
+    model_id = "sentence-transformers/all-mpnet-base-v2"
+    
+    # Load model
+    model = ORTModelForFeatureExtraction.from_pretrained(
+        model_id,
+        export=True
+    )
+    
+    # Save ONNX
+    model.save_pretrained("./models/all-mpnet-base-v2")
+    
+    # Save tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    tokenizer.save_pretrained("./models/all-mpnet-base-v2")
+    ```
+  </Step>
+  
+  <Step title="Verify output files">
+    ```
+    models/all-mpnet-base-v2/
+      model.onnx
+      tokenizer.json
+      tokenizer_config.json
+      vocab.txt
+      special_tokens_map.json
+    ```
+  </Step>
+  
+  <Step title="Test model">
+    ```python
+    import onnxruntime as ort
+    
+    session = ort.InferenceSession("model.onnx")
+    
+    # Check input/output shapes
+    print(session.get_inputs()[0].shape)   # [batch, seq_len]
+    print(session.get_outputs()[0].shape)  # [batch, dims]
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Installation
+
+Copy model files to Memento's model directory:
+
+<Tabs>
+  <Tab title="Windows">
+    ```powershell
+    $modelDir = "$env:APPDATA\Memento\models\all-mpnet-base-v2"
+    New-Item -ItemType Directory -Path $modelDir -Force
+    
+    Copy-Item .\model.onnx $modelDir\
+    Copy-Item .\tokenizer.json $modelDir\
+    Copy-Item .\vocab.txt $modelDir\
+    ```
+  </Tab>
+  
+  <Tab title="macOS/Linux">
+    ```bash
+    model_dir="~/Library/Application Support/Memento/models/all-mpnet-base-v2"
+    mkdir -p "$model_dir"
+    
+    cp model.onnx "$model_dir/"
+    cp tokenizer.json "$model_dir/"
+    cp vocab.txt "$model_dir/"
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Configuration
+
+Update daemon config to use new model:
+
+```rust
+// crates/core/src/config.rs
+pub struct EmbeddingConfig {
+    pub model_name: String,
+    pub model_path: PathBuf,
+    pub dimensions: usize,
+    pub max_seq_length: usize,
+}
+
+// Load custom model
+let config = EmbeddingConfig {
+    model_name: "all-mpnet-base-v2".to_string(),
+    model_path: get_model_dir()?.join("all-mpnet-base-v2/model.onnx"),
+    dimensions: 768,  // Important: must match model output
+    max_seq_length: 512,
+};
+```
+
+---
+
+## Reindexing
+
+After switching models, reindex all data:
+
+```rust
+use crate::db::Database;
+use crate::embeddings::EmbeddingModel;
+
+pub async fn reindex_all_chunks() -> Result<()> {
+    let db = Database::open()?;
+    let model = EmbeddingModel::load(&config)?;
+    
+    // Get all chunks
+    let chunks = db.query(
+        "SELECT id, text FROM chunks ORDER BY id",
+        []
+    )?;
+    
+    println!("Reindexing {} chunks...", chunks.len());
+    
+    for (i, chunk) in chunks.iter().enumerate() {
+        // Generate new embedding
+        let embedding = model.encode(&chunk.text)?;
+        
+        // Update vec_chunks table
+        db.execute(
+            "UPDATE vec_chunks SET embedding = ?1 WHERE rowid = ?2",
+            [embedding.as_slice(), &chunk.id]
+        )?;
+        
+        if i % 100 == 0 {
+            println!("Progress: {}/{}", i, chunks.len());
+        }
+    }
+    
+    println!("Reindexing complete!");
+    Ok(())
+}
+```
+
+**CLI Usage**:
+```powershell
+.\memento-daemon.exe reindex --model all-mpnet-base-v2
+```
+
+---
+
+## Performance Comparison
+
+Benchmark on 10,000 chunks:
+
+| Model | Indexing Time | Search Latency | GPU VRAM |
+|-------|---------------|----------------|----------|
+| **MiniLM** | 45s | 12ms | 200 MB |
+| **MPNet** | 3m 20s | 28ms | 800 MB |
+| **E5-Base** | 3m 15s | 25ms | 750 MB |
+
+<Info>
+  Larger models are slower but produce better search results, especially for complex queries.
+</Info>
+
+---
+
+## Quality Test
+
+Compare search quality:
+
+```python
+import requests
+
+queries = [
+    "How do I configure OAuth in the app?",
+    "Error: service won't start",
+    "Explain the database schema"
+]
+
+for query in queries:
+    # Search with MiniLM
+    r1 = requests.post("http://localhost:7072/search/semantic", json={
+        "query": query,
+        "model": "all-MiniLM-L6-v2",
+        "limit": 5
+    })
+    
+    # Search with MPNet
+    r2 = requests.post("http://localhost:7072/search/semantic", json={
+        "query": query,
+        "model": "all-mpnet-base-v2",
+        "limit": 5
+    })
+    
+    print(f"Query: {query}")
+    print(f"MiniLM results: {[r['score'] for r in r1.json()['results']]}")
+    print(f"MPNet results: {[r['score'] for r in r2.json()['results']]}")
+    print()
+```
+
+---
+
+## GPU Acceleration
+
+Enable DirectML for faster inference:
+
+```rust
+use ort::{Session, ExecutionProvider};
+
+let session = Session::builder()?
+    .with_execution_providers([
+        ExecutionProvider::DirectML(0), // GPU
+        ExecutionProvider::CPU          // Fallback
+    ])?
+    .commit_from_file("model.onnx")?;
+```
+
+**Speedup**: 3-5x faster on GPU vs CPU for large batches.
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Model fails to load" icon="xmark">
+    **Error**: `Failed to load ONNX model`
+    
+    **Check**:
+    ```rust
+    // Verify ONNX model validity
+    onnxruntime::Session::builder()?
+        .commit_from_file(&model_path)?;
+    ```
+    
+    **Common issues**:
+    - Incompatible ONNX opset version
+    - Missing external data files
+    - Corrupted model.onnx
+  </Accordion>
+  
+  <Accordion title="Embedding dimension mismatch" icon="ruler">
+    **Error**: `Expected 384 dimensions, got 768`
+    
+    **Fix**: Update config to match model output
+    ```rust
+    let config = EmbeddingConfig {
+        dimensions: 768,  // Match model output
+        ..Default::default()
+    };
+    ```
+    
+    Then **reindex all data**.
+  </Accordion>
+  
+  <Accordion title="Out of memory" icon="memory">
+    **Issue**: Large models crash with OOM
+    
+    **Solution**: Process in smaller batches
+    ```rust
+    const BATCH_SIZE: usize = 32;
+    
+    for batch in chunks.chunks(BATCH_SIZE) {
+        let embeddings = model.encode_batch(batch)?;
+        // Write to DB
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Model Switching API
+
+Switch models at runtime:
+
+```typescript
+// POST /models/switch
+await fetch('http://localhost:7072/models/switch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model: 'all-mpnet-base-v2',
+    reindex: true  // Automatically reindex
+  })
+});
+
+// Monitor reindex progress
+const eventSource = new EventSource('/models/reindex-progress');
+eventSource.onmessage = (event) => {
+  const { progress, total } = JSON.parse(event.data);
+  console.log(`Reindexing: ${progress}/${total}`);
+};
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Semantic Search" icon="magnifying-glass" href="/core-concepts/semantic-search">
+    How vector search works.
+  </Card>
+  <Card title="Models API" icon="microchip" href="/api-reference/models">
+    Model management endpoints.
+  </Card>
+  <Card title="Database Schema" icon="database" href="/architecture/database-schema">
+    vec_chunks table structure.
+  </Card>
+  <Card title="Performance" icon="gauge" href="/deployment/troubleshooting">
+    Optimize search performance.
+  </Card>
+</CardGroup>

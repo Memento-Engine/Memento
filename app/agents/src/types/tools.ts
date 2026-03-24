@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ToolError } from "./errors";
+import type { AuthHeaders } from "../llm/routing";
 
 // Shared types - inlined to avoid cross-project imports in desktop app
 export interface ToolContext {
@@ -7,6 +8,7 @@ export interface ToolContext {
   stepId: string;
   attemptNumber: number;
   timeout: number;
+  authHeaders?: AuthHeaders;
 }
 
 export interface ToolResultError {

@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CreditsContext, CreditsData, UsageStats } from "@/contexts/creditsContext";
+import { CreditsContext, QuotaData, UsageStats } from "@/contexts/creditsContext";
 import { AI_GATEWAY_BASE_URL } from "@/api/base";
 import { GatewayResponse } from "@shared/types/gateway";
 import { clearAuthState } from "@/lib/auth";
 import useOnboarding from "@/hooks/useOnboarding";
 import { getAuthHeaders } from "@/api/auth";
+import useAuth from "@/hooks/useAuth";
 
 interface CreditsProviderProps {
   children: React.ReactNode;
@@ -21,16 +22,18 @@ interface UsageResponseData {
   deviceId: string;
   userRole: "anonymous" | "logged";
   tier: "free" | "premium";
-  credits: {
-    total: number;
-    used: number;
-    available: number;
-  };
+  quota: {
+    dailyQuota: number;
+    tokensUsed: number;
+    tokensRemaining: number;
+    percentRemaining: number;
+    canMakeRequest: boolean;
+    resetInMs: number;
+  } | null;
   usage: {
     daily: {
       requests: number;
       tokens: number;
-      limit: number;
     };
     minute: {
       requests: number;
@@ -40,13 +43,9 @@ interface UsageResponseData {
 }
 
 export default function CreditsProvider({ children }: CreditsProviderProps) {
-  const [credits, setCredits] = useState<CreditsData>({
-    total: 0,
-    used: 0,
-    available: 0,
-  });
+  const [quota, setQuota] = useState<QuotaData | null>(null);
   const [usage, setUsage] = useState<UsageStats>({
-    daily: { requests: 0, tokens: 0, limit: 0 },
+    daily: { requests: 0, tokens: 0 },
     minute: { requests: 0, limit: 0 },
   });
   const [tier, setTier] = useState<"free" | "premium">("free");
@@ -55,6 +54,7 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
   const [error, setError] = useState<string | null>(null);
 
   const { setIsOnboardingComplete } = useOnboarding();
+  const { user } = useAuth();
 
   const refreshCredits = useCallback(async () => {
     try {
@@ -98,7 +98,7 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
       }
 
       const data = result.data;
-      setCredits(data.credits);
+      setQuota(data.quota);
       setUsage(data.usage);
       setTier(data.tier);
       setUserRole(data.userRole);
@@ -110,26 +110,26 @@ export default function CreditsProvider({ children }: CreditsProviderProps) {
     }
   }, [setIsOnboardingComplete]);
 
-  // Fetch credits on mount and when auth changes
+  // Fetch credits on mount, when auth changes, and poll updates
   useEffect(() => {
     refreshCredits();
 
     // Poll for updates every 30 seconds
     const interval = setInterval(refreshCredits, 30000);
     return () => clearInterval(interval);
-  }, [refreshCredits]);
+  }, [refreshCredits, user?.id]); // Re-fetch when user changes
 
   return (
     <CreditsContext.Provider
       value={{
-        credits,
+        quota,
         usage,
         tier,
         userRole,
         isLoading,
         error,
         refreshCredits,
-        hasPremiumCredits: credits.available > 0,
+        hasQuotaRemaining: quota ? quota.canMakeRequest : false,
       }}
     >
       {children}

@@ -268,6 +268,7 @@ export function emitCompletion(
   content: string,
   requestId: string,
   stepId: string = "final",
+  followups?: string[],
 ): void {
   let queue = getEventQueue(requestId);
   if (!queue) {
@@ -290,6 +291,7 @@ export function emitCompletion(
       title: "Final Response",
       status: "final",
       message: content,
+      followups,
       timestamp: formatLocalTimestamp(),
     },
     timestamp: formatLocalTimestamp(),

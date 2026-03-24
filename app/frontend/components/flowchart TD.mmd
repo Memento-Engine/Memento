@@ -1,0 +1,60 @@
+flowchart TD
+    USER(["User Query ~100 tokens"])
+    DB[("Chat DB\n(raw history)")]
+
+    subgraph CHAT_MGR ["Chat Context Manager"]
+        CM["Budget Check\nraw pairs ≥ 1200?"]
+        SUMM["Chat Summarizer\nin: ≤1500\nout: ≤300"]
+        WINDOW["Context Window\nsummary ≤300\npair[-2] ≤600\npair[-1] ≤600\ntotal ≤1500"]
+        CM -- "yes → fold 2 pairs + old summary" --> SUMM
+        SUMM --> WINDOW
+        CM -- "no" --> WINDOW
+    end
+
+    subgraph CLASSIFIER ["Classifier + Rewriter\nin: ≤1700 | out: ~110"]
+        CR["system ~100\nchat context ≤1500\nquery ~100\n───────────────\noutput: { route, rewritten_query }"]
+    end
+
+    subgraph PLANNER ["Planner\nin: ~350 | out: ~200"]
+        PL["system ~100\nrewritten_query ~100\nskill_refs ~100\ntool_refs ~50\n───────────────\noutput: plan { steps[], deps[] }"]
+    end
+
+    subgraph STEP ["Step ReAct Loop (×4 steps, ×4 turns)"]
+        subgraph N1 ["Node 1 — Decision\nin: ≤4900 | out: ~20"]
+            N1C["FIXED: step_goal ~50, tool_refs ~50, skill_refs ~100\nDYNAMIC: D ≤1200, observations ≤3500\n───────────────\noutput: { skill_id, tool_id }"]
+        end
+        subgraph N2 ["Node 2 — Param Gen\nin: ~360 | out: ~75"]
+            N2C["full_skill ~300\nfull_tool ~40\nnode1_output ~20\n───────────────\noutput: tool_params"]
+        end
+        EXEC["Execute Tool"]
+        OBS["Observation\nsearch: 10×100 = 1000\nreadMore: 3×600 = 1800\n  → shrinks to 300 in history\nerror: ~75"]
+        CONCLUDE{"conclude\nor max\nturns=4?"}
+        STEP_OUT["Step Output D\nsummary ~200\nevidence 50×20 = 1000\ntotal ≤1200"]
+
+        N1C --> N2C
+        N2C --> EXEC
+        EXEC --> OBS
+        OBS --> CONCLUDE
+        CONCLUDE -- "no → next turn" --> N1C
+        CONCLUDE -- "yes" --> STEP_OUT
+    end
+
+    subgraph FINAL ["Final LLM\nin: ≤6500 | out: ~500"]
+        FL["system ~100\nchat context ≤1500\nquery ~100\nstep outputs 4×1200 ≤4800\n───────────────\noutput: answer to user"]
+    end
+
+    ANSWER(["Answer streamed to user"])
+
+    USER --> DB
+    DB --> CM
+    WINDOW --> CR
+    USER --> CR
+
+    CR -- "route=chat" --> FL
+    CR -- "route=search/mixed" --> PL
+    PL --> STEP
+    STEP_OUT -- "D passed to\ndependent steps" --> N1C
+    STEP_OUT --> FL
+    WINDOW --> FL
+    FL --> ANSWER
+    ANSWER --> DB

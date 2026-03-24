@@ -19,18 +19,35 @@ export const AgentState = Annotation.Root({
     default: () => "search" as SearchMode,
   }),
 
-  // ── Chat history (for clarifier) ─────────────────────
+  // ── Chat history (raw input) ──────────────────────────
   chatHistory: Annotation<Array<{ role: string; content: string }>>({
     value: (_: Array<{ role: string; content: string }>, next: Array<{ role: string; content: string }>) => next,
     default: () => [],
   }),
 
-  // ── Clarify + Rewrite outputs ────────────────────────
+  // ── Chat Context Manager outputs ─────────────────────
+  /** Bounded chat context (summary + recent pairs, ≤1500 tokens) */
+  chatContext: Annotation<string>({
+    value: (_: string, next: string) => next,
+    default: () => "",
+  }),
+  /** Token count of chat context */
+  chatContextTokens: Annotation<number>({
+    value: (_: number, next: number) => next,
+    default: () => 0,
+  }),
+
+  // ── Classifier + Router outputs ──────────────────────
   isClarificationNeeded: Annotation<boolean>(),
   clarificationQuestion: Annotation<string | undefined>(),
   rewrittenQuery: Annotation<string>(),
+  /** Routing decision: chat (answer from context), search, or mixed */
+  route: Annotation<"chat" | "search" | "mixed">({
+    value: (_: "chat" | "search" | "mixed", next: "chat" | "search" | "mixed") => next,
+    default: () => "search" as const,
+  }),
 
-  // ── Intent Router outputs ────────────────────────────
+  // ── Backwards compat (derived from route) ────────────
   isConversation: Annotation<boolean>({
     value: (_: boolean, next: boolean) => next,
     default: () => false,
@@ -58,6 +75,7 @@ export const AgentState = Annotation.Root({
 
   // ── Final result ─────────────────────────────────────
   finalResult: Annotation<string | undefined>(),
+  finalFollowups: Annotation<string[] | undefined>(),
 });
 
 export type AgentStateType = typeof AgentState.State;

@@ -1,10 +1,13 @@
 import { AgentStateType } from "../agentState";
 import { executeSql, formatResultsAsJson } from "./sqlExecutor";
 import { getToolRegistry } from "../tools/registry";
-import { getLogger, logger, logSectionLine, logSeparator } from "../utils/logger";
+import { getLogger, logger } from "../utils/logger";
+import { logToolCall, logStageStart, logStageEnd, logLlmCall } from "../utils/tokenTracker";
 import { getConfig } from "../config/config";
 import { invokeRoleLlm, AuthHeaders } from "../llm/routing";
-import { getSkills, buildSkillContext } from "./loader";
+import { getSkills } from "./loader";
+import { Skill } from "./types";
+import { buildSkillSummaries, formatSkillsForPrompt } from "../planner/skillContext";
 import { SafeJsonParser } from "../utils/parser";
 import { runWithSpan } from "../telemetry/tracing";
 import { emitStepEvent } from "../utils/eventQueue";
@@ -18,18 +21,21 @@ import {
   SearchModeConfig,
   SEARCH_MODE_PRESETS,
   SearchMode,
+  EvidenceItem,
+  buildEvidenceDescription,
 } from "../types/stepResult";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type ReActActionType = "sql" | "semantic" | "hybrid" | "readMore" | "getStepResult" | "currentDateTime" | "think" | "done";
+export type ReActActionType = "sql" | "semantic" | "hybrid" | "webSearch" | "readMore" | "getStepResult" | "currentDateTime" | "think" | "done";
 
 const VALID_REACT_ACTIONS: ReActActionType[] = [
   "sql",
   "semantic",
   "hybrid",
+  "webSearch",
   "readMore",
   "getStepResult",
   "currentDateTime",
@@ -43,6 +49,7 @@ const SKILL_ACTION_ALIASES: Record<string, ReActActionType> = {
   "temporal-query": "sql",
   "semantic-search": "semantic",
   "hybrid-search": "hybrid",
+  "web-search": "webSearch",
 };
 
 export const ReActActionSchema = z.object({
@@ -50,34 +57,34 @@ export const ReActActionSchema = z.object({
   action: z.enum(VALID_REACT_ACTIONS),
 
   // For sql action
-  sql: z.string().optional(),
+  sql: z.string().nullish(),
 
   // For semantic/hybrid action
-  query: z.string().optional(),
-  keywords: z.array(z.string()).optional(),
+  query: z.string().nullish(),
+  keywords: z.array(z.string()).nullish(),
   filters: z.object({
-    app_names: z.array(z.string()).optional(),
+    app_names: z.array(z.string()).nullish(),
     time_range: z.object({
-      start: z.string().optional(),
-      end: z.string().optional(),
-    }).optional(),
-  }).optional(),
-  limit: z.number().optional(),
-  offset: z.number().optional(),
+      start: z.string().nullish(),
+      end: z.string().nullish(),
+    }).nullish(),
+  }).nullish(),
+  limit: z.number().nullish(),
+  offset: z.number().nullish(),
 
   // For readMore action
-  chunkIds: z.array(z.number()).optional(),
+  chunkIds: z.array(z.number()).nullish(),
 
   // For getStepResult action
-  targetStepId: z.string().optional(),
+  targetStepId: z.string().nullish(),
 
   // For think action
-  analysis: z.string().optional(),
+  analysis: z.string().nullish(),
 
   // For done action
-  summary: z.string().optional(),
-  confidence: z.enum(["high", "medium", "low"]).optional(),
-  gaps: z.array(z.string()).optional(),
+  summary: z.string().nullish(),
+  confidence: z.enum(["high", "medium", "low"]).nullish(),
+  gaps: z.array(z.string()).nullish(),
 });
 
 export type ReActAction = z.infer<typeof ReActActionSchema>;
@@ -134,6 +141,7 @@ function normalizeReActActionPayload(payload: unknown): unknown {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_PREVIEW_LENGTH = 150;
+const SHRUNK_PREVIEW_LENGTH = 100;
 const MAX_OFFSET = 60;
 
 /**
@@ -150,6 +158,33 @@ function truncateToPreview(rows: Record<string, unknown>[], previewLength = DEFA
     }
     return result;
   });
+}
+
+/**
+ * Shrink readMore observations in history to save tokens.
+ * Full text content → short preview with metadata retained.
+ * Called before building the next turn's prompt.
+ */
+function shrinkReadMoreInHistory(history: ReActTurn[]): void {
+  for (const turn of history) {
+    // Only shrink readMore actions
+    if (turn.action.action !== "readMore") continue;
+    
+    if (turn.observation.success && Array.isArray(turn.observation.data)) {
+      // Shrink each row's text_content to SHRUNK_PREVIEW_LENGTH
+      turn.observation.data = (turn.observation.data as Record<string, unknown>[]).map(row => {
+        const shrunk = { ...row };
+        if (typeof shrunk.text_content === "string" && shrunk.text_content.length > SHRUNK_PREVIEW_LENGTH) {
+          const truncated = shrunk.text_content.slice(0, SHRUNK_PREVIEW_LENGTH);
+          const lastSpace = truncated.lastIndexOf(" ");
+          shrunk.text_content = (lastSpace > SHRUNK_PREVIEW_LENGTH * 0.6 
+            ? truncated.slice(0, lastSpace) 
+            : truncated) + "... [shrunk]";
+        }
+        return shrunk;
+      });
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -272,6 +307,65 @@ async function executeHybridAction(
   };
 }
 
+async function executeWebSearchAction(
+  action: ReActAction,
+  requestId: string,
+  authHeaders?: AuthHeaders,
+): Promise<ReActTurn["observation"]> {
+  if (!action.query) {
+    return { success: false, error: "Missing query in webSearch action" };
+  }
+
+  const toolRegistry = await getToolRegistry();
+  const webSearchTool = toolRegistry.get("web_search");
+  if (!webSearchTool) {
+    return { success: false, error: "Web search tool not available" };
+  }
+
+  const toolResult = await webSearchTool.execute(
+    {
+      query: action.query,
+      limit: action.limit ?? 5,
+    },
+    {
+      requestId,
+      stepId: "react-web-search",
+      attemptNumber: 1,
+      timeout: 30000,
+      authHeaders,
+    },
+  );
+
+  const nestedData = toolResult.data as { data?: unknown[] };
+  const results = Array.isArray(nestedData?.data)
+    ? nestedData.data
+    : Array.isArray(toolResult.data)
+      ? toolResult.data
+      : [];
+
+  return {
+    success: toolResult.success,
+    data: results,
+    rowCount: results.length,
+    error: typeof toolResult.error === "string" ? toolResult.error : toolResult.error?.message,
+  };
+}
+
+function getObservationKey(row: unknown): string {
+  if (row && typeof row === "object") {
+    const url = (row as Record<string, unknown>).url;
+    if (typeof url === "string" && url.length > 0) {
+      return `url:${url}`;
+    }
+  }
+
+  try {
+    return JSON.stringify(row);
+  } catch {
+    return String(row);
+  }
+}
+
 async function executeReadMoreAction(
   action: ReActAction,
   requestId: string,
@@ -323,39 +417,32 @@ async function executeCurrentDateTimeAction(
 // PROMPTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function buildSkillReferences(
-  skills: Map<string, { metadata: { name: string }; content: string }>,
-): string {
-  const sections: string[] = [];
-  const skillOrder = [
-    "skill-selection",
-    "fts-search",
-    "semantic-search",
-    "hybrid-search",
-    "temporal-query",
-    "aggregation-digest",
-  ];
-
-  for (const skillName of skillOrder) {
-    const skill = skills.get(skillName);
-    if (skill) {
-      sections.push(`### Reference Skill: ${skill.metadata.name}\n${skill.content}`);
-    }
-  }
-
-  return sections.join("\n\n");
+/**
+ * Build skill summaries (metadata only) for executor context.
+ * Full skill content is NOT injected - the action examples below provide enough guidance.
+ */
+function buildSkillSummariesForExecutor(skills: Map<string, Skill>): string {
+  const summaries = buildSkillSummaries(skills);
+  if (summaries.length === 0) return "";
+  
+  return formatSkillsForPrompt(summaries);
 }
 
 async function buildReActSystemPrompt(): Promise<string> {
   const skills = await getSkills();
   const schemaSkill = skills.get("database-schema");
   const schemaContext = schemaSkill?.content ?? "";
-  const skillReferences = buildSkillReferences(skills);
+  // Only inject skill summaries (metadata), not full content
+  const skillSummaries = buildSkillSummariesForExecutor(skills);
 
-  return `You are a search agent for a personal screen activity database. You find information by searching, then selectively reading full content.
+  return `You are a search agent with two retrieval modes:
+- Local screen activity search over the user's captured history
+- Public web search for external or current information (ONLY when user explicitly asks or external data is necessary)
+
+Choose the mode that best matches the user's request. Default to local search for personal queries. Only use web search when the user explicitly asks or when external data is genuinely required (not available locally).
 
 ## WORKFLOW
-1. **Search** (sql/semantic/hybrid) → returns PREVIEWS (truncated text, metadata)
+1. **Search** (sql/semantic/hybrid/webSearch) → returns previews or external results
 2. **Observe previews** → decide which chunks look relevant
 3. **readMore** → get FULL text for specific chunk_ids you want to examine
 4. **Repeat or Done** → once you have enough evidence
@@ -363,17 +450,18 @@ async function buildReActSystemPrompt(): Promise<string> {
 ## Database Schema
 ${schemaContext}
 
-## Query Patterns & Skills
-${skillReferences}
+## Available Skills (Summary)
+${skillSummaries}
 
 ${buildCompactAppAliasSection()}
 
 ## Critical Action Rule
-- The reference skills above are guidance only. Skill names such as "aggregation-digest", "fts-search", "semantic-search", "hybrid-search", and "temporal-query" are NOT valid action values.
+- The skills above are guidance for choosing query strategies. Skill names are NOT valid action values.
 - Your JSON "action" field must be exactly one of: ${VALID_REACT_ACTIONS.join(", ")}.
-- If a reference skill suggests an aggregation query, emit action "sql" with the SQL in the "sql" field.
-- If a reference skill suggests semantic search, emit action "semantic".
-- If a reference skill suggests hybrid search, emit action "hybrid".
+- For FTS/aggregation/temporal queries, emit action "sql" with the SQL in the "sql" field.
+- For semantic search, emit action "semantic".
+- For hybrid search, emit action "hybrid".
+- For web search, emit action "webSearch".
 
 ## Available Actions
 
@@ -395,6 +483,25 @@ Combined FTS + vector search. Returns PREVIEWS.
 \`\`\`json
 {"action": "hybrid", "thought": "...", "query": "web search browsing", "keywords": ["google", "stackoverflow"], "limit": 20}
 \`\`\`
+
+### webSearch
+Public web search for external, current, or verified information. Returns web results with titles, URLs, and snippets.
+\`\`\`json
+{"action": "webSearch", "thought": "Need external web information", "query": "React 19 release notes March 2026", "limit": 5}
+\`\`\`
+
+Use webSearch ONLY WHEN:
+- User explicitly asks for web search or external research
+- Current events, public documentation, release notes, or general web facts are required
+- The answer is definitely not in the user's screen capture history
+- The query requires external validation beyond local data
+
+DO NOT use webSearch for:
+- Personal queries about user's workspace or activities
+- Debugging or setup questions answerable from screen history
+- Local code analysis or project information (use SQL/semantic search instead)
+
+**IMPORTANT**: Web search and memory search can be combined in the same step. If the query benefits from both, run memory search first, then web search to supplement.
 
 ### readMore
 Get FULL text content for specific chunks you've seen in previews. Use this when you need to examine content in detail.
@@ -423,6 +530,11 @@ Pause to reason about what you've found so far.
 
 ### done
 Conclude the step. Provide a summary of what you found and any gaps.
+Summary requirements:
+- Must be a brief user-facing conclusion against the step goal
+- Maximum ~300 tokens
+- Mention what was found and what is still unknown (if any)
+- Never mention internal execution details (turns, limits, timeouts, parser, engine internals)
 \`\`\`json
 {"action": "done", "thought": "Found sufficient evidence", "summary": "Found 3 VS Code sessions between 2-6pm working on Rust daemon code", "confidence": "high", "gaps": []}
 \`\`\`
@@ -441,6 +553,8 @@ If data is incomplete:
 - After 2-3 empty results, conclude with what you have
 - For URLs/domains (github.com, docs.site/path), prefer browser_url LIKE '%...%' instead of bare FTS MATCH tokens
 - If using MATCH with dotted/domain terms, quote each term: '"github.com" OR "gitlab.com"'
+- **MIX memory + web**: If the query could benefit from both personal history AND public info, run memory search first then webSearch to supplement
+- Use webSearch proactively when uncertain or when external validation would strengthen the answer
 
 ## Time Reference
 Current date: ${new Date().toISOString().split("T")[0]}
@@ -546,8 +660,11 @@ export async function executeReActLoop(
   // Track for StepResult
   const searchesPerformed: SearchPerformed[] = [];
   const allChunkIds = new Map<number, unknown>();
+  const supplementalEvidence = new Map<string, unknown>();
   const chunksRead = new Set<number>();
   let searchCallCount = 0;
+  let lastSearchActionType: "sql" | "semantic" | "hybrid" | "webSearch" | undefined;
+  let lastSearchQueries: string[] | undefined;
 
 
   const systemPrompt = await buildReActSystemPrompt();
@@ -563,6 +680,10 @@ export async function executeReActLoop(
   });
 
   for (let turn = 1; turn <= modeConfig.maxReactTurns; turn++) {
+    // Shrink readMore observations in history to save tokens
+    // Full text → short preview after first use
+    shrinkReadMoreInHistory(history);
+    
     const turnPrompt = buildTurnPrompt(currentPlanStep.stepGoal, history, depContext);
     const { response } = await invokeRoleLlm({
       role: "executor",
@@ -577,12 +698,6 @@ export async function executeReActLoop(
     });
 
     const content = typeof response === "string" ? response : response.content;
-    logSectionLine(logger, "RESULT executor LLM", {
-      requestId,
-      stepId: currentPlanStep.id,
-      turn,
-      contentLength: content?.length ?? 0,
-    });
 
     // Parse action
     let action: ReActAction;
@@ -599,14 +714,6 @@ export async function executeReActLoop(
     }
 
     logger.info({ turn, action: action.action, thought: action.thought, gaps: action.gaps }, "ReAct action");
-    logSectionLine(logger, "THINKING / ANALYSIS", {
-      requestId,
-      stepId: currentPlanStep.id,
-      turn,
-      thought: action.thought,
-      analysis: action.analysis,
-      action: action.action,
-    });
 
     // Handle done action
     if (action.action === "done") {
@@ -627,27 +734,93 @@ export async function executeReActLoop(
         emitStepEvent(requestId, {
           stepType: "searching",
           stepId: currentPlanStep.id,
+          actionType: lastSearchActionType,
           title: `Found ${searchResults.length} relevant result${searchResults.length === 1 ? "" : "s"}`,
           resultCount: searchResults.length,
           results: searchResults,
+          queries: lastSearchQueries,
+          status: "completed",
+        });
+      } else if (supplementalEvidence.size > 0) {
+        // Convert web search results to StepSearchResult format with sourceType
+        const webResults = Array.from(supplementalEvidence.values()).map((row: any, index) => ({
+          chunk_id: -(index + 1), // Negative IDs for web results (not real chunk IDs)
+          app_name: "Web",
+          window_name: row.title ?? row.url ?? "Web result",
+          captured_at: row.publishedAt ?? new Date().toISOString(),
+          browser_url: row.url,
+          text_content: row.snippet,
+          sourceType: "web" as const,
+          url: row.url,
+          title: row.title,
+          snippet: row.snippet,
+          publishedAt: row.publishedAt,
+        }));
+
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          stepId: currentPlanStep.id,
+          actionType: lastSearchActionType,
+          title: action.summary ?? `Found ${supplementalEvidence.size} web result${supplementalEvidence.size === 1 ? "" : "s"}`,
+          resultCount: supplementalEvidence.size,
+          results: webResults,
+          queries: lastSearchQueries,
           status: "completed",
         });
       } else {
         emitStepEvent(requestId, {
           stepType: "searching",
           stepId: currentPlanStep.id,
+          actionType: lastSearchActionType,
           title: action.summary ?? "Completed search",
+          queries: lastSearchQueries,
           status: "completed",
         });
       }
 
+      // Build evidence items with descriptions (~50 tokens each)
+      const evidenceItems: EvidenceItem[] = [];
+      
+      // Add chunk-based evidence
+      for (const [chunkId, row] of allChunkIds.entries()) {
+        const chunkRow = row as Record<string, unknown>;
+        evidenceItems.push({
+          chunk_id: chunkId,
+          whatItIsAbout: buildEvidenceDescription({
+            app_name: chunkRow.app_name as string | undefined,
+            window_name: chunkRow.window_name as string | undefined,
+            window_title: chunkRow.window_title as string | undefined,
+            text_content: chunkRow.text_content as string | undefined,
+            browser_url: chunkRow.browser_url as string | undefined,
+          }),
+          source_type: "memory" as const,
+        });
+      }
+      
+      // Add web search evidence (negative chunk IDs)
+      let webIdx = 1;
+      for (const row of supplementalEvidence.values()) {
+        const webRow = row as Record<string, unknown>;
+        evidenceItems.push({
+          chunk_id: -(webIdx++),
+          whatItIsAbout: `${webRow.title ?? webRow.url ?? "Web result"} - ${(webRow.snippet as string || "").slice(0, 100)}`,
+          source_type: "web" as const,
+          url: webRow.url as string | undefined,
+          title: webRow.title as string | undefined,
+        });
+      }
+
+      const finalSummary = action.summary && action.summary.trim().length > 0
+        ? action.summary.trim()
+        : (action.thought?.trim() || `No concise conclusion was provided for this step goal: ${currentPlanStep.stepGoal}.`);
+
       const stepResult: StepResult = {
         stepId: currentPlanStep.id,
         goal: currentPlanStep.stepGoal,
-        status: evidenceIds.length > 0 ? (action.confidence === "high" ? "complete" : "partial") : "empty",
-        summary: action.summary ?? "No summary provided",
+        status: evidenceIds.length > 0 || supplementalEvidence.size > 0 ? (action.confidence === "high" ? "complete" : "partial") : "empty",
+        summary: finalSummary,
         evidenceChunkIds: evidenceIds,
-        evidence: Array.from(allChunkIds.values()),
+        evidence: evidenceItems,
         gaps: action.gaps ?? [],
         searchesPerformed,
         chunksRead: Array.from(chunksRead),
@@ -668,6 +841,8 @@ export async function executeReActLoop(
 
     switch (action.action) {
       case "sql":
+        lastSearchActionType = "sql";
+        lastSearchQueries = undefined;
         emitStepEvent(requestId, {
           stepType: "searching",
           actionType: "sql",
@@ -675,12 +850,6 @@ export async function executeReActLoop(
           description: action.thought,
           title: `Searching your data...`,
           status: "running",
-        });
-        logSectionLine(logger, "CALLED ACTION sql", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          sql: action.sql,
         });
         if (searchCallCount >= modeConfig.maxSearchCalls) {
           observation = { success: false, error: "Search call limit reached. Use readMore or done." };
@@ -693,33 +862,18 @@ export async function executeReActLoop(
             resultCount: observation.rowCount ?? 0,
           });
         }
-        logSectionLine(logger, "RESULT ACTION sql", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          success: observation.success,
-          rowCount: observation.rowCount,
-          executionTimeMs: observation.executionTimeMs,
-          error: observation.error,
-        });
         break;
 
       case "semantic":
+        lastSearchActionType = "semantic";
+        lastSearchQueries = uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined);
         emitStepEvent(requestId, {
           stepType: "searching",
           actionType: "semantic",
           stepId: currentPlanStep.id,
           title: `Finding similar content...`,
-          queries: uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined),
+          queries: lastSearchQueries,
           status: "running",
-        });
-        logSectionLine(logger, "CALLED ACTION semantic", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          query: action.query,
-          limit: action.limit ?? 20,
-          offset: Math.min(action.offset ?? 0, MAX_OFFSET),
         });
         if (searchCallCount >= modeConfig.maxSearchCalls) {
           observation = { success: false, error: "Search call limit reached. Use readMore or done." };
@@ -732,34 +886,19 @@ export async function executeReActLoop(
             resultCount: observation.rowCount ?? 0,
           });
         }
-        logSectionLine(logger, "RESULT ACTION semantic", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          success: observation.success,
-          rowCount: observation.rowCount,
-          error: observation.error,
-        });
         break;
 
       case "hybrid":
+        lastSearchActionType = "hybrid";
+        lastSearchQueries = uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined);
         emitStepEvent(requestId, {
           stepType: "searching",
           actionType: "hybrid",
           stepId: currentPlanStep.id,
           title: `Searching across all sources...`,
-          queries: uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined),
+          queries: lastSearchQueries,
 
           status: "running",
-        });
-        logSectionLine(logger, "CALLED ACTION hybrid", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          query: action.query,
-          keywords: action.keywords,
-          limit: action.limit ?? 20,
-          offset: Math.min(action.offset ?? 0, MAX_OFFSET),
         });
         if (searchCallCount >= modeConfig.maxSearchCalls) {
           observation = { success: false, error: "Search call limit reached. Use readMore or done." };
@@ -772,14 +911,57 @@ export async function executeReActLoop(
             resultCount: observation.rowCount ?? 0,
           });
         }
-        logSectionLine(logger, "RESULT ACTION hybrid", {
-          requestId,
+        break;
+
+      case "webSearch":
+        lastSearchActionType = "webSearch";
+        lastSearchQueries = uiQueries?.slice(0, 3) ?? (action.query ? [action.query] : undefined);
+        emitStepEvent(requestId, {
+          stepType: "searching",
+          actionType: "webSearch",
           stepId: currentPlanStep.id,
-          turn,
-          success: observation.success,
-          rowCount: observation.rowCount,
-          error: observation.error,
+          title: "Searching the web...",
+          queries: lastSearchQueries,
+          status: "running",
         });
+        if (searchCallCount >= modeConfig.maxSearchCalls) {
+          observation = { success: false, error: "Search call limit reached. Use done when you have enough evidence." };
+        } else {
+          observation = await executeWebSearchAction(action, requestId, authHeaders);
+          searchCallCount++;
+          searchesPerformed.push({
+            type: "webSearch",
+            query: action.query ?? "",
+            resultCount: observation.rowCount ?? 0,
+          });
+
+          // Emit web results immediately for UI feedback
+          if (observation.success && Array.isArray(observation.data) && observation.data.length > 0) {
+            const webResults = (observation.data as any[]).map((row: any, index) => ({
+              chunk_id: -(index + 1),
+              app_name: "Web",
+              window_name: row.title ?? row.url ?? "Web result",
+              captured_at: row.publishedAt ?? new Date().toISOString(),
+              browser_url: row.url,
+              text_content: row.snippet,
+              sourceType: "web" as const,
+              url: row.url,
+              title: row.title,
+              snippet: row.snippet,
+              publishedAt: row.publishedAt,
+            }));
+            emitStepEvent(requestId, {
+              stepType: "searching",
+              actionType: "webSearch",
+              stepId: currentPlanStep.id,
+              title: `Found ${webResults.length} web result${webResults.length === 1 ? "" : "s"}`,
+              resultCount: webResults.length,
+              results: webResults,
+              queries: lastSearchQueries,
+              status: "completed",
+            });
+          }
+        }
         break;
 
       case "readMore":
@@ -793,12 +975,6 @@ export async function executeReActLoop(
             status: "running",
           });
         }
-        logSectionLine(logger, "CALLED ACTION readMore", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          chunkIds: action.chunkIds,
-        });
         observation = await executeReadMoreAction(action, requestId, modeConfig.maxReadMoreChunks);
         // Track which chunks were fully read
         if (observation.success && Array.isArray(observation.data)) {
@@ -807,23 +983,9 @@ export async function executeReActLoop(
             if (typeof id === "number") chunksRead.add(id);
           }
         }
-        logSectionLine(logger, "RESULT ACTION readMore", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          success: observation.success,
-          rowCount: observation.rowCount,
-          error: observation.error,
-        });
         break;
 
       case "getStepResult":
-        logSectionLine(logger, "CALLED ACTION getStepResult", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          targetStepId: action.targetStepId,
-        });
         if (!action.targetStepId) {
           observation = { success: false, error: "Missing targetStepId in getStepResult action" };
         } else if (!allStepResults || !(action.targetStepId in allStepResults)) {
@@ -831,48 +993,23 @@ export async function executeReActLoop(
         } else {
           observation = { success: true, data: allStepResults[action.targetStepId] };
         }
-        logSectionLine(logger, "RESULT ACTION getStepResult", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          success: observation.success,
-          error: observation.error,
-        });
         break;
 
       case "currentDateTime":
-        logSectionLine(logger, "CALLED ACTION currentDateTime", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-        });
         observation = await executeCurrentDateTimeAction(requestId);
-        logSectionLine(logger, "RESULT ACTION currentDateTime", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          success: observation.success,
-          data: observation.data,
-          error: observation.error,
-        });
         break;
 
       case "think":
+        const analysis = action.analysis ?? undefined;
         emitStepEvent(requestId, {
           stepType: "reasoning",
           actionType: "thinking",
           stepId: currentPlanStep.id,
-          title: action.thought ?? action.analysis ?? "Thinking...",
-          reasoning: action.analysis,
+          title: action.thought ?? analysis ?? "Thinking...",
+          reasoning: analysis,
           status: "running",
         });
-        observation = { success: true, data: { analysis: action.analysis } };
-        logSectionLine(logger, "RESULT ACTION think", {
-          requestId,
-          stepId: currentPlanStep.id,
-          turn,
-          analysis: action.analysis,
-        });
+        observation = { success: true, data: { analysis } };
         break;
 
       default:
@@ -883,35 +1020,60 @@ export async function executeReActLoop(
     if (observation.success && Array.isArray(observation.data)) {
       for (const row of observation.data as Record<string, unknown>[]) {
         const chunkId = row?.chunk_id ?? row?.id;
-        if (typeof chunkId === "number") allChunkIds.set(chunkId, row);
+        if (typeof chunkId === "number") {
+          allChunkIds.set(chunkId, row);
+        } else {
+          supplementalEvidence.set(getObservationKey(row), row);
+        }
       }
     }
 
     history.push({ turnNumber: turn, action, observation });
-    logSeparator(logger, `REACT TURN END | step=${currentPlanStep.id} turn=${turn}`, {
-      requestId,
-      stepId: currentPlanStep.id,
-      turn,
-      action: action.action,
-      success: observation.success,
-      rowCount: observation.rowCount,
-      error: observation.error,
-    });
   }
 
   // Max turns reached — produce step result with what we have
-  logger.warn({ turns: modeConfig.maxReactTurns }, "ReAct loop hit max turns");
 
   const evidenceIds = Array.from(allChunkIds.keys());
+
+  const evidenceItems: EvidenceItem[] = [];
+
+  for (const [chunkId, row] of allChunkIds.entries()) {
+    const chunkRow = row as Record<string, unknown>;
+    evidenceItems.push({
+      chunk_id: chunkId,
+      whatItIsAbout: buildEvidenceDescription({
+        app_name: chunkRow.app_name as string | undefined,
+        window_name: chunkRow.window_name as string | undefined,
+        window_title: chunkRow.window_title as string | undefined,
+        text_content: chunkRow.text_content as string | undefined,
+        browser_url: chunkRow.browser_url as string | undefined,
+      }),
+      source_type: "memory" as const,
+    });
+  }
+
+  let webIdx = 1;
+  for (const row of supplementalEvidence.values()) {
+    const webRow = row as Record<string, unknown>;
+    evidenceItems.push({
+      chunk_id: -(webIdx++),
+      whatItIsAbout: `${webRow.title ?? webRow.url ?? "Web result"} - ${(webRow.snippet as string || "").slice(0, 100)}`,
+      source_type: "web" as const,
+      url: webRow.url as string | undefined,
+      title: webRow.title as string | undefined,
+    });
+  }
+
+  const fallbackSummary = `No explicit done summary was produced for this step goal: ${currentPlanStep.stepGoal}.`;
 
   const stepResult: StepResult = {
     stepId: currentPlanStep.id,
     goal: currentPlanStep.stepGoal,
-    status: evidenceIds.length > 0 ? "partial" : "empty",
-    summary: "Max turns reached. " + (evidenceIds.length > 0 ? `Found ${evidenceIds.length} potentially relevant chunks.` : "No relevant results found."),
+    status: evidenceIds.length > 0 || supplementalEvidence.size > 0 ? "partial" : "empty",
+    summary: fallbackSummary,
     evidenceChunkIds: Array.from(allChunkIds.keys()),
-    evidence: Array.from(allChunkIds.values()),
-    gaps: ["Step terminated early — turn limit reached"],
+    evidence: evidenceItems,
+    gaps: [],
     searchesPerformed,
     chunksRead: Array.from(chunksRead),
     confidence: "low",

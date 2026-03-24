@@ -4,100 +4,39 @@ description: Aggregate and summarize activity. "What apps did I use today?" "Tim
 tools: sql_execute
 ---
 
-# Aggregation & Digest Skill
+# Aggregation & Digest
 
 Generate summaries, statistics, and aggregated views of screen activity.
 
-## ReAct Executor Note
-- This is a reference skill, not an executor action.
-- When following this skill inside the ReAct loop, emit action `sql`, never `aggregation-digest`.
-
 ## When to Use
-- User asks for summaries ("What did I work on today?")
-- User wants statistics ("How much time on X?")
-- User asks about patterns ("Which apps do I use most?")
-- User wants a digest or overview
+- Summaries: "What did I work on today?"
+- Statistics: "How much time on X?"
+- Patterns: "Which apps do I use most?"
+- Digests or overviews
 
-## Query Patterns
+## Key Patterns
 
-**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
+**Always include `c.id as chunk_id` for citations.**
 
-### App Usage Breakdown (Time Estimate)
 ```sql
-SELECT
-  c.id as chunk_id,  -- REQUIRED for citations
-  f.app_name,
-  COUNT(*) as frames,
+-- App usage today
+SELECT c.id as chunk_id, f.app_name, COUNT(*) as frames,
   ROUND(COUNT(*) * 5.0 / 60, 1) as approx_minutes
-FROM frames f
-LEFT JOIN chunks c ON c.frame_id = f.id
+FROM frames f LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE date(f.captured_at) = date('now')
-GROUP BY f.app_name
-ORDER BY frames DESC
-LIMIT 15;
-```
+GROUP BY f.app_name ORDER BY frames DESC LIMIT 15;
 
-### App Usage by Day (Weekly View)
-```sql
-SELECT
-  c.id as chunk_id,  -- REQUIRED for citations
-  date(f.captured_at) as day,
-  f.app_name,
-  COUNT(*) as frames,
-  ROUND(COUNT(*) * 5.0 / 60, 1) as approx_minutes
-FROM frames f
-LEFT JOIN chunks c ON c.frame_id = f.id
+-- Weekly breakdown
+SELECT c.id as chunk_id, date(f.captured_at) as day, f.app_name, COUNT(*) as frames
+FROM frames f LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE f.captured_at >= datetime('now', '-7 days')
-GROUP BY day, f.app_name
-ORDER BY day DESC, frames DESC;
+GROUP BY day, f.app_name ORDER BY day DESC, frames DESC;
 ```
 
-### Most Visited Windows/URLs
-```sql
-SELECT
-  c.id as chunk_id,  -- REQUIRED for citations
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  COUNT(*) as visits
-FROM frames f
-LEFT JOIN chunks c ON c.frame_id = f.id
-WHERE date(f.captured_at) = date('now')
-  AND f.browser_url IS NOT NULL
-GROUP BY f.browser_url
-ORDER BY visits DESC
-LIMIT 20;
-```
-
-### Focus Time Analysis (Continuous App Usage)
-```sql
-WITH sessions AS (
-  SELECT 
-    f.id as frame_id,
-    f.app_name,
-    f.captured_at,
-    CASE 
-      WHEN f.app_name != LAG(f.app_name) OVER (ORDER BY f.captured_at)
-        OR f.captured_at > datetime(LAG(f.captured_at) OVER (ORDER BY f.captured_at), '+2 minutes')
-      THEN 1 ELSE 0 
-    END as new_session
-  FROM frames f
-  WHERE date(f.captured_at) = date('now')
-),
-session_groups AS (
-  SELECT 
-    frame_id,
-    app_name,
-    captured_at,
-    SUM(new_session) OVER (ORDER BY captured_at) as session_id
-  FROM sessions
-)
-SELECT 
-  MIN(c.id) as chunk_id,  -- REQUIRED for citations
-  sg.app_name,
-  MIN(sg.captured_at) as session_start,
-  MAX(sg.captured_at) as session_end,
-  COUNT(*) as frames,
+## Notes
+- Use GROUP BY for aggregations
+- Use MIN(c.id) as chunk_id in aggregates
+- Estimate time: frames × 5 seconds
   ROUND((julianday(MAX(sg.captured_at)) - julianday(MIN(sg.captured_at))) * 24 * 60, 1) as duration_minutes
 FROM session_groups sg
 LEFT JOIN chunks c ON c.frame_id = sg.frame_id

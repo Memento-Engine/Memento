@@ -124,6 +124,7 @@ export const completionEventDataSchema = z.object({
     .optional(),
   title: z.string().optional(),
   message: z.string().optional(),
+  followups: z.array(z.string()).max(3).optional(),
   metadata: completionMetadataSchema.optional(),
 });
 

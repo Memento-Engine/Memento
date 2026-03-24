@@ -192,6 +192,48 @@ export function updateSources(
   return updatedMessages;
 }
 
+// Update or add followups to messages
+export function updateFollowups(
+  messages: MementoUIMessage[],
+  followups: string[]
+): MementoUIMessage[] {
+  if (!Array.isArray(followups) || followups.length === 0) {
+    return messages;
+  }
+
+  const trimmed = followups
+    .map((f) => (typeof f === "string" ? f.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (trimmed.length === 0) {
+    return messages;
+  }
+
+  const { messages: updatedMessages, lastMessage, isNew } =
+    getOrCreateLastAssistantMessage(messages);
+
+  const updatedParts = [...lastMessage.parts];
+  const existingIndex = updatedParts.findIndex(
+    (part) => part.type === "data-followups"
+  );
+
+  if (existingIndex >= 0) {
+    updatedParts[existingIndex] = { type: "data-followups", data: trimmed };
+  } else {
+    updatedParts.push({ type: "data-followups", data: trimmed });
+  }
+
+  lastMessage.parts = updatedParts;
+
+  if (isNew) {
+    return updatedMessages;
+  }
+
+  updatedMessages[updatedMessages.length - 1] = lastMessage;
+  return updatedMessages;
+}
+
 // Ensure assistant message exists with fallback text
 // Only adds text if no text part exists yet
 export function ensureAssistantMessage(

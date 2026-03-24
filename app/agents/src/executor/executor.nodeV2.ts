@@ -125,6 +125,8 @@ export async function executorNodeV2(
               // DAG-scoped context
               const depContext = buildDepContext(step, plan.steps, stepResults);
 
+              console.log("Dep Context", depContext);
+
               // Emit step start event
               const uiQueries = (step as any).uiSearchQueries;
               emitStepEvent(state.requestId, {

@@ -1,0 +1,562 @@
+---
+title: "Troubleshooting"
+description: "Common issues and solutions for Memento AI deployment and operation."
+---
+
+## Quick Diagnostics
+
+Run the built-in diagnostics tool:
+
+```powershell
+.\memento-daemon.exe diagnose
+```
+
+**Output**:
+```
+✓ Database accessible
+✓ Models loaded
+✓ DirectML available
+✓ HTTP server listening on :7072
+✗ OCR unavailable (Windows.Media.Ocr not found)
+```
+
+---
+
+## Installation Issues
+
+<AccordionGroup>
+  <Accordion title="Setup.exe won't run" icon="ban">
+    **Error**: "Windows protected your PC"
+    
+    **Cause**: Binary not code-signed
+    
+    **Solution**:
+    1. Click "More info"
+    2. Click "Run anyway"
+    
+    **Permanent fix**: Code sign binaries
+    ```powershell
+    signtool sign /fd SHA256 /f cert.pfx Setup.exe
+    ```
+  </Accordion>
+  
+  <Accordion title="Installation hangs" icon="hourglass">
+    **Symptoms**: Setup.exe freezes at 75%
+    
+    **Diagnosis**:
+    ```powershell
+    # Check processes
+    Get-Process memento* | Select-Object Name, CPU, WorkingSet
+    
+    # Check logs
+    Get-Content $env:LOCALAPPDATA\memento\setup.log -Tail 20
+    ```
+    
+    **Common causes**:
+    - Antivirus blocking
+    - Daemon port already in use
+    - Insufficient permissions
+    
+    **Solution**: Kill processes and retry
+    ```powershell
+    taskkill /F /IM memento-daemon.exe
+    taskkill /F /IM Setup.exe
+    ```
+  </Accordion>
+  
+  <Accordion title="Missing DirectML.dll" icon="file">
+    **Error**: "The code execution cannot proceed because DirectML.dll was not found"
+    
+    **Solution**: Copy DirectML.dll to install directory
+    ```powershell
+    $installDir = "$env:LOCALAPPDATA\memento"
+    Copy-Item .\DirectML.dll $installDir\
+    ```
+    
+    **Download**: From [NuGet package](https://www.nuget.org/packages/Microsoft.AI.DirectML/)
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Service Issues
+
+<AccordionGroup>
+  <Accordion title="Service won't start" icon="xmark">
+    **Error**: "The SearchEngineDaemon service failed to start"
+    
+    **Check Event Log**:
+    ```powershell
+    Get-EventLog -LogName Application -Source SearchEngineDaemon -Newest 5 | 
+      Format-List TimeGenerated, EntryType, Message
+    ```
+    
+    **Common errors**:
+    
+    | Error | Cause | Solution |
+    |-------|-------|----------|
+    | Port 7072 in use | Another app using port | Kill process or change port |
+    | Database locked | Previous instance crashed | Delete lock file |
+    | Access denied | Wrong account | Reinstall service |
+    
+    **Manual start**:
+    ```powershell
+    # Start service
+    sc start SearchEngineDaemon
+    
+    # Check status
+    sc query SearchEngineDaemon
+    ```
+  </Accordion>
+  
+  <Accordion title="Service crashes on startup" icon="bomb">
+    **Diagnosis**: Check daemon logs
+    ```powershell
+    Get-Content $env:APPDATA\Memento\logs\daemon.log -Tail 50
+    ```
+    
+    **Common stack traces**:
+    
+    **1. Database error**
+    ```
+    thread 'main' panicked at 'Failed to open database: SqliteFailure(Error { code: DatabaseLocked })'
+    ```
+    
+    Solution: Delete lock file
+    ```powershell
+    Remove-Item $env:APPDATA\Memento\memento.db-wal
+    Remove-Item $env:APPDATA\Memento\memento.db-shm
+    ```
+    
+    **2. Model loading error**
+    ```
+    Failed to load ONNX model: No such file or directory
+    ```
+    
+    Solution: Reinstall models
+    ```powershell
+    .\memento-daemon.exe download-model all-MiniLM-L6-v2
+    ```
+    
+    **3. DirectML error**
+    ```
+    DirectML initialization failed: E_NOINTERFACE
+    ```
+    
+    Solution: Update GPU drivers or disable GPU
+    ```rust
+    // config.toml
+    [embeddings]
+    use_gpu = false
+    ```
+  </Accordion>
+  
+  <Accordion title="Service won't stop" icon="stop">
+    **Issue**: `sc stop SearchEngineDaemon` hangs
+    
+    **Force kill**:
+    ```powershell
+    # Find process
+    Get-Process memento-daemon | Select-Object Id, CPU, WorkingSet
+    
+    # Kill it
+    taskkill /F /IM memento-daemon.exe
+    
+    # Cleanup service state
+    sc delete SearchEngineDaemon
+    ```
+    
+    **Root cause**: Daemon not handling shutdown signals
+    
+    Check `service_control_handler` in code.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Search Issues
+
+<AccordionGroup>
+  <Accordion title="No search results" icon="magnifying-glass">
+    **Check database**:
+    ```sql
+    -- Connect to database
+    sqlite3 %APPDATA%\Memento\memento.db
+    
+    -- Count records
+    SELECT COUNT(*) FROM chunks;
+    SELECT COUNT(*) FROM vec_chunks;
+    ```
+    
+    **If zero**: Capture not running
+    ```powershell
+    # Check capture status
+    curl http://localhost:7072/capture/status
+    
+    # Resume capture
+    curl -X POST http://localhost:7072/capture/resume
+    ```
+    
+    **If non-zero**: Embeddings missing
+    ```sql
+    SELECT COUNT(*) FROM chunks c
+    LEFT JOIN vec_chunks v ON c.id = v.rowid
+    WHERE v.embedding IS NULL;
+    ```
+    
+    Solution: Reindex
+    ```powershell
+    .\memento-daemon.exe reindex
+    ```
+  </Accordion>
+  
+  <Accordion title="Search very slow (>1s)" icon="clock">
+    **Measure query time**:
+    ```sql
+    .timer on
+    SELECT * FROM vec_chunks 
+    WHERE embedding MATCH ... 
+    LIMIT 10;
+    ```
+    
+    **If >500ms**: Database fragmented
+    ```sql
+    -- Rebuild database
+    VACUUM;
+    
+    -- Rebuild indices
+    REINDEX;
+    ```
+    
+    **If still slow**: Too many chunks
+    ```sql
+    SELECT COUNT(*) FROM chunks;
+    ```
+    
+    Solution: Implement cleanup policy
+    ```sql
+    -- Delete chunks older than 90 days
+    DELETE FROM chunks 
+    WHERE timestamp < datetime('now', '-90 days');
+    ```
+  </Accordion>
+  
+  <Accordion title="Irrelevant search results" icon="question">
+    **Issue**: Results don't match query semantically
+    
+    **Check model**:
+    ```powershell
+    curl http://localhost:7072/models/status
+    ```
+    
+    **If wrong model**: Switch to better model
+    ```powershell
+    curl -X POST http://localhost:7072/models/switch \
+      -H "Content-Type: application/json" \
+      -d '{"model": "all-mpnet-base-v2", "reindex": true}'
+    ```
+    
+    **Try hybrid search**: Combine semantic + keyword
+    ```typescript
+    const results = await fetch('/search/hybrid', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        query: 'error message',
+        semantic_weight: 0.7,  // 70% semantic, 30% keyword
+        keyword_weight: 0.3
+      })
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Performance Issues
+
+<AccordionGroup>
+  <Accordion title="High CPU usage" icon="microchip">
+    **Check processes**:
+    ```powershell
+    Get-Process memento* | Sort-Object CPU -Descending
+    ```
+    
+    **Likely causes**:
+    
+    **1. OCR running continuously**
+    ```powershell
+    # Check capture interval
+    curl http://localhost:7072/capture/config
+    
+    # Increase interval (reduce CPU)
+    curl -X POST http://localhost:7072/capture/config \
+      -d '{"interval_ms": 5000}'  # 5 seconds instead of 2
+    ```
+    
+    **2. Embedding generation**
+    ```powershell
+    # Monitor logs
+    Get-Content $env:APPDATA\Memento\logs\daemon.log -Wait
+    ```
+    
+    Look for: `Generated embedding in 1234ms`
+    
+    Solution: Enable GPU acceleration
+    ```toml
+    [embeddings]
+    use_gpu = true
+    provider = "directml"
+    ```
+    
+    **3. Database writes**
+    
+    Solution: Batch inserts
+    ```rust
+    // Insert in batches of 100
+    const BATCH_SIZE: usize = 100;
+    ```
+  </Accordion>
+  
+  <Accordion title="High memory usage (>2GB)" icon="memory">
+    **Check memory**:
+    ```powershell
+    Get-Process memento-daemon | 
+      Select-Object Name, @{L='Memory(MB)';E={$_.WS / 1MB -as [int]}}
+    ```
+    
+    **Causes**:
+    
+    **1. Large model in memory**
+    
+    Check model size:
+    ```powershell
+    $modelPath = "$env:APPDATA\Memento\models\all-MiniLM-L6-v2\model.onnx"
+    (Get-Item $modelPath).Length / 1MB
+    ```
+    
+    Solution: Use smaller model (MiniLM vs MPNet)
+    
+    **2. Too many vectors in memory**
+    
+    Solution: Reduce cache size
+    ```rust
+    const MAX_CACHE_SIZE: usize = 10000; // Reduce from 50000
+    ```
+    
+    **3. Memory leak**
+    
+    Profile with:
+    ```bash
+    cargo build --release
+    valgrind --leak-check=full ./target/release/memento-daemon
+    ```
+  </Accordion>
+  
+  <Accordion title="High disk usage" icon="hard-drive">
+    **Check database size**:
+    ```powershell
+    Get-ChildItem $env:APPDATA\Memento\memento.db | 
+      Select-Object Name, @{L='Size(MB)';E={$_.Length / 1MB -as [int]}}
+    ```
+    
+    **Cleanup strategies**:
+    
+    **1. Delete old data**
+    ```sql
+    DELETE FROM chunks 
+    WHERE timestamp < datetime('now', '-90 days');
+    
+    VACUUM;  -- Reclaim space
+    ```
+    
+    **2. Compress images** (if storing screenshots)
+    ```rust
+    // Use lower quality
+    encoder.set_quality(60); // Instead of 90
+    ```
+    
+    **3. Skip duplicate frames** (already implemented)
+    
+    Verify:
+    ```sql
+    SELECT COUNT(DISTINCT screenshot_hash) as unique_frames,
+           COUNT(*) as total_frames
+    FROM frames;
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Update Issues
+
+<AccordionGroup>
+  <Accordion title="Update fails to download" icon="download">
+    **Check connectivity**:
+    ```powershell
+    Test-NetConnection -ComputerName github.com -Port 443
+    ```
+    
+    **Check proxy**:
+    ```powershell
+    # Get proxy settings
+    netsh winhttp show proxy
+    
+    # Configure proxy for Velopack
+    $env:HTTPS_PROXY = "http://proxy.company.com:8080"
+    ```
+    
+    **Manual download**:
+    ```powershell
+    # Download update manually
+    Invoke-WebRequest -Uri "https://github.com/.../memento-1.0.0-delta.nupkg" `
+      -OutFile "$env:TEMP\update.nupkg"
+    
+    # Apply manually
+    .\Update.exe --apply $env:TEMP\update.nupkg
+    ```
+  </Accordion>
+  
+  <Accordion title="Update hangs" icon="hourglass">
+    **Cause**: Daemon still running (binary locked)
+    
+    **Solution**: Ensure daemon stops before update
+    ```rust
+    // Pre-update hook
+    pub async fn prepare_update() -> Result<()> {
+        stop_service().await?;
+        
+        // Wait for process to exit
+        for _ in 0..30 {
+            if !is_daemon_running() {
+                return Ok(());
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+        
+        Err("Daemon did not stop in time")
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Rollback to previous version" icon="rotate-left">
+    **Automatic rollback**:
+    ```rust
+    if let Some(previous) = manager.get_previous_version()? {
+        manager.apply_updates_and_restart(&previous)?;
+    }
+    ```
+    
+    **Manual rollback**:
+    ```powershell
+    # List available versions
+    Get-ChildItem $env:LOCALAPPDATA\memento\packages
+    
+    # Apply specific version
+    .\Update.exe --apply .\packages\memento-0.9.0-full.nupkg
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Network Issues
+
+<AccordionGroup>
+  <Accordion title="Can't connect to daemon" icon="network-wired">
+    **Check if running**:
+    ```powershell
+    Get-Process memento-daemon -ErrorAction SilentlyContinue
+    ```
+    
+    **Check port**:
+    ```powershell
+    netstat -ano | findstr :7072
+    ```
+    
+    **Test connectivity**:
+    ```powershell
+    curl http://localhost:7072/health
+    ```
+    
+    **If connection refused**:
+    1. Check firewall
+    2. Check port file
+    3. Restart service
+  </Accordion>
+  
+  <Accordion title="Firewall blocking" icon="shield">
+    **Add firewall rule**:
+    ```powershell
+    New-NetFirewallRule -DisplayName "Memento Daemon" `
+      -Direction Inbound `
+      -Program "$env:LOCALAPPDATA\memento\memento-daemon.exe" `
+      -Action Allow
+    ```
+    
+    **Check existing rules**:
+    ```powershell
+    Get-NetFirewallRule | Where-Object {$_.DisplayName -like "*Memento*"}
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Crash Reports
+
+Enable Sentry for automatic crash reporting:
+
+```rust
+use sentry::init;
+
+init((
+    "YOUR_DSN",
+    sentry::ClientOptions {
+        release: Some(env!("CARGO_PKG_VERSION").into()),
+        ..Default::default()
+    },
+));
+```
+
+View crashes at sentry.io dashboard.
+
+---
+
+## Debug Logs
+
+Enable verbose logging:
+
+```powershell
+$env:RUST_LOG="memento=debug"
+.\memento-daemon.exe
+```
+
+**Log levels**:
+- `error`: Errors only
+- `warn`: Warnings + errors
+- `info`: Info + above (default)
+- `debug`: Debug + above
+- `trace`: Everything
+
+---
+
+## Support Resources
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/your-org/memento-ai/issues">
+    Report bugs and feature requests.
+  </Card>
+  
+  <Card title="Discord Community" icon="discord" href="https://discord.gg/your-invite">
+    Get help from the community.
+  </Card>
+  
+  <Card title="Documentation" icon="book" href="/introduction">
+    Browse full documentation.
+  </Card>
+  
+  <Card title="Email Support" icon="envelope" href="mailto:support@memento.ai">
+    Enterprise support.
+  </Card>
+</CardGroup>

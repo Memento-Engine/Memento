@@ -1,8 +1,8 @@
 import * as React from "react"
 
-// Desktop app — only treat very narrow windows as "mobile" (sheet drawer mode).
-// This ensures the collapsible sidebar is always used instead of the sheet.
-const MOBILE_BREAKPOINT = 480
+// Desktop app: switch to sheet drawer mode when the window is narrower than md.
+// This makes resized desktop windows match mobile sidebar overlay behavior.
+const MOBILE_BREAKPOINT = 768
 
 export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)

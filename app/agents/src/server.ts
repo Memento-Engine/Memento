@@ -23,6 +23,12 @@ import {
   cleanupEventQueue,
 } from "./utils/eventQueue";
 import {
+  initTokenTrackerWithMode,
+  logRequestSummary,
+  logFinalQuerySummary,
+  cleanupTokenTracker,
+} from "./utils/tokenTracker";
+import {
   initializeTelemetry,
   registerTelemetryShutdownHooks,
 } from "./telemetry/setup";
@@ -34,6 +40,7 @@ import {
 import { runWithSpan } from "./telemetry/tracing";
 import { formatLocalTimestamp } from "./utils/time";
 import { saveMessage, buildSourcesFromStepResults, getSessionMessages } from "./tools/chatPersistence";
+import { getCacheManager, logCacheStatsSummary } from "./utils/cache";
 import net from "net";
 
 declare const __DEV__: boolean | undefined;
@@ -344,6 +351,9 @@ async function startServer() {
 
               // Initialize event queue with stream writer for real-time streaming
               initializeEventQueue(requestId, streamWriter);
+              
+              // Initialize token tracking for this request with search-mode budget profile
+              initTokenTrackerWithMode(requestId, mode);
 
               // Execute agent graph with event queue for streaming
               let result: any;
@@ -466,11 +476,13 @@ async function startServer() {
                   }) + "\n",
                 );
 
+                cleanupTokenTracker(requestId);
                 return res.end();
               }
 
 
               // Persist messages to DB in-order so reload preserves user -> assistant sequence.
+              let sources: any[] = [];
               if (sessionId) {
                 const persistSession = sessionId;
                 const finalResult = (result as any)?.finalResult;
@@ -484,16 +496,36 @@ async function startServer() {
 
                 // Save assistant message with chunk references
                 if (finalResult && stepResults) {
-                  const sources = buildSourcesFromStepResults(stepResults);
+                  sources = buildSourcesFromStepResults(stepResults);
                   await saveMessage(
                     persistSession,
                     "assistant",
                     finalResult,
                     sources,
                     persistedThinkingSteps,
+                    Array.isArray((result as any)?.finalFollowups)
+                      ? (result as any).finalFollowups.slice(0, 3)
+                      : [],
                   );
+                  logger.info("Persisted message to DB", { sourceCount: sources.length, sessionId });
+                }
+              } else {
+                // Even if not persisting to DB, extract sources from stepResults for response
+                const stepResults = (result as any)?.stepResults;
+                if (stepResults) {
+                  sources = buildSourcesFromStepResults(stepResults);
                 }
               }
+
+              logger.info("Sending complete event", { 
+                requestId, 
+                duration, 
+                sourceCount: sources.length,
+                hasSources: sources.length > 0,
+                followupCount: Array.isArray((result as any)?.finalFollowups)
+                  ? (result as any).finalFollowups.length
+                  : 0,
+              });
 
               res.write(
                 JSON.stringify({
@@ -505,10 +537,20 @@ async function startServer() {
                       duration,
                       timestamp: formatLocalTimestamp(),
                     },
+                    sources: sources.length > 0 ? sources : undefined,
+                    followups: Array.isArray((result as any)?.finalFollowups)
+                      ? (result as any).finalFollowups.slice(0, 3)
+                      : undefined,
                   },
                   timestamp: formatLocalTimestamp(),
                 }) + "\n",
               );
+
+              // Log cache statistics after execution
+              await logCacheStatsSummary();
+              
+              // Log final query completion summary
+              await logFinalQuerySummary(requestId, duration);
 
               // Clean up event queue after successful completion
               cleanupEventQueue(requestId);
@@ -523,6 +565,7 @@ async function startServer() {
 
               // Clean up event queue on error
               cleanupEventQueue(requestId);
+              cleanupTokenTracker(requestId);
 
               res.write(
                 JSON.stringify({
@@ -584,6 +627,40 @@ async function startServer() {
       });
     });
 
+    /**
+     * Cache statistics endpoint
+     */
+    router.get<{}, any>("/cache/stats", async (req: Request, res: Response) => {
+      const manager = getCacheManager();
+      const allStats = manager.getAllStats();
+
+      const stats: Record<string, any> = {};
+      let totalHits = 0;
+      let totalMisses = 0;
+      let totalSize = 0;
+
+      for (const [name, cacheStats] of allStats.entries()) {
+        stats[name] = cacheStats;
+        totalHits += cacheStats.hits;
+        totalMisses += cacheStats.misses;
+        totalSize += cacheStats.size;
+      }
+
+      const totalOps = totalHits + totalMisses;
+      const overallHitRate = totalOps > 0 ? totalHits / totalOps : 0;
+
+      return res.status(200).json({
+        caches: stats,
+        summary: {
+          totalHits,
+          totalMisses,
+          totalSize,
+          overallHitRate,
+          timestamp: formatLocalTimestamp(),
+        },
+      });
+    });
+
     app.use("/api/v1", router);
 
     // 404 handler
@@ -628,12 +705,8 @@ async function startServer() {
       );
     });
   } catch (error) {
-
-
-
     console.log("Got the error in start server catch", error);
 
-    console.log("Passsing to sentry")
     captureAgentException(error, {
       message: "Failed to start agents server",
       level: "fatal",

@@ -1247,14 +1247,16 @@ SELECT
         role: &str,
         content: &str,
         thinking_steps: Option<&str>,
+        followups_json: Option<&str>,
     ) -> Result<i64, sqlx::Error> {
         let result = sqlx::query(
-            "INSERT INTO messages (session_id, role, content, thinking_steps) VALUES (?, ?, ?, ?)"
+            "INSERT INTO messages (session_id, role, content, thinking_steps, followups_json) VALUES (?, ?, ?, ?, ?)"
         )
             .bind(session_id)
             .bind(role)
             .bind(content)
             .bind(thinking_steps)
+            .bind(followups_json)
             .execute(&self.pool)
             .await?;
 
@@ -1295,9 +1297,9 @@ SELECT
         &self,
         session_id: &str,
         limit: i32,
-    ) -> Result<Vec<(i64, String, String, String, Option<String>)>, sqlx::Error> {
+    ) -> Result<Vec<(i64, String, String, String, Option<String>, Option<String>)>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, role, content, created_at, thinking_steps FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC LIMIT ?"
+            "SELECT id, role, content, created_at, thinking_steps, followups_json FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC LIMIT ?"
         )
             .bind(session_id)
             .bind(limit)
@@ -1312,6 +1314,7 @@ SELECT
                 r.get::<String, _>("content"),
                 r.get::<String, _>("created_at"),
                 r.get::<Option<String>, _>("thinking_steps"),
+                r.get::<Option<String>, _>("followups_json"),
             )
         }).collect())
     }

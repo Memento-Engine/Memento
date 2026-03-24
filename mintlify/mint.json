@@ -1,0 +1,160 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Memento AI",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#000000",
+    "light": "#525252",
+    "dark": "#000000",
+    "background": {
+      "dark": "#0A0A0A",
+      "light": "#FFFFFF"
+    },
+    "anchors": {
+      "from": "#000000",
+      "to": "#525252"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/pavan/memento-ai"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/getting-started/installation"
+  },
+  "tabs": [
+    {
+      "name": "Documentation",
+      "url": "/"
+    },
+    {
+      "name": "API Reference",
+      "url": "api-reference"
+    },
+    {
+      "name": "Architecture",
+      "url": "architecture"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/pavan/memento-ai"
+    },
+    {
+      "name": "Discord",
+      "icon": "discord",
+      "url": "https://discord.gg/memento-ai"
+    },
+    {
+      "name": "Changelog",
+      "icon": "list",
+      "url": "/changelog"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Overview",
+      "pages": ["introduction"]
+    },
+    {
+      "group": "Getting Started",
+      "pages": [
+        "getting-started/installation",
+        "getting-started/configuration",
+        "getting-started/quickstart",
+        "getting-started/privacy-setup"
+      ]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "core-concepts/screen-capture",
+        "core-concepts/ocr-processing",
+        "core-concepts/semantic-search",
+        "core-concepts/chat-memory"
+      ]
+    },
+    {
+      "group": "Architecture",
+      "pages": [
+        "architecture/overview",
+        "architecture/rust-core",
+        "architecture/daemon",
+        "architecture/ai-gateway",
+        "architecture/frontend",
+        "architecture/desktop-app",
+        "architecture/data-flow",
+        "architecture/database-schema"
+      ]
+    },
+    {
+      "group": "API Reference",
+      "pages": [
+        "api-reference/overview",
+        "api-reference/search",
+        "api-reference/chat",
+        "api-reference/capture",
+        "api-reference/models",
+        "api-reference/privacy"
+      ]
+    },
+    {
+      "group": "Advanced",
+      "pages": [
+        "advanced/windows-service",
+        "advanced/auto-updates",
+        "advanced/port-discovery",
+        "advanced/rate-limiting",
+        "advanced/custom-models"
+      ]
+    },
+    {
+      "group": "Deployment",
+      "pages": [
+        "deployment/building",
+        "deployment/distribution",
+        "deployment/troubleshooting"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/pavan/memento-ai",
+    "discord": "https://discord.gg/memento-ai",
+    "twitter": "https://twitter.com/memento_ai"
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdit": true,
+    "raiseIssue": true
+  },
+  "search": {
+    "prompt": "Search Memento AI docs..."
+  },
+  "typography": {
+    "headings": {
+      "font": "Geist",
+      "weight": 600
+    },
+    "body": {
+      "font": "Geist",
+      "weight": 400
+    },
+    "code": {
+      "font": "Geist Mono"
+    }
+  },
+  "theme": "quill",
+  "layout": "topnav",
+  "modeToggle": {
+    "default": "dark"
+  }
+}

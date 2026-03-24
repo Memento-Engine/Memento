@@ -50,27 +50,27 @@ export const StepOutputSchema = z.object({
 export const SearchHintSchema = z.object({
   appNames: z
     .array(z.string())
-    .optional()
+    .nullish()
     .describe(
       "Application names to look for (literal values only, e.g. ['Chrome', 'VS Code'])",
     ),
   urlPatterns: z
     .array(z.string())
-    .optional()
+    .nullish()
     .describe(
       "URL patterns to match (literal values only, e.g. ['github.com'])",
     ),
   windowTitleKeywords: z
     .array(z.string())
-    .optional()
+    .nullish()
     .describe("Window title keywords (literal values only)"),
   textSearchTerms: z
     .array(z.string())
-    .optional()
+    .nullish()
     .describe("OCR text search terms (literal values only)"),
   timeContext: z
     .string()
-    .optional()
+    .nullish()
     .describe(
       "Natural language time description, e.g. 'yesterday afternoon' or " +
         "'during the session found in step1'. Resolved at execution time.",
@@ -86,7 +86,7 @@ const SearchStepSchema = z.object({
   stepGoal: z.string().describe("What this search step should accomplish"),
   uiSearchQueries: z
     .array(z.string())
-    .optional()
+    .nullish()
     .describe(
       "Short queries describing what this step is searching for. Used for UI display only.",
     ),
@@ -98,24 +98,7 @@ const SearchStepSchema = z.object({
         "Reference prior step outputs by name when needed: " +
         "'Use semantic search to find browser activity during {{session_times}}'",
     ),
-  suggestedSkill: z
-    .string()
-    .optional()
-    .describe(
-      "Suggested skill to use (e.g. 'semantic-search', 'fts-search', 'hybrid-search', 'temporal-query', 'aggregation-digest')",
-    ),
-  suggestedTool: z
-    .enum(["sql_execute", "semantic_search", "search"])
-    .optional()
-    .describe("Suggested tool to execute this step"),
   dependsOn: z.array(z.string()).default([]),
-  // Legacy fields for executor compatibility
-  expectedOutput: StepOutputSchema.optional().describe(
-    "Expected output structure for extraction",
-  ),
-  searchHints: SearchHintSchema.optional().describe(
-    "Soft hints for query builder",
-  ),
 });
 
 const ReasonStepSchema = z.object({
@@ -124,7 +107,7 @@ const ReasonStepSchema = z.object({
   stepGoal: z.string().describe("What this reasoning step should accomplish"),
   uiReason: z
     .string()
-    .optional()
+    .nullish()
     .describe(
       "Short description of the reasoning being performed. Used for UI display only.",
     ),
@@ -132,10 +115,7 @@ const ReasonStepSchema = z.object({
     .string()
     .describe("What reasoning / computation to perform on dependency data"),
   dependsOn: z.array(z.string()).default([]),
-  // Legacy field for executor compatibility
-  expectedOutput: StepOutputSchema.optional().describe(
-    "Expected output structure for extraction",
-  ),
+
 });
 
 const FinalStepSchema = z.object({
@@ -144,10 +124,7 @@ const FinalStepSchema = z.object({
   stepGoal: z.string().describe("What this final step should accomplish"),
   intent: z.string().describe("How to synthesize the final answer"),
   dependsOn: z.array(z.string()).default([]),
-  // Legacy field for executor compatibility
-  expectedOutput: StepOutputSchema.optional().describe(
-    "Expected output structure for extraction",
-  ),
+
 });
 
 // ── Discriminated Union ──────────────────────────────────

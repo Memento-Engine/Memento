@@ -2,15 +2,21 @@
 
 import {
   Delete,
-  Edit,
   Ellipsis,
   LogIn,
+  Menu,
+  MoreHorizontal,
   PanelLeft,
+  PencilLine,
   Pin,
+  PinOff,
   Search,
-  Share,
+  Share2,
   SquarePen,
+  Trash2,
+  TriangleAlert,
   User2,
+  X,
 } from "lucide-react";
 import {
   Sidebar,
@@ -24,6 +30,7 @@ import {
 } from "../ui/sidebar";
 
 import { useRouter } from "next/navigation";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { cn } from "@/lib/utils";
 import { SettingsDialog } from "../settingsDialog";
 import { useCallback, useEffect, useState } from "react";
@@ -33,8 +40,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
 import { Skeleton } from "../ui/skeleton";
+import { Button } from "../ui/button";
 import { MementoLogo } from "../Logo";
 import { PremiumCredits } from "../PremiumCredits";
 import useAuth from "@/hooks/useAuth";
@@ -50,10 +67,18 @@ import {
 } from "@/api/messages";
 
 function LeftSidebar(): React.ReactElement {
-  const { toggleSidebar, state } = useSidebar();
+  const { toggleSidebar, state, isMobile, openMobile, setOpenMobile } =
+    useSidebar();
   const [isSettingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [isLoadingChats, setIsLoadingChats] = useState<boolean>(false);
+  const [isDeletingChat, setIsDeletingChat] = useState<boolean>(false);
+  const [isRenamingChat, setIsRenamingChat] = useState<boolean>(false);
   const [chatSessions, setChatSessions] = useState<ChatSessionRow[]>([]);
+  const [chatPendingDelete, setChatPendingDelete] =
+    useState<ChatSessionRow | null>(null);
+  const [chatPendingRename, setChatPendingRename] =
+    useState<ChatSessionRow | null>(null);
+  const [renameValue, setRenameValue] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const { user, isAuthenticated } = useAuth();
   const { chatId, messages, openChat, startNewChat } = useChatContext();
@@ -61,12 +86,21 @@ function LeftSidebar(): React.ReactElement {
   const isCollapsed = state === "collapsed";
 
   const goToHome = (): void => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
     startNewChat();
     router.push("/", { scroll: false });
   };
 
   const handleFooterClick = (): void => {
     setSettingsOpen(true);
+  };
+
+  const closeOverlayIfMobile = (): void => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
   };
 
   const refreshChats = useCallback(async () => {
@@ -85,26 +119,46 @@ function LeftSidebar(): React.ReactElement {
     void refreshChats();
   }, [refreshChats]);
 
+  // Debounce refreshing chat list when session/messages change
   useEffect(() => {
-    // Keep sidebar list fresh when active session or message count changes.
-    void refreshChats();
+    const timeoutId = setTimeout(() => {
+      void refreshChats();
+    }, 300);
+    return () => clearTimeout(timeoutId);
   }, [chatId, messages.length, refreshChats]);
 
   const filteredSessions = chatSessions.filter((session) =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
-  const handleRename = async (session: ChatSessionRow) => {
-    const nextTitle = window.prompt("Rename chat", session.title)?.trim();
-    if (!nextTitle || nextTitle === session.title) return;
+  const handleRename = (session: ChatSessionRow): void => {
+    setChatPendingRename(session);
+    setRenameValue(session.title);
+  };
 
-    const ok = await renameChatSession(session.session_id, nextTitle);
+  const handleRenameConfirmed = async (): Promise<void> => {
+    if (!chatPendingRename) {
+      return;
+    }
+
+    const nextTitle = renameValue.trim();
+    if (!nextTitle || nextTitle === chatPendingRename.title) {
+      setChatPendingRename(null);
+      return;
+    }
+
+    setIsRenamingChat(true);
+
+    const ok = await renameChatSession(chatPendingRename.session_id, nextTitle);
     if (!ok) {
+      setIsRenamingChat(false);
       notify.error("Failed to rename chat");
       return;
     }
 
     notify.success("Chat renamed");
+    setChatPendingRename(null);
+    setIsRenamingChat(false);
     await refreshChats();
   };
 
@@ -119,23 +173,32 @@ function LeftSidebar(): React.ReactElement {
     await refreshChats();
   };
 
-  const handleDelete = async (session: ChatSessionRow) => {
-    const confirmed = window.confirm(
-      "Delete this chat? This cannot be undone.",
-    );
-    if (!confirmed) return;
+  const handleDelete = (session: ChatSessionRow): void => {
+    setChatPendingDelete(session);
+  };
 
-    const ok = await deleteChatSession(session.session_id);
+  const handleDeleteConfirmed = async (): Promise<void> => {
+    if (!chatPendingDelete) {
+      return;
+    }
+
+    setIsDeletingChat(true);
+
+    const ok = await deleteChatSession(chatPendingDelete.session_id);
     if (!ok) {
+      setIsDeletingChat(false);
       notify.error("Failed to delete chat");
       return;
     }
 
     notify.success("Chat deleted");
-    if (chatId === session.session_id) {
+    if (chatId === chatPendingDelete.session_id) {
       startNewChat();
-      router.push("/chat", { scroll: false });
+      router.push("/", { scroll: false });
     }
+    closeOverlayIfMobile();
+    setChatPendingDelete(null);
+    setIsDeletingChat(false);
     await refreshChats();
   };
 
@@ -150,9 +213,12 @@ function LeftSidebar(): React.ReactElement {
     }
   };
 
-  const renderSidebarChatSkeletons = () => (
+  const renderSidebarChatSkeletons = () =>
     Array.from({ length: 6 }).map((_, index) => (
-      <SidebarMenuItem className="list-none px-3 py-2" key={`chat-skeleton-${index}`}>
+      <SidebarMenuItem
+        className="list-none px-3 py-2"
+        key={`chat-skeleton-${index}`}
+      >
         <div className="flex items-center justify-between rounded-lg px-1 py-1">
           <div className="min-w-0 flex-1 space-y-2">
             <Skeleton className="h-4 w-[82%] rounded-sm" />
@@ -161,32 +227,33 @@ function LeftSidebar(): React.ReactElement {
           <Skeleton className="ml-3 h-4 w-4 rounded-full" />
         </div>
       </SidebarMenuItem>
-    ))
-  );
+    ));
 
   return (
     <>
+      {isMobile && !openMobile && (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          aria-label="Open sidebar"
+          className="fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border/50 bg-background/95 text-foreground shadow-md backdrop-blur-sm transition-all duration-200 hover:bg-accent hover:border-border active:scale-95 supports-[backdrop-filter]:bg-background/90"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
+
       <Sidebar
         collapsible="icon"
-        className="
-          z-10
-          shrink-0
-          m-4
-          flex
-          h-[calc(100vh-2rem)]
-          flex-col
-          overflow-hidden
-          rounded-xl
-          border
-          bg-sidebar
-          transition-all
-          duration-300
-        "
+        className={cn(
+          "z-10 shrink-0 flex flex-col overflow-hidden bg-sidebar transition-all duration-300",
+          !isMobile && "m-4 h-[calc(100vh-2rem)] rounded-xl border"
+        )}
       >
         <SidebarHeader
           className={cn(
-            "flex items-center py-3",
-            isCollapsed ? "justify-center px-0" : "px-3 justify-between",
+            "flex items-center border-b border-border/50",
+            isCollapsed ? "justify-center px-0 py-4" : "px-4 py-4 justify-between",
+            isMobile && "border-border/30"
           )}
         >
           <div
@@ -196,22 +263,39 @@ function LeftSidebar(): React.ReactElement {
             )}
           >
             <span
-              onClick={toggleSidebar}
-              className="cursor-pointer text-base flex shrink-0 items-center"
+              onClick={isMobile ? undefined : toggleSidebar}
+              className={cn(
+                "text-base flex shrink-0 items-center",
+                !isMobile && "cursor-pointer"
+              )}
             >
               <MementoLogo size={40} />
             </span>
             {!isCollapsed && (
-              <PanelLeft
-                onClick={toggleSidebar}
-                size={18}
-                className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
-              />
+              isMobile ? (
+                <button
+                  type="button"
+                  onClick={() => setOpenMobile(false)}
+                  aria-label="Close sidebar"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              ) : (
+                <PanelLeft
+                  onClick={toggleSidebar}
+                  size={18}
+                  className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+                />
+              )
             )}
           </div>
         </SidebarHeader>
 
-        <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4 group-data-[collapsible=icon]:px-2">
+        <SidebarContent className={cn(
+          "custom-scrollbar flex-1 overflow-y-auto py-4 group-data-[collapsible=icon]:px-2",
+          isMobile ? "px-3" : "px-3"
+        )}>
           <SidebarMenu>
             <SidebarMenuItem
               onClick={goToHome}
@@ -238,7 +322,10 @@ function LeftSidebar(): React.ReactElement {
             <SidebarMenuItem className="group/menuitem list-none">
               <SidebarMenuButton
                 variant="default"
-                onClick={openChatSearchDialog}
+                onClick={() => {
+                  openChatSearchDialog();
+                  closeOverlayIfMobile();
+                }}
                 className="w-full text-muted-foreground flex items-center cursor-pointer justify-start px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
               >
                 <Search className="h-5 w-5 shrink-0" />
@@ -281,7 +368,10 @@ function LeftSidebar(): React.ReactElement {
                   >
                     <SidebarMenuButton
                       variant="default"
-                      onClick={() => void openChat(session.session_id)}
+                      onClick={() => {
+                        closeOverlayIfMobile();
+                        void openChat(session.session_id);
+                      }}
                       className="
                     w-full
                     flex
@@ -298,13 +388,28 @@ function LeftSidebar(): React.ReactElement {
                     "
                       data-active={isActive}
                     >
-                      <span className="truncate text-sm group-data-[collapsible=icon]:hidden">
-                        {session.title}
-                      </span>
+                      <div className="flex min-w-0 items-center gap-2 group-data-[collapsible=icon]:hidden">
+                        <span className="truncate text-sm">
+                          {session.title}
+                        </span>
+
+                        {session.pinned && (
+                          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                            <Pin className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+                      </div>
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Ellipsis className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden" />
+                          <button
+                            type="button"
+                            aria-label="Chat actions"
+                            className="inline-flex cursor-pointer h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-all hover:bg-muted/80 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/view:opacity-100 group-data-[collapsible=icon]:hidden"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
                         </DropdownMenuTrigger>
 
                         <DropdownMenuContent
@@ -317,17 +422,17 @@ function LeftSidebar(): React.ReactElement {
                               "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
                             )}
                           >
-                            <Share className="h-4 w-4 shrink-0" />
+                            <Share2 className="h-4 w-4 shrink-0" />
                             <span className="text-sm">Share</span>
                           </DropdownMenuItem>
 
                           <DropdownMenuItem
-                            onClick={() => void handleRename(session)}
+                            onClick={() => handleRename(session)}
                             className={cn(
                               "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
                             )}
                           >
-                            <Edit className="h-4 w-4 shrink-0" />
+                            <PencilLine className="h-4 w-4 shrink-0" />
                             <span className="text-sm">Rename</span>
                           </DropdownMenuItem>
 
@@ -339,17 +444,21 @@ function LeftSidebar(): React.ReactElement {
                               "flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer hover:bg-muted transition",
                             )}
                           >
-                            <Pin className="h-4 w-4 shrink-0" />
+                            {session.pinned ? (
+                              <PinOff className="h-4 w-4 shrink-0" />
+                            ) : (
+                              <Pin className="h-4 w-4 shrink-0" />
+                            )}
                             <span className="text-sm">
                               {session.pinned ? "Unpin" : "Pin"}
                             </span>
                           </DropdownMenuItem>
 
                           <DropdownMenuItem
-                            onClick={() => void handleDelete(session)}
+                            onClick={() => handleDelete(session)}
                             className="flex items-center cursor-pointer gap-3 px-2 py-2 rounded-lg text-destructive hover:bg-destructive/10 transition"
                           >
-                            <Delete className="h-4 w-4 shrink-0" />
+                            <Trash2 className="h-4 w-4 shrink-0" />
                             <span className="text-sm">Delete</span>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -363,13 +472,21 @@ function LeftSidebar(): React.ReactElement {
         </SidebarContent>
 
         {/* Premium Credits Display */}
-        <div className={cn("px-3 pb-2", isCollapsed && "px-2")}>
+        <div className={cn(
+          "border-t border-border/50 pt-3",
+          isCollapsed ? "px-2 pb-2" : "px-4 pb-3",
+          isMobile && "border-border/30"
+        )}>
           <PremiumCredits collapsed={isCollapsed} />
         </div>
 
         <SidebarFooter
           onClick={handleFooterClick}
-          className={cn("px-3 pb-3", isCollapsed && "px-2")}
+          className={cn(
+            "border-t border-border/50",
+            isCollapsed ? "px-2 pb-3 pt-3" : "px-4 pb-4 pt-3",
+            isMobile && "border-border/30"
+          )}
         >
           <SidebarMenu>
             <SidebarMenuItem>
@@ -421,6 +538,91 @@ function LeftSidebar(): React.ReactElement {
       </Sidebar>
 
       <SettingsDialog open={isSettingsOpen} setOpen={setSettingsOpen} />
+      <Dialog
+        open={chatPendingRename !== null}
+        onOpenChange={(open) => {
+          if (!open && !isRenamingChat) {
+            setChatPendingRename(null);
+            setRenameValue("");
+          }
+        }}
+      >
+        <DialogContent className="border-border/60 bg-background/95 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:max-w-md sm:rounded-2xl">
+          <DialogHeader className="gap-3 text-left">
+            <DialogTitle className="flex items-center gap-3 text-base font-semibold text-foreground sm:text-lg">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted text-foreground">
+                <PencilLine className="h-5 w-5" />
+              </span>
+              Rename chat
+            </DialogTitle>
+          </DialogHeader>
+
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleRenameConfirmed();
+            }}
+          >
+            <Input
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              placeholder="Enter chat title"
+              autoFocus
+              maxLength={120}
+              className="border-border/60 bg-background"
+            />
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isRenamingChat}
+                onClick={() => {
+                  setChatPendingRename(null);
+                  setRenameValue("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isRenamingChat || !renameValue.trim()}
+              >
+                {isRenamingChat ? "Saving..." : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <ConfirmationDialog
+        open={chatPendingDelete !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open && !isDeletingChat) {
+            setChatPendingDelete(null);
+          }
+        }}
+        title="Delete chat?"
+        description={
+          chatPendingDelete ? (
+            <>
+              This will permanently delete{" "}
+              <span className="font-medium text-foreground">
+                {chatPendingDelete.title}
+              </span>
+              . This action cannot be undone.
+            </>
+          ) : (
+            "This action cannot be undone."
+          )
+        }
+        confirmLabel={isDeletingChat ? "Deleting..." : "Delete"}
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirmed}
+        isPending={isDeletingChat}
+        tone="destructive"
+        icon={<TriangleAlert className="h-5 w-5" />}
+      />
     </>
   );
 }

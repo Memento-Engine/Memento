@@ -10,7 +10,6 @@ import { emitStepEvent } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
 import { invokeRoleLlm } from "../llm/routing";
 import { buildPlannerContext, getDatabaseSchemaContext } from "./skillContext";
-import { SEARCH_MODE_PRESETS, SearchMode } from "../types/stepResult";
 
 /*
 ============================================================
@@ -94,26 +93,21 @@ export async function plannerNodeV2(
 
         // Load skills and tools context
         const plannerContext = await getPlannerContext();
-        const currentDate = new Date().toISOString().split("T")[0];
-        const modeConfig = SEARCH_MODE_PRESETS[(state.searchMode ?? "search") as SearchMode];
 
         let lastError = "";
         let lastRawError: unknown;
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           try {
-            // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
             const prompt = await plannerPromptV2.invoke({
-              goal: state.rewrittenQuery ?? state.goal,
-              previousErrors: lastError,
-              availableSkills: plannerContext.skillsContext,
-              availableTools: plannerContext.toolsContext,
-              schemaContext: plannerContext.schemaContext,
-              currentDate,
-              maxSteps: String(modeConfig.maxPlanSteps),
+              rewritten_query: state.rewrittenQuery ?? state.goal,
+              skill_refs: plannerContext.skillsContext,
+              tool_refs: plannerContext.toolsContext,
             });
 
 
+
+            console.log("Planner prompt", { prompt });
 
             const llmResult = await invokeRoleLlm({
               role: "planner",

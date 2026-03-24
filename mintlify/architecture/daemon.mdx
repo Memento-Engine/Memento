@@ -1,0 +1,556 @@
+---
+title: "Rust Daemon"
+description: "The 24/7 background service that powers screen capture, OCR, and real-time indexing."
+---
+
+## Overview
+
+The Rust Daemon (`crates/daemon`) is the heart of Memento AI. It runs continuously in the background as a Windows Service, capturing your screen, extracting text via OCR, generating embeddings, and maintaining a searchable index of everything you've ever seen.
+
+<Info>
+  **Location**: `%LOCALAPPDATA%\memento\current\memento-daemon.exe`  
+  **Service Name**: `SearchEngineDaemon`  
+  **Default Port**: `7070-7077` (auto-selected)
+</Info>
+
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph Daemon[\"Rust Daemon Process\"]
+        Capture[\"Screen Capture<br/>(xcap)\"]
+        Hash[\"Hash Check<br/>(Dedup)\"]
+        OCR[\"Windows OCR<br/>(Text Extract)\"]
+        Chunk[\"Text Chunker<br/>(300 words)\"]
+        Embed[\"Embedding Model<br/>(ONNX)\"]
+        Store[\"Storage Layer<br/>(SQLite)\"]
+        Server[\"HTTP Server<br/>(Axum)\"]
+    end
+    
+    Screen[\"Windows Screen\"] --> Capture
+    Capture --> Hash
+    Hash -->|\"New Frame\"| OCR
+    OCR --> Chunk
+    Chunk --> Embed
+    Embed --> Store
+    Store --> Server
+    Server -->|\"REST API\"| Client[\"Frontend\"]
+    
+    style Daemon fill:#0A0A0A,stroke:#525252,color:#fff
+```
+
+---
+
+## Core Components
+
+### 1. Screen Capture Pipeline
+
+The daemon continuously captures all windows on your screen using the `xcap` library.
+
+<CodeGroup>
+
+```rust Capture Loop
+// Simplified from pipeline/capture.rs
+async fn capture_loop() {
+    loop {
+        let monitors = xcap::Monitor::all()?;
+        
+        for monitor in monitors {
+            let windows = xcap::Window::all()?;
+            
+            for window in windows {
+                if !is_visible(&window) { continue; }
+                
+                let screenshot = window.capture_image()?;
+                let hash = calculate_hash(&screenshot);
+                
+                // Skip if identical to last capture
+                if hash == last_hash { continue; }
+                
+                process_frame(screenshot, window).await?;
+            }
+        }
+        
+        sleep(adaptive_interval()).await;
+    }
+}
+```
+
+```rust Frame Metadata
+pub struct CapturedFrame {
+    pub timestamp: DateTime<Utc>,
+    pub app_name: String,
+    pub window_title: String,
+    pub browser_url: Option<String>,
+    pub window_bounds: Rect,
+    pub image_path: PathBuf,
+    pub hash: String,
+}
+```
+
+</CodeGroup>
+
+**Features:**
+- **Adaptive Throttling**: Slows down during high CPU usage or when user is idle
+- **Hash Deduplication**: Skips identical frames to save storage
+- **Browser Detection**: Extracts active URL from Chrome, Firefox, Edge, Brave
+- **Window Metadata**: Captures app name, title, position, and size
+
+---
+
+### 2. OCR Processing
+
+Uses Windows built-in OCR engine for text extraction with bounding boxes.
+
+<CodeGroup>
+
+```rust OCR Pipeline
+// From ocr/mod.rs
+pub async fn extract_text(
+    image: &DynamicImage
+) -> Result<OcrResult> {
+    let bitmap = convert_to_windows_bitmap(image)?;
+    
+    // Windows.Media.Ocr.OcrEngine
+    let engine = OcrEngine::try_create_from_language(
+        Language::English()?
+    )?;
+    
+    let result = engine.recognize_async(&bitmap)?.await?;
+    
+    Ok(OcrResult {
+        text: result.text()?.to_string(),
+        lines: extract_lines_with_bounds(result),
+    })
+}
+```
+
+```rust Bounding Boxes
+pub struct OcrLine {
+    pub text: String,
+    pub bounds: Rect,
+    pub confidence: f32,
+}
+
+pub struct OcrResult {
+    pub text: String,
+    pub lines: Vec<OcrLine>,
+}
+```
+
+</CodeGroup>
+
+**Capabilities:**
+- Multi-language support (English default)
+- Word and line-level bounding boxes
+- Confidence scores per text block
+- Handles rotated and skewed text
+
+---
+
+### 3. Text Chunking & Embeddings
+
+Text is split into 300-word chunks with 50-word overlap, then embedded using a local ONNX model.
+
+<CodeGroup>
+
+```rust Chunking
+// From embedding/chunker.rs
+pub fn chunk_text(text: &str, chunk_size: usize) -> Vec<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let overlap = 50;
+    
+    words
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let start = if i > 0 { 
+                i * chunk_size - overlap 
+            } else { 
+                0 
+            };
+            words[start..].iter().take(chunk_size).join(" ")
+        })
+        .collect()
+}
+```
+
+```rust Embedding Generation
+// From embedding/model.rs
+pub async fn generate_embedding(
+    text: &str
+) -> Result<Vec<f32>> {
+    let model = get_or_load_model().await?;
+    
+    // all-MiniLM-L6-v2 (384 dimensions)
+    let embedding = model
+        .embed(vec![text], None)?
+        .into_iter()
+        .next()
+        .unwrap();
+    
+    Ok(embedding)
+}
+```
+
+</CodeGroup>
+
+**Model Details:**
+- **Model**: `sentence-transformers/all-MiniLM-L6-v2`
+- **Dimensions**: 384 (float32)
+- **Backend**: ONNX Runtime with DirectML GPU acceleration
+- **Download**: Auto-downloads to `%APPDATA%\Memento\models\`
+
+---
+
+### 4. Storage Layer
+
+Frames, chunks, and embeddings are stored in SQLite with vector search via `sqlite-vec`.
+
+<CodeGroup>
+
+```sql Schema
+-- Frames table
+CREATE TABLE frames (
+    id INTEGER PRIMARY KEY,
+    captured_at INTEGER NOT NULL,
+    app_name TEXT,
+    window_title TEXT,
+    browser_url TEXT,
+    image_path TEXT NOT NULL,
+    hash TEXT UNIQUE,
+    window_x INTEGER,
+    window_y INTEGER,
+    window_width INTEGER,
+    window_height INTEGER
+);
+
+-- Chunks table
+CREATE TABLE chunks (
+    id INTEGER PRIMARY KEY,
+    frame_id INTEGER REFERENCES frames(id),
+    text_content TEXT NOT NULL,
+    text_json TEXT,  -- OCR bounding boxes
+    chunk_index INTEGER
+);
+
+-- Vector embeddings
+CREATE VIRTUAL TABLE vec_chunks USING vec0(
+    chunk_id INTEGER PRIMARY KEY,
+    embedding FLOAT[384]
+);
+
+-- Full-text search
+CREATE VIRTUAL TABLE chunks_fts USING fts5(
+    chunk_id, text_content
+);
+```
+
+```rust Database Operations
+// From db/repository.rs
+pub async fn insert_frame(
+    &self,
+    frame: CapturedFrame,
+    chunks: Vec<ChunkData>
+) -> Result<i64> {
+    let tx = self.pool.begin().await?;
+    
+    // Insert frame
+    let frame_id = sqlx::query!(
+        "INSERT INTO frames (...) VALUES (...)"
+    ).execute(&tx).await?.last_insert_rowid();
+    
+    // Insert chunks and embeddings
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let chunk_id = sqlx::query!(
+            "INSERT INTO chunks (...) VALUES (...)"
+        ).execute(&tx).await?.last_insert_rowid();
+        
+        // Vector index
+        sqlx::query!(
+            "INSERT INTO vec_chunks VALUES (?, ?)",
+            chunk_id, chunk.embedding
+        ).execute(&tx).await?;
+        
+        // FTS index
+        sqlx::query!(
+            "INSERT INTO chunks_fts VALUES (?, ?)",
+            chunk_id, chunk.text
+        ).execute(&tx).await?;
+    }
+    
+    tx.commit().await?;
+    Ok(frame_id)
+}
+```
+
+</CodeGroup>
+
+---
+
+### 5. HTTP Server
+
+Exposes a REST API on `localhost:7070-7077` using Axum.
+
+<Tabs>
+  <Tab title="Search Endpoints">
+    | Method | Path | Description |
+    |--------|------|-------------|
+    | `POST` | `/semantic_search` | Vector similarity search |
+    | `POST` | `/hybrid_search` | Combined semantic + keyword |
+    | `GET` | `/search_results_by_chunk_ids` | Hydrate search results |
+    | `POST` | `/keyword_search` | Full-text search only |
+  </Tab>
+  
+  <Tab title="Capture Control">
+    | Method | Path | Description |
+    |--------|------|-------------|
+    | `GET` | `/capture/status` | Get capture state + stats |
+    | `POST` | `/capture/pause` | Pause screen capture |
+    | `POST` | `/capture/resume` | Resume screen capture |
+    | `GET` | `/disk_usage` | Storage usage breakdown |
+  </Tab>
+  
+  <Tab title="Chat & Sessions">
+    | Method | Path | Description |
+    |--------|------|-------------|
+    | `GET` | `/chat/sessions` | List all chat sessions |
+    | `POST` | `/chat/sessions` | Create new session |
+    | `GET` | `/chat/messages/:session_id` | Get messages |
+    | `POST` | `/chat/messages` | Save message + sources |
+    | `DELETE` | `/chat/sessions/:id` | Delete session |
+  </Tab>
+  
+  <Tab title="Models & Privacy">
+    | Method | Path | Description |
+    |--------|------|-------------|
+    | `GET` | `/models/status` | Model download status |
+    | `POST` | `/models/download` | Download ONNX model |
+    | `GET` | `/privacy/masked` | List excluded items |
+    | `POST` | `/privacy/masked` | Add exclusion rule |
+    | `DELETE` | `/privacy/masked/:id` | Remove rule |
+    | `POST` | `/privacy/refresh` | Reprocess with new rules |
+  </Tab>
+</Tabs>
+
+---
+
+## Windows Service Integration
+
+The daemon runs as a Windows Service for 24/7 operation.
+
+### Installation
+
+<Steps>
+  <Step title="Build the binaries">
+    ```powershell
+    cargo build --release
+    ```
+  </Step>
+  
+  <Step title="Install the service (requires Admin)">
+    ```powershell
+    .\service-helper.exe install --daemon-path ".\target\release\memento-daemon.exe"
+    ```
+    
+    This registers the service with permissions allowing non-admin control.
+  </Step>
+  
+  <Step title="Start the service">
+    ```powershell
+    sc start SearchEngineDaemon
+    ```
+    
+    Or use the Tauri app which manages the service automatically.
+  </Step>
+</Steps>
+
+### Service Control
+
+<CodeGroup>
+
+```rust Service Handler
+// From service.rs
+fn service_control_handler(
+    control_event: ServiceControl,
+    shutdown: Arc<ShutdownController>
+) -> ServiceControlHandlerResult {
+    match control_event {
+        ServiceControl::Stop => {
+            shutdown.request_shutdown();
+            ServiceControlHandlerResult::NoError
+        }
+        ServiceControl::Interrogate => {
+            ServiceControlHandlerResult::NoError
+        }
+        _ => ServiceControlHandlerResult::NotImplemented
+    }
+}
+```
+
+```powershell PowerShell Commands
+# Check service status
+sc query SearchEngineDaemon
+
+# Stop service
+sc stop SearchEngineDaemon
+
+# Start service
+sc start SearchEngineDaemon
+
+# Uninstall service (requires Admin)
+.\service-helper.exe uninstall
+```
+
+</CodeGroup>
+
+<Warning>
+  **Graceful Shutdown**: The daemon MUST handle the Windows SCM stop signal properly. If it ignores the signal, updates will hang because Windows won't replace a running binary.
+</Warning>
+
+---
+
+## Performance Optimization
+
+### Adaptive Throttling
+
+The daemon adjusts capture frequency based on system state:
+
+```rust
+fn adaptive_interval() -> Duration {
+    let cpu_usage = get_cpu_usage();
+    let user_active = is_user_active();
+    
+    match (cpu_usage, user_active) {
+        (high, true) if high > 80.0 => Duration::from_secs(10),
+        (_, false) => Duration::from_secs(30),  // User idle
+        _ => Duration::from_secs(2),  // Normal
+    }
+}
+```
+
+### Hash Deduplication
+
+```rust
+fn calculate_hash(image: &DynamicImage) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(image.as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
+```
+
+Skips OCR and storage if frame hash matches the previous capture.
+
+---
+
+## Logging & Monitoring
+
+### File Logging
+
+```rust
+// Daily rolling logs in %APPDATA%\Memento\logs\
+tracing_appender::rolling::daily(
+    data_dir.join("logs"),
+    "daemon.log"
+)
+```
+
+### Sentry Integration
+
+```rust
+#[cfg(feature = "sentry")]
+let _guard = sentry::init((
+    std::env::var("SENTRY_DSN").ok(),
+    sentry::ClientOptions {
+        release: Some(env!("CARGO_PKG_VERSION").into()),
+        ..Default::default()
+    },
+));
+```
+
+---
+
+## Configuration
+
+The daemon reads configuration from `%APPDATA%\Memento\config.json`:
+
+```json
+{
+  "capture": {
+    "enabled": true,
+    "interval_seconds": 2,
+    "max_age_days": 90
+  },
+  "privacy": {
+    "masked_domains": ["bank.com", "mail.google.com"],
+    "masked_apps": ["KeePass", "Signal"]
+  },
+  "performance": {
+    "max_cpu_percent": 15,
+    "gpu_acceleration": true
+  },
+  "port": 7070
+}
+```
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Daemon won't start" icon="circle-xmark">
+    **Check Windows Event Logs**:
+    ```powershell
+    Get-EventLog -LogName Application -Source SearchEngineDaemon -Newest 10
+    ```
+    
+    **Common issues**:
+    - Port already in use (check `netstat -ano | findstr :7070`)
+    - Missing DirectML.dll
+    - Insufficient permissions
+  </Accordion>
+  
+  <Accordion title="High CPU usage" icon="microchip">
+    1. Check capture interval in config
+    2. Disable GPU acceleration if causing issues
+    3. Increase `max_cpu_percent` threshold
+    4. Reduce number of monitored windows
+  </Accordion>
+  
+  <Accordion title="OCR quality issues" icon="text">
+    - Ensure screen scaling is 100% (or adjust DPI awareness)
+    - Check Windows OCR language pack is installed
+    - Increase capture resolution if too low
+  </Accordion>
+  
+  <Accordion title="Service won't stop" icon="ban">
+    ```powershell
+    # Force kill
+    taskkill /F /IM memento-daemon.exe
+    
+    # Then delete service
+    sc delete SearchEngineDaemon
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Schema" icon="database" href="/architecture/database-schema">
+    Explore the SQLite schema in detail.
+  </Card>
+  <Card title="Search Engine" icon="magnifying-glass" href="/architecture/rust-core">
+    Learn how hybrid search works.
+  </Card>
+  <Card title="Windows Service" icon="gear" href="/advanced/windows-service">
+    Deep dive into service architecture.
+  </Card>
+  <Card title="Privacy Setup" icon="shield" href="/getting-started/privacy-setup">
+    Configure exclusion rules.
+  </Card>
+</CardGroup>

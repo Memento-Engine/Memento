@@ -8,7 +8,7 @@ import RightSidebar from "@/components/layout/Rightbar";
 import KeyboardProvider from "@/providers/KeyboardProvider";
 import ChatProvider from "@/providers/ChatProvider";
 import LeftSidebar from "@/components/layout/Sidebar";
-import ChatSearchDialog from "@/components/layout/ChatSearchDialog";
+import EnhancedCommandPalette from "@/components/EnhancedCommandPalette";
 import { Toaster } from "sonner";
 import SystemHealthProvider from "@/providers/SystemHealthProvider";
 import UpdateProvider from "@/providers/UpdateProvider";
@@ -51,8 +51,8 @@ export default function RootLayout({
       <body className="bg-background text-foreground">
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
-          enableSystem={false}
+          defaultTheme="system"
+          enableSystem={true}
         >
           <Toaster position="bottom-right" />
           <LayoutRoot>{children}</LayoutRoot>
@@ -104,7 +104,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
             <ReferenceProvider>
               <SidebarProvider>
                 <KeyboardProvider />
-                <ChatSearchDialog />
+                <EnhancedCommandPalette />
                 <UpdateNotification />
 
                 <div className="flex h-dvh w-full overflow-hidden bg-background">

@@ -1,16 +1,24 @@
 import { createContext } from "react";
 
-export interface CreditsData {
-  total: number;
-  used: number;
-  available: number;
+export interface QuotaData {
+  /** Daily token quota (100% = this value) */
+  dailyQuota: number;
+  /** Tokens used today */
+  tokensUsed: number;
+  /** Tokens remaining (can be negative if overdraft) */
+  tokensRemaining: number;
+  /** Percentage remaining (0-100, can be negative) */
+  percentRemaining: number;
+  /** Whether user can make another request */
+  canMakeRequest: boolean;
+  /** Time until quota resets (ms) */
+  resetInMs: number;
 }
 
 export interface UsageStats {
   daily: {
     requests: number;
     tokens: number;
-    limit: number;
   };
   minute: {
     requests: number;
@@ -19,25 +27,23 @@ export interface UsageStats {
 }
 
 export interface CreditsContextType {
-  credits: CreditsData;
+  /** Quota info (null for anonymous users) */
+  quota: QuotaData | null;
   usage: UsageStats;
   tier: "free" | "premium";
   userRole: "anonymous" | "logged";
   isLoading: boolean;
   error: string | null;
   refreshCredits: () => Promise<void>;
-  hasPremiumCredits: boolean;
+  /** Whether user has quota remaining (for premium features) */
+  hasQuotaRemaining: boolean;
 }
 
 export function creditsContextEmptyState(): CreditsContextType {
   return {
-    credits: {
-      total: 0,
-      used: 0,
-      available: 0,
-    },
+    quota: null,
     usage: {
-      daily: { requests: 0, tokens: 0, limit: 0 },
+      daily: { requests: 0, tokens: 0 },
       minute: { requests: 0, limit: 0 },
     },
     tier: "free",
@@ -45,7 +51,7 @@ export function creditsContextEmptyState(): CreditsContextType {
     isLoading: true,
     error: null,
     refreshCredits: async () => {},
-    hasPremiumCredits: false,
+    hasQuotaRemaining: false,
   };
 }
 

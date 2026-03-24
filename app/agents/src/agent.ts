@@ -7,22 +7,18 @@ import { getLogger } from "./utils/logger";
 import { runWithSpan } from "./telemetry/tracing";
 import { emitCompletion } from "./utils/eventQueue";
 import type { Plan } from "./planner/plan.schema";
-import { clarifyAndRewrittenNode } from "./clarifyAndRewrittenNode";
-import { intentRouterNode } from "./intentRouterNode";
+import { chatContextManagerNode } from "./chatContextManager";
+import { classifierAndRouterNode } from "./classifierAndRouterNode";
 
 // ── Routing functions ─────────────────────────────────────
 
-async function afterClarificationAndRewrite(
+async function afterClassifierAndRouter(
   state: AgentStateType,
 ): Promise<string> {
   if (state.isClarificationNeeded) {
     return "clarificationExit";
   }
-  return "intentRouter";
-}
-
-async function afterRouter(state: AgentStateType): Promise<string> {
-  if (state.isConversation) {
+  if (state.route === "chat") {
     return "conversationExit";
   }
   if (state.isNeedPlanning) {
@@ -57,14 +53,10 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
       {
         id: "step1",
         kind: "search",
-        stepGoal: `Find relevant activity for: ${state.rewrittenQuery ?? state.goal}`,
+        stepGoal: `Find relevant information for: ${state.rewrittenQuery ?? state.goal}`,
         intent: state.rewrittenQuery ?? state.goal,
         dependsOn: [],
-        expectedOutput: {
-          type: "table",
-          variableName: "search_results",
-          description: `Search results for: ${state.goal}`,
-        },
+     
       },
       {
         id: "step2",
@@ -72,11 +64,6 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
         stepGoal: "Synthesize final answer",
         intent: `Answer: ${state.goal}`,
         dependsOn: ["step1"],
-        expectedOutput: {
-          type: "value",
-          variableName: "final_answer",
-          description: "Final answer",
-        },
       },
     ],
   };
@@ -88,7 +75,7 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
 async function buildAgentGraph() {
   return runWithSpan(
     "agent.graph.build",
-    { workflow: "clarify-router-planner-executor-finalAnswer" },
+    { workflow: "chatContext-classifier-planner-executor-finalAnswer" },
     async () => {
       const logger = await getLogger();
 
@@ -96,8 +83,8 @@ async function buildAgentGraph() {
         const workflow = new StateGraph(AgentState);
 
         const graphBuilder = workflow
-          .addNode("clarifyAndRewritten", clarifyAndRewrittenNode)
-          .addNode("intentRouter", intentRouterNode)
+          .addNode("chatContextManager", chatContextManagerNode)
+          .addNode("classifierAndRouter", classifierAndRouterNode)
           .addNode("clarificationExit", clarificationExit)
           .addNode("conversationExit", conversationExit)
           .addNode("simpleSearchPlan", simpleSearchPlan)
@@ -105,24 +92,20 @@ async function buildAgentGraph() {
           .addNode("executor", executorNodeV2)
           .addNode("finalAnswer", finalAnswerNodeV2);
 
-        graphBuilder.addEdge(START, "clarifyAndRewritten");
+        // Flow: START → chatContextManager → classifierAndRouter → routing
+        graphBuilder.addEdge(START, "chatContextManager");
+        graphBuilder.addEdge("chatContextManager", "classifierAndRouter");
 
-        // @ts-expect-error - LangGraph StateGraph.addConditionalEdges() type inference issue
         graphBuilder.addConditionalEdges(
-          "clarifyAndRewritten",
-          afterClarificationAndRewrite,
+          "classifierAndRouter",
+          afterClassifierAndRouter,
           {
             clarificationExit: "clarificationExit",
-            intentRouter: "intentRouter",
+            conversationExit: "conversationExit",
+            planner: "planner",
+            simpleSearchPlan: "simpleSearchPlan",
           },
         );
-
-        // @ts-expect-error - LangGraph StateGraph.addConditionalEdges() type inference issue
-        graphBuilder.addConditionalEdges("intentRouter", afterRouter, {
-          conversationExit: "conversationExit",
-          planner: "planner",
-          simpleSearchPlan: "simpleSearchPlan",
-        });
 
         graphBuilder.addEdge("conversationExit", END);
         graphBuilder.addEdge("clarificationExit", END);

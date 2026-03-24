@@ -3,6 +3,22 @@ import { z } from "zod";
 import type { GatewayRole, ProviderName } from "@/types.ts";
 import { Router } from "express";
 dotenv.config();
+
+// ============ TOKEN QUOTA CONFIGURATION ============
+// Daily token quota for logged-in users (100% = this many tokens)
+// Easily adjustable based on cost monitoring
+export const DAILY_TOKEN_QUOTA = {
+  // Logged-in users get this quota per day
+  logged: parseInt(process.env.AI_GATEWAY_LOGGED_DAILY_QUOTA ?? "50000", 10),
+  // Anonymous users get a smaller quota
+  anonymous: parseInt(process.env.AI_GATEWAY_ANONYMOUS_DAILY_QUOTA ?? "10000", 10),
+} as const;
+
+// Roles that count towards quota (expensive models)
+export const QUOTA_COUNTED_ROLES = new Set(["planner", "executor", "final"]);
+
+// Roles that are free (cheap/free models)
+export const QUOTA_FREE_ROLES = new Set(["summarizer", "classifierAndRouter", "clarifyAndRewriter", "router", "query_builder"]);
 const providerSchema = z.object({
   name: z.enum(["openrouter", "openai", "anthropic", "gemini"]),
   baseUrl: z.string().url(),
@@ -49,8 +65,16 @@ const configSchema = z.object({
     model: z.string().default("google/gemini-2.0-flash-001"),
     maxTokens: z.number().int().min(64).default(65536),
   }),
+  webSearch: z.object({
+    apiKey: z.string().min(1).optional(),
+    baseUrl: z.string().url().default("https://api.tavily.com"),
+    maxResults: z.number().int().min(1).max(10).default(5),
+    timeoutMs: z.number().int().min(1000).default(15000),
+  }),
   providers: z.array(providerSchema),
   roles: z.object({
+    summarizer: roleConfigSchema,
+    classifierAndRouter: roleConfigSchema,
     router: roleConfigSchema,
     planner: roleConfigSchema,
     executor: roleConfigSchema,
@@ -164,8 +188,41 @@ export function loadConfig(): GatewayConfig {
         10,
       ),
     },
+    webSearch: {
+      apiKey:
+        process.env.AI_GATEWAY_TAVILY_API_KEY ??
+        process.env.TAVILY_API_KEY ??
+        undefined,
+      baseUrl: process.env.AI_GATEWAY_TAVILY_BASE_URL ?? "https://api.tavily.com",
+      maxResults: parseInt(process.env.AI_GATEWAY_TAVILY_MAX_RESULTS ?? "5", 10),
+      timeoutMs: parseInt(process.env.AI_GATEWAY_TAVILY_TIMEOUT_MS ?? "15000", 10),
+    },
     providers,
     roles: {
+      summarizer: {
+        free: {
+          defaultModel: process.env.AI_GATEWAY_SUMMARIZER_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['mistralai/mistral-small-3.1-24b-instruct:free', 'deepseek/deepseek-chat'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_SUMMARIZER_MAX_OUTPUT_TOKENS_FREE ?? "1024", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_SUMMARIZER_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o', 'google/gemini-2.0-flash-001'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_SUMMARIZER_MAX_OUTPUT_TOKENS_PREMIUM ?? "1024", 10),
+        }
+      },
+      classifierAndRouter: {
+        free: {
+          defaultModel: process.env.AI_GATEWAY_CLASSIFIER_MODEL_FREE ?? "google/gemini-2.0-flash-001",
+          fallbackModels: ['mistralai/mistral-small-3.1-24b-instruct:free', 'deepseek/deepseek-chat'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_CLASSIFIER_MAX_OUTPUT_TOKENS_FREE ?? "512", 10),
+        },
+        premium: {
+          defaultModel: process.env.AI_GATEWAY_CLASSIFIER_MODEL_PREMIUM ?? "anthropic/claude-3.5-sonnet",
+          fallbackModels: ['openai/gpt-4o', 'google/gemini-2.0-flash-001'],
+          maxOutputTokens: parseInt(process.env.AI_GATEWAY_CLASSIFIER_MAX_OUTPUT_TOKENS_PREMIUM ?? "512", 10),
+        }
+      },
       router: {
         free: {
           defaultModel: process.env.AI_GATEWAY_ROUTER_MODEL_FREE ?? "google/gemini-2.0-flash-001",

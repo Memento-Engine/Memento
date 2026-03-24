@@ -15,7 +15,6 @@ export async function intentRouterNode(
       goal: state.goal,
     });
 
-    // @ts-expect-error - LangChain ChatPromptTemplate.invoke() type inference issue
     const prompt = await intentRouterPrompt.invoke({
       query: state.rewrittenQuery,
     });
@@ -49,7 +48,7 @@ export async function intentRouterNode(
       ...state,
       isConversation: parsedData.data.isConversation,
       isNeedPlanning: parsedData.data.isNeedPlanning,
-      conversationResponse: parsedData.data.conversationResponse,
+      conversationResponse: parsedData.data.conversationResponse ?? undefined,
     };
   } catch (err: unknown) {
     logger.error("Intent router failed, defaulting to non-conversation route", {

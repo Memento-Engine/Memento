@@ -1,0 +1,44 @@
+---
+title: "API Reference"
+description: "Memento AI exposes a local REST API from both the AI Gateway (port 4000) and the Rust daemon (port 5100)."
+---
+
+## Base URLs
+
+| Service | Base URL | Description |
+|---|---|---|
+| AI Gateway | `http://localhost:4000` | LLM routing, auth, usage |
+| Rust Daemon | `http://localhost:5100` | Local index control |
+
+All requests and responses use `application/json`.
+
+---
+
+## Authentication
+
+Most AI Gateway endpoints require a valid session cookie. Obtain one by logging in:
+
+```bash
+POST http://localhost:4000/auth/login
+Content-Type: application/json
+
+{
+  "email": "you@example.com",
+  "password": "..."
+}
+```
+
+The response sets a `connect.sid` session cookie. Include it in subsequent requests.
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Search" icon="magnifying-glass" href="/api-reference/search">
+    Run a hybrid local + AI-augmented search query.
+  </Card>
+  <Card title="Chat" icon="message" href="/api-reference/chat">
+    Multi-turn AI chat grounded in your local index.
+  </Card>
+</CardGroup>

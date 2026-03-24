@@ -4,100 +4,46 @@ description: Query by time and sequences. "What was I doing at 3pm?" "What happe
 tools: sql_execute
 ---
 
-# Temporal Query Skill
+# Temporal Query
 
 Query screen activity by time, sequences, and temporal relationships.
 
 ## When to Use
-- User asks about specific times ("at 3pm", "yesterday morning")
-- User asks about sequences ("after X", "before the meeting")
-- User asks about durations ("longest session", "how long did I spend")
-- User wants timeline reconstruction
+- Specific times: "at 3pm", "yesterday morning"
+- Sequences: "after X", "before the meeting"
+- Durations: "longest session", "how long"
 
-## Query Patterns
+## Patterns
 
-**IMPORTANT:** Always include `c.id as chunk_id` in SELECT statements for citations.
+**Always include `c.id as chunk_id` for citations.**
 
-### Activity at a Specific Time
 ```sql
-SELECT 
-  c.id as chunk_id,  -- REQUIRED for citations
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
+-- Activity at specific time
+SELECT c.id as chunk_id, f.captured_at, f.app_name, f.window_title,
   SUBSTR(c.text_content, 1, 150) as preview
-FROM frames f
-LEFT JOIN chunks c ON c.frame_id = f.id
+FROM frames f LEFT JOIN chunks c ON c.frame_id = f.id
 WHERE f.captured_at BETWEEN '2026-03-11 15:00:00' AND '2026-03-11 15:30:00'
-ORDER BY f.captured_at
-LIMIT 30;
-```
+ORDER BY f.captured_at LIMIT 30;
 
-### Activity During Time Range (Yesterday Afternoon)
-```sql
-SELECT 
-  c.id as chunk_id,
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
-  SUBSTR(c.text_content, 1, 150) as preview
-FROM frames f
-LEFT JOIN chunks c ON c.frame_id = f.id
-WHERE date(f.captured_at) = date('now', '-1 day')
-  AND strftime('%H', f.captured_at) BETWEEN '12' AND '18'
-ORDER BY f.captured_at
-LIMIT 50;
-```
-
-### What Happened AFTER an Event (CTE Pattern)
-**Use Case:** "What did I do after reading about microservices?"
-
-```sql
+-- After an event (CTE pattern)
 WITH anchor AS (
   SELECT f.captured_at as anchor_time
-  FROM chunks_fts
-  JOIN chunks c ON chunks_fts.rowid = c.id
+  FROM chunks_fts JOIN chunks c ON chunks_fts.rowid = c.id
   JOIN frames f ON c.frame_id = f.id
-  WHERE chunks_fts MATCH 'microservices'
-  ORDER BY f.captured_at DESC
-  LIMIT 1
+  WHERE chunks_fts MATCH 'keyword' ORDER BY f.captured_at DESC LIMIT 1
 )
-SELECT 
-  c.id as chunk_id,
-  f.captured_at,
-  f.app_name,
-  f.window_title,
-  f.browser_url,
-  f.image_path,
-  SUBSTR(c.text_content, 1, 150) as preview
-FROM frames f
-LEFT JOIN chunks c ON c.frame_id = f.id
-CROSS JOIN anchor
+SELECT c.id as chunk_id, f.* FROM frames f
+LEFT JOIN chunks c ON c.frame_id = f.id CROSS JOIN anchor
 WHERE f.captured_at > anchor.anchor_time
   AND f.captured_at < datetime(anchor.anchor_time, '+30 minutes')
-ORDER BY f.captured_at
 LIMIT 20;
 ```
 
-### What Happened BEFORE an Event
-```sql
-WITH anchor AS (
-  SELECT f.captured_at as anchor_time
-  FROM chunks_fts
-  JOIN chunks c ON chunks_fts.rowid = c.id
-  JOIN frames f ON c.frame_id = f.id
-  WHERE chunks_fts MATCH 'meeting'
-  ORDER BY f.captured_at DESC
-  LIMIT 1
-)
-SELECT 
-  c.id as chunk_id,
-  f.captured_at,
-  f.app_name,
+## Time Functions
+- `date('now')` - today
+- `date('now', '-1 day')` - yesterday
+- `strftime('%H', captured_at)` - hour
+- `datetime('now', '-7 days')` - week ago
   f.window_title,
   f.browser_url,
   f.image_path,

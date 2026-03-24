@@ -1,0 +1,399 @@
+---
+title: "Models API"
+description: "Manage embedding models for semantic search."
+api: "GET /models/status"
+---
+
+## Overview
+
+The Models API allows you to check the status of embedding models and download new models for semantic search.
+
+<Info>
+  **Base URL**: `http://localhost:7070`  
+  **Model Storage**: `%APPDATA%\Memento\models\`
+</Info>
+
+---
+
+## Get Model Status
+
+Check which models are downloaded and their status.
+
+<RequestExample>
+
+```bash cURL
+curl http://localhost:7070/models/status
+```
+
+```typescript TypeScript
+const status = await fetch('http://localhost:7070/models/status')
+  .then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "models": [
+    {
+      "name": "sentence-transformers/all-MiniLM-L6-v2",
+      "status": "ready",
+      "size_mb": 85,
+      "dimensions": 384,
+      "download_progress": 100,
+      "path": "C:\\Users\\pavan\\AppData\\Roaming\\Memento\\models\\all-MiniLM-L6-v2"
+    },
+    {
+      "name": "sentence-transformers/all-mpnet-base-v2",
+      "status": "not_downloaded",
+      "size_mb": 420,
+      "dimensions": 768,
+      "download_progress": 0
+    }
+  ],
+  "active_model": {
+    "name": "sentence-transformers/all-MiniLM-L6-v2",
+    "dimensions": 384
+  }
+}
+```
+
+</ResponseExample>
+
+<ResponseField name="models" type="array">
+  Array of available models
+  
+  <Expandable>
+    <ResponseField name="name" type="string">
+      Model identifier (HuggingFace format)
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      `"ready"`, `"downloading"`, `"not_downloaded"`, or `"error"`
+    </ResponseField>
+    <ResponseField name="size_mb" type="number">
+      Model size in megabytes
+    </ResponseField>
+    <ResponseField name="dimensions" type="number">
+      Embedding dimensions (e.g., 384, 768, 1024)
+    </ResponseField>
+    <ResponseField name="download_progress" type="number">
+      Download percentage (0-100)
+    </ResponseField>
+    <ResponseField name="path" type="string" optional>
+      Local file path (if downloaded)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="active_model" type="object">
+  Currently active model for embedding generation
+</ResponseField>
+
+---
+
+## Download Model
+
+Download a new embedding model.
+
+<ParamField body="model_name" type="string" required>
+  Model identifier (HuggingFace format)
+</ParamField>
+
+<ParamField body="gpu_acceleration" type="boolean" default={true}>
+  Use DirectML GPU acceleration (Windows only)
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/models/download \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "sentence-transformers/all-mpnet-base-v2",
+    "gpu_acceleration": true
+  }'
+```
+
+```typescript TypeScript
+const download = await fetch('http://localhost:7070/models/download', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model_name: 'sentence-transformers/all-mpnet-base-v2',
+    gpu_acceleration: true
+  })
+});
+
+// Monitor progress
+const eventSource = new EventSource('http://localhost:7070/models/download-progress');
+eventSource.onmessage = (event) => {
+  const progress = JSON.parse(event.data);
+  console.log(`Download: ${progress.percent}%`);
+};
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 202 Accepted
+{
+  "status": "downloading",
+  "model_name": "sentence-transformers/all-mpnet-base-v2",
+  "message": "Model download started",
+  "estimated_time_seconds": 120
+}
+```
+
+```json 200 Success (already downloaded)
+{
+  "status": "ready",
+  "model_name": "sentence-transformers/all-mpnet-base-v2",
+  "message": "Model already downloaded",
+  "path": "C:\\Users\\pavan\\AppData\\Roaming\\Memento\\models\\all-mpnet-base-v2"
+}
+```
+
+</ResponseExample>
+
+<Note>
+  Model downloads run in the background. Use the status endpoint to monitor progress.
+</Note>
+
+---
+
+## Switch Active Model
+
+Change which model is used for embedding generation.
+
+<Warning>
+  **Re-indexing Required**: Switching models requires re-indexing all existing frames to generate new embeddings. This can take hours for large databases.
+</Warning>
+
+<ParamField body="model_name" type="string" required>
+  Model to activate (must be downloaded)
+</ParamField>
+
+<ParamField body="reindex" type="boolean" default={false}>
+  Whether to automatically re-index all frames
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/models/activate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "sentence-transformers/all-mpnet-base-v2",
+    "reindex": true
+  }'
+```
+
+```typescript TypeScript
+await fetch('http://localhost:7070/models/activate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model_name: 'sentence-transformers/all-mpnet-base-v2',
+    reindex: true
+  })
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "status": "activated",
+  "model_name": "sentence-transformers/all-mpnet-base-v2",
+  "dimensions": 768,
+  "reindexing": true,
+  "estimated_reindex_time_minutes": 45,
+  "message": "Model activated, re-indexing started"
+}
+```
+
+</ResponseExample>
+
+---
+
+## Supported Models
+
+<Tabs>
+  <Tab title="Default Model">
+    ### all-MiniLM-L6-v2 (Default)
+    
+    **Best for**: Balanced performance and speed
+    
+    | Property | Value |
+    |----------|-------|
+    | Dimensions | 384 |
+    | Size | 85 MB |
+    | Speed | ~1000 embeddings/sec (GPU) |
+    | Quality | Good |
+    | GPU Memory | ~500 MB |
+    
+    **Use when**: You want fast, efficient embeddings with good quality.
+  </Tab>
+  
+  <Tab title="High Quality">
+    ### all-mpnet-base-v2
+    
+    **Best for**: Maximum search quality
+    
+    | Property | Value |
+    |----------|-------|
+    | Dimensions | 768 |
+    | Size | 420 MB |
+    | Speed | ~400 embeddings/sec (GPU) |
+    | Quality | Excellent |
+    | GPU Memory | ~1.5 GB |
+    
+    **Use when**: Search quality is more important than speed/storage.
+  </Tab>
+  
+  <Tab title="Multilingual">
+    ### paraphrase-multilingual-MiniLM-L12-v2
+    
+    **Best for**: Non-English content
+    
+    | Property | Value |
+    |----------|-------|
+    | Dimensions | 384 |
+    | Size | 420 MB |
+    | Speed | ~600 embeddings/sec (GPU) |
+    | Quality | Good (50+ languages) |
+    | GPU Memory | ~800 MB |
+    
+    **Use when**: You work with multiple languages.
+  </Tab>
+</Tabs>
+
+---
+
+## Model Comparison
+
+```typescript
+// Benchmark results (Windows 11, RTX 3060)
+const benchmarks = {
+  'all-MiniLM-L6-v2': {
+    embeddings_per_second: 1050,
+    search_accuracy: 0.82,
+    storage_per_1k_chunks: '1.5 MB'
+  },
+  'all-mpnet-base-v2': {
+    embeddings_per_second: 420,
+    search_accuracy: 0.91,
+    storage_per_1k_chunks: '3.0 MB'
+  },
+  'paraphrase-multilingual-MiniLM-L12-v2': {
+    embeddings_per_second: 640,
+    search_accuracy: 0.85,
+    storage_per_1k_chunks: '1.5 MB'
+  }
+};
+```
+
+---
+
+## GPU Acceleration
+
+### Requirements
+
+<Steps>
+  <Step title="DirectML Support">
+    Windows 10 version 1903 or later
+  </Step>
+  
+  <Step title="Graphics Card">
+    DirectX 12 compatible GPU (NVIDIA, AMD, or Intel)
+  </Step>
+  
+  <Step title="DirectML.dll">
+    Automatically included with Memento AI (18 MB)
+  </Step>
+</Steps>
+
+### Performance Comparison
+
+| Model | CPU (8 cores) | GPU (RTX 3060) | Speedup |
+|-------|---------------|----------------|---------|
+| all-MiniLM-L6-v2 | 120 emb/s | 1050 emb/s | 8.7x |
+| all-mpnet-base-v2 | 50 emb/s | 420 emb/s | 8.4x |
+
+<Tip>
+  GPU acceleration is enabled by default. Disable it in config if you experience issues:
+  ```json
+  {
+    "performance": {
+      "gpu_acceleration": false
+    }
+  }
+  ```
+</Tip>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Download fails" icon="download">
+    **Common causes**:
+    - Network connectivity issues
+    - Insufficient disk space
+    - Antivirus blocking download
+    
+    **Check logs**:
+    ```powershell
+    Get-Content $env:APPDATA\Memento\logs\daemon.log | Select-String "model"
+    ```
+  </Accordion>
+  
+  <Accordion title="GPU not detected" icon="microchip">
+    **Verify DirectML**:
+    ```powershell
+    # Check if DirectML.dll exists
+    Test-Path "$env:LOCALAPPDATA\memento\current\DirectML.dll"
+    ```
+    
+    If missing, reinstall Memento AI.
+  </Accordion>
+  
+  <Accordion title="Re-indexing stuck" icon="rotate">
+    **Check progress**:
+    ```typescript
+    const status = await fetch('http://localhost:7070/models/reindex-progress')
+      .then(r => r.json());
+    
+    console.log(`${status.processed} / ${status.total} chunks`);
+    ```
+    
+    **Cancel re-indexing**:
+    ```bash
+    curl -X POST http://localhost:7070/models/cancel-reindex
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Search API" icon="magnifying-glass" href="/api-reference/search">
+    Use embeddings for semantic search.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/daemon">
+    Learn how embedding generation works.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/getting-started/configuration">
+    Configure model settings.
+  </Card>
+  <Card title="Advanced" icon="microchip" href="/advanced/custom-models">
+    Use custom embedding models.
+  </Card>
+</CardGroup>

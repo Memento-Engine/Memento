@@ -1,0 +1,101 @@
+---
+title: "Privacy Setup"
+description: "Configure privacy exclusions to prevent capturing sensitive content."
+---
+
+## Overview
+
+Memento AI respects your privacy. This guide shows you how to configure exclusion rules for sensitive websites and applications.
+
+---
+
+## Quick Start
+
+### Exclude Banking Websites
+
+```bash
+curl -X POST http://localhost:7070/privacy/masked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "bank.com",
+    "item_type": "web"
+  }'
+```
+
+### Exclude Password Manager
+
+```bash
+curl -X POST http://localhost:7070/privacy/masked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "KeePass.exe",
+    "item_type": "app"
+  }'
+```
+
+---
+
+## Common Exclusions
+
+<AccordionGroup>
+  <Accordion title="Financial Services" icon="money-bill">
+    ```typescript
+    const financialDomains = [
+      'bank.com', 'paypal.com', 'stripe.com',
+      'venmo.com', 'cashapp.com'
+    ];
+    
+    for (const domain of financialDomains) {
+      await addMaskedItem(domain, 'web');
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Email Providers" icon="envelope">
+    ```typescript
+    const emailDomains = [
+      'mail.google.com',
+      'outlook.com',
+      'protonmail.com'
+    ];
+    ```
+  </Accordion>
+  
+  <Accordion title="Communication Apps" icon="message">
+    ```typescript
+    const communicationApps = [
+      'Signal.exe',
+      'Telegram.exe',
+      'WhatsApp.exe',
+      'Discord.exe'
+    ];
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Retroactive Cleanup
+
+After adding exclusions, run privacy refresh to delete existing data:
+
+```bash
+curl -X POST http://localhost:7070/privacy/refresh
+```
+
+<Warning>
+  This permanently deletes matching frames and chunks. Cannot be undone.
+</Warning>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Privacy API" icon="shield" href="/api-reference/privacy">
+    Complete API reference for privacy management.
+  </Card>
+  <Card title="Capture Control" icon="pause" href="/api-reference/capture">
+    Pause capture during sensitive activities.
+  </Card>
+</CardGroup>

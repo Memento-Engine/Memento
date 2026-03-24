@@ -8,7 +8,7 @@ import { OpenRouterAdapter } from "@/providers/openrouter.adapter.ts";
 import type { LlmProviderAdapter } from "@/providers/provider.ts";
 import { RateLimiter, RateLimitError } from "@/rateLimiter.ts";
 import type { ChatRequest, ProviderName, UserRole, GatewayResponse } from "@/types.ts";
-import { UsageTracker, CREDIT_COSTS } from "@/usageTracker.ts";
+import { UsageTracker } from "@/usageTracker.ts";
 import unAuthorizedRouter from "@/routes/unAuthorized.ts";
 import authRouter from "@/routes/auth.ts";
 import { errorHandler } from "@/utils/errorHandler.ts";
@@ -28,6 +28,15 @@ import {
 import { runMigrations } from "@/db/migrate.ts";
 import { logger, childLogger } from "@/utils/logger.ts";
 import { httpLogger } from "@/middlewares/httpLogger.ts";
+import {
+  logChatCall,
+  logContextShrink,
+  logSearchCall,
+  logUsageTracked,
+  logRateLimit,
+  logValidationError,
+  logChatError,
+} from "@/utils/tokenLogger.ts";
 
 const log = childLogger("server");
 
@@ -44,6 +53,8 @@ const chatSchema = z.object({
   user_id: z.string().min(1),
   role: z
     .enum([
+      "summarizer",
+      "classifierAndRouter",
       "clarifyAndRewriter",
       "router",
       "planner",
@@ -55,6 +66,25 @@ const chatSchema = z.object({
   // New fields for premium model selection
   use_premium_model: z.boolean().optional(),
 });
+
+const webSearchSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(10).optional(),
+});
+
+type TavilySearchResult = {
+  title?: string;
+  url?: string;
+  content?: string;
+  score?: number;
+  published_date?: string;
+};
+
+type TavilySearchResponse = {
+  results?: TavilySearchResult[];
+  query?: string;
+  response_time?: number;
+};
 
 function buildProviderRegistry(
   config: ReturnType<typeof loadConfig>,
@@ -110,22 +140,12 @@ async function startServer(): Promise<void> {
 
   app.post("/v1/chat", validateUserRequest, async (req: RequestContext, res: Response) => {
     try {
+      const startTime = Date.now();
       const parsed = chatSchema.parse(req.body);
       const deviceId = req.deviceId;
-      const userId = req.user?.id;
+      const userId = req.user?.id || "anonymous";
       const userRole = req.userRole as UserRole;
       const usePremiumModel = req.availablePremiumCredits > 0;
-
-      log.info({
-        messages: parsed.messages.map((m) => ({
-          role: m.role,
-          contentLength: m.content.length,
-        })),
-        sysRole: parsed.role,
-        userRole,
-        availableCredits: req.availablePremiumCredits,
-        usePremiumModel,
-      }, "Received chat request");
 
       // Select model config based on tier (premium if using premium model, else free)
       const accessTier = usePremiumModel ? "premium" : "free";
@@ -142,29 +162,27 @@ async function startServer(): Promise<void> {
       // Estimate tokens for rate limiting
       const estimatedTokens = estimateConversationTokens(parsed.messages) + resolvedMaxTokens;
 
-      // Check rate limits
+      // Check rate limits (only RPM limiting now, quota exhaustion falls back to free models)
       const rateLimitResult = await rateLimiter.checkRateLimit({
         deviceId,
         userId,
         userRole,
         estimatedTokens,
-        isPremiumRequest: usePremiumModel,
       });
 
       if (!rateLimitResult.allowed) {
-        // Set retry-after header for rate limits
         if (rateLimitResult.retryAfterMs) {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
+
+        logRateLimit(rateLimitResult.tier, rateLimitResult.reason || "Rate limit exceeded", rateLimitResult.retryAfterMs, userId);
 
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
-            type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
-              ? "daily_tokens"
-              : "requests_per_minute",
+            type: "requests_per_minute",
             tier: rateLimitResult.tier,
             retryAfterMs: rateLimitResult.retryAfterMs,
           },
@@ -186,12 +204,7 @@ async function startServer(): Promise<void> {
         processedMessages = shrinkResult.messages;
         contextShrinkApplied = true;
 
-        log.info({
-          originalTokens: shrinkResult.originalTokens,
-          shrunkTokens: shrinkResult.shrunkTokens,
-          messagesRemoved: shrinkResult.messagesRemoved,
-          strategy: shrinkResult.strategy,
-        }, "Context window shrunk");
+        logContextShrink(shrinkResult.originalTokens, shrinkResult.shrunkTokens, shrinkResult.messagesRemoved, userId);
       }
 
       const chatRequest: ChatRequest = {
@@ -204,13 +217,20 @@ async function startServer(): Promise<void> {
       };
 
       const response = await modelRouter.chat(chatRequest);
+      const durationMs = Date.now() - startTime;
 
-      // Only charge credits for expensive roles when using premium models
-      // Simple roles (router, clarifyAndRewriter, query_builder) use free models even in premium tier
-      const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
-      const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
-      const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
+      // Log LLM call with token info
+      logChatCall(
+        parsed.role || "default",
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+        response.usage.total_tokens,
+        userId,
+        durationMs,
+        { model: response.model, fallbackUsed: response.fallback_used }
+      );
 
+      // Track usage - tokens are counted based on role (expensive roles count towards quota)
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -221,10 +241,17 @@ async function startServer(): Promise<void> {
         totalTokens: response.usage.total_tokens,
         role: parsed.role,
         fallbackUsed: response.fallback_used,
-        isPremiumRequest: usePremiumModel,
-        creditsCost,
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
+
+      // Log usage tracking
+      logUsageTracked(
+        parsed.role || "default",
+        response.usage.total_tokens,
+        rateLimitResult.tier,
+        rateLimitResult.quota?.tokensRemaining ?? null,
+        userId
+      );
 
       // Include usage metadata in response (hide model from agents for abstraction)
       const { model: _usedModel, ...responseWithoutModel } = response;
@@ -234,43 +261,142 @@ async function startServer(): Promise<void> {
           ...responseWithoutModel,
           metadata: {
             tier: rateLimitResult.tier,
-            creditsUsed: creditsCost,
-            creditsRemaining: (rateLimitResult.remainingCredits ?? 0) - creditsCost,
+            quota: rateLimitResult.quota ?? null,
             contextShrinkApplied,
           },
         },
       };
       res.status(StatusCodes.OK).json(chatResponse);
     } catch (error) {
+      // Log errors with clean token logging
+      const userId = (req as any).user?.id || "anonymous";
+      const role = (req.body as any)?.role || "unknown";
+      
       // Let the error handler deal with properly formatted errors
       if (error instanceof RateLimitError) {
+        logChatError(role, error, userId);
         throw new ForbiddenError(error.message);
       }
       if (error instanceof z.ZodError) {
-        throw new BadRequestError(error.issues.map((e) => e.message).join(", "));
+        const errorMsg = error.issues.map((e) => e.message).join(", ");
+        logValidationError("/v1/chat", errorMsg);
+        throw new BadRequestError(errorMsg);
       }
+      logChatError(role, error instanceof Error ? error : "Unknown error", userId);
       throw error;
+    }
+  });
+
+  app.post("/v1/search", validateUserRequest, async (req: RequestContext, res: Response) => {
+    const startTime = Date.now();
+    const userId = req.user?.id || "anonymous";
+    const parsed = webSearchSchema.parse(req.body);
+
+    if (!config.webSearch.apiKey) {
+      const errResponse: GatewayResponse<null> = {
+        success: false,
+        error: {
+          code: StatusCodes.SERVICE_UNAVAILABLE,
+          message: "Web search is not configured. Set TAVILY_API_KEY or AI_GATEWAY_TAVILY_API_KEY.",
+        },
+      };
+      return res.status(StatusCodes.SERVICE_UNAVAILABLE).json(errResponse);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.webSearch.timeoutMs);
+
+    try {
+      const tavilyResponse = await fetch(`${config.webSearch.baseUrl}/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          api_key: config.webSearch.apiKey,
+          query: parsed.query,
+          max_results: Math.min(parsed.limit ?? config.webSearch.maxResults, config.webSearch.maxResults),
+          search_depth: "advanced",
+          include_answer: false,
+          include_raw_content: false,
+          include_images: false,
+          topic: "general",
+        }),
+        signal: controller.signal,
+      });
+
+      if (!tavilyResponse.ok) {
+        const body = await tavilyResponse.text();
+        throw new Error(`Tavily search failed (${tavilyResponse.status}): ${body}`);
+      }
+
+      const payload = (await tavilyResponse.json()) as TavilySearchResponse;
+      const results = Array.isArray(payload.results)
+        ? payload.results
+            .filter((result) => typeof result.url === "string" && result.url.length > 0)
+            .map((result) => ({
+              title: result.title ?? result.url ?? "Untitled result",
+              url: result.url as string,
+              snippet: result.content ?? "",
+              score: result.score,
+              publishedAt: result.published_date,
+            }))
+        : [];
+
+      const durationMs = Date.now() - startTime;
+      logSearchCall(parsed.query, results.length, durationMs, userId);
+
+      const response: GatewayResponse<{
+        query: string;
+        results: Array<{
+          title: string;
+          url: string;
+          snippet: string;
+          score?: number;
+          publishedAt?: string;
+        }>;
+        metadata: {
+          resultCount: number;
+          responseTimeMs?: number;
+        };
+      }> = {
+        success: true,
+        data: {
+          query: payload.query ?? parsed.query,
+          results,
+          metadata: {
+            resultCount: results.length,
+            responseTimeMs: payload.response_time,
+          },
+        },
+      };
+
+      return res.status(StatusCodes.OK).json(response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Web search failed";
+      logChatError("web_search", message, userId);
+      const errResponse: GatewayResponse<null> = {
+        success: false,
+        error: {
+          code: StatusCodes.BAD_GATEWAY,
+          message,
+        },
+      };
+      return res.status(StatusCodes.BAD_GATEWAY).json(errResponse);
+    } finally {
+      clearTimeout(timeout);
     }
   });
 
   // Streaming chat endpoint for final answer
   app.post("/v1/chat/stream", validateUserRequest, async (req: RequestContext, res: Response) => {
+    const startTime = Date.now();
+    const userId = req.user?.id || "anonymous";
     try {
       const parsed = chatSchema.parse(req.body);
       const deviceId = req.deviceId;
-      const userId = req.user?.id;
       const userRole = req.userRole as UserRole;
       const usePremiumModel = req.availablePremiumCredits > 0;
-
-      log.info({
-        messages: parsed.messages.map((m) => ({
-          role: m.role,
-          contentLength: m.content.length,
-        })),
-        sysRole: parsed.role,
-        userRole,
-        usePremiumModel,
-      }, "Received streaming chat request");
 
       // Select model config based on tier
       const accessTier = usePremiumModel ? "premium" : "free";
@@ -287,29 +413,27 @@ async function startServer(): Promise<void> {
       // Estimate tokens for rate limiting
       const estimatedTokens = estimateConversationTokens(parsed.messages) + resolvedMaxTokens;
 
-      // Check rate limits
+      // Check rate limits (only RPM limiting now, quota exhaustion falls back to free models)
       const rateLimitResult = await rateLimiter.checkRateLimit({
         deviceId,
         userId,
         userRole,
         estimatedTokens,
-        isPremiumRequest: usePremiumModel,
       });
 
       if (!rateLimitResult.allowed) {
-        // Set retry-after header for rate limits
         if (rateLimitResult.retryAfterMs) {
           res.setHeader("Retry-After", Math.ceil(rateLimitResult.retryAfterMs / 1000));
         }
+
+        logRateLimit(rateLimitResult.tier, rateLimitResult.reason || "Rate limit exceeded", rateLimitResult.retryAfterMs, userId);
 
         const errResponse: GatewayResponse<null> = {
           success: false,
           error: {
             code: StatusCodes.TOO_MANY_REQUESTS,
             message: rateLimitResult.reason || "Rate limit exceeded",
-            type: rateLimitResult.remainingTokens !== undefined && rateLimitResult.remainingTokens === 0
-              ? "daily_tokens"
-              : "requests_per_minute",
+            type: "requests_per_minute",
             tier: rateLimitResult.tier,
             retryAfterMs: rateLimitResult.retryAfterMs,
           },
@@ -330,6 +454,8 @@ async function startServer(): Promise<void> {
         });
         processedMessages = shrinkResult.messages;
         contextShrinkApplied = true;
+
+        logContextShrink(shrinkResult.originalTokens, shrinkResult.shrunkTokens, shrinkResult.messagesRemoved, userId);
       }
 
       const chatRequest: ChatRequest = {
@@ -355,12 +481,20 @@ async function startServer(): Promise<void> {
         },
       );
 
-      // Only charge credits for expensive roles when using premium models
-      // Simple roles (router, clarifyAndRewriter, query_builder) use free models even in premium tier
-      const PREMIUM_ROLES = new Set(["planner", "executor", "final"]);
-      const shouldChargeCredits = usePremiumModel && parsed.role && PREMIUM_ROLES.has(parsed.role);
-      const creditsCost = shouldChargeCredits ? CREDIT_COSTS.premium : 0;
+      const durationMs = Date.now() - startTime;
 
+      // Log streaming chat call
+      logChatCall(
+        parsed.role || "default",
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+        response.usage.total_tokens,
+        userId,
+        durationMs,
+        { model: response.model, fallbackUsed: response.fallback_used, streaming: true }
+      );
+
+      // Track usage - tokens are counted based on role (expensive roles count towards quota)
       await usageTracker.trackUsage({
         deviceId,
         userId,
@@ -371,8 +505,6 @@ async function startServer(): Promise<void> {
         totalTokens: response.usage.total_tokens,
         role: parsed.role,
         fallbackUsed: response.fallback_used,
-        isPremiumRequest: usePremiumModel,
-        creditsCost,
         contextWindowSize: estimateConversationTokens(processedMessages),
       });
 
@@ -388,8 +520,7 @@ async function startServer(): Promise<void> {
           usage: response.usage,
           metadata: {
             tier: rateLimitResult.tier,
-            creditsUsed: creditsCost,
-            creditsRemaining: (rateLimitResult.remainingCredits ?? 0) - creditsCost,
+            quota: rateLimitResult.quota ?? null,
             contextShrinkApplied,
           },
         },
@@ -399,6 +530,7 @@ async function startServer(): Promise<void> {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown gateway error";
+      logChatError((req.body as any)?.role || "stream", message, userId);
       const errorPayload: GatewayResponse<null> = {
         success: false,
         error: {
@@ -411,7 +543,7 @@ async function startServer(): Promise<void> {
     }
   });
 
-  // Get usage stats and credits for the current user/device
+  // Get usage stats and quota for the current user/device
   app.get("/v1/usage", validateUserRequest, async (req: RequestContext, res: Response) => {
     try {
       const deviceId = req.deviceId;
@@ -419,7 +551,14 @@ async function startServer(): Promise<void> {
       const userRole = req.userRole as UserRole;
 
       const stats = await usageTracker.getUsageStats(deviceId, userId);
-      const tier = rateLimiter.resolveTier(userRole, stats.availableCredits > 0);
+      
+      // Get quota info for logged-in users
+      let quota = null;
+      if (userId && userRole === "logged") {
+        quota = await usageTracker.getQuotaInfo(userId, userRole);
+      }
+
+      const tier = rateLimiter.resolveTier(userRole, quota?.tokensRemaining ?? 0);
       const limits = config.limits[tier as keyof typeof config.limits];
 
       res.status(StatusCodes.OK).json({
@@ -433,16 +572,19 @@ async function startServer(): Promise<void> {
           deviceId,
           userRole,
           tier,
-          credits: {
-            total: userRole === "logged" ? 5 : 3, // LOGGED_IN_PREMIUM_CREDITS : ANONYMOUS_PREMIUM_CREDITS
-            used: stats.usedCredits,
-            available: stats.availableCredits,
-          },
+          // New quota-based system (percentage display)
+          quota: quota ? {
+            dailyQuota: quota.dailyQuota,
+            tokensUsed: quota.tokensUsed,
+            tokensRemaining: quota.tokensRemaining,
+            percentRemaining: quota.percentRemaining,
+            canMakeRequest: quota.canMakeRequest,
+            resetInMs: quota.resetInMs,
+          } : null,
           usage: {
             daily: {
               requests: stats.dailyRequests,
               tokens: stats.dailyTokens,
-              limit: limits.dailyTokenLimit,
             },
             minute: {
               requests: stats.minuteRequests,

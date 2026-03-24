@@ -1,0 +1,67 @@
+---
+title: "Quickstart"
+description: "Get Memento AI running in under 5 minutes."
+---
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+- **Node.js 20+** — [nodejs.org](https://nodejs.org)
+- **Rust 1.76+** — [rustup.rs](https://rustup.rs)
+- **PostgreSQL 15+** running locally
+
+## 1. Clone & install
+
+```bash
+git clone https://github.com/pavan/memento-ai.git
+cd memento-ai
+npm install
+```
+
+## 2. Set up environment
+
+```bash
+cp ai-gateway/.env.example ai-gateway/.env
+# Edit ai-gateway/.env and add your OPENAI_API_KEY and DATABASE_URL
+```
+
+## 3. Set up the database
+
+```bash
+createdb memento_ai
+cd ai-gateway && npx drizzle-kit migrate && cd ..
+```
+
+## 4. Build Rust components
+
+```bash
+cargo build --workspace
+```
+
+## 5. Start all services
+
+Open three terminals:
+
+```bash
+# Terminal 1 — AI Gateway
+cd ai-gateway && npm run dev
+
+# Terminal 2 — Frontend
+cd app/frontend && npm run dev
+
+# Terminal 3 — Rust daemon
+cargo run -p daemon
+```
+
+Visit **http://localhost:3000** — you should see the Memento AI search UI. Type any query and the daemon will start surfacing results from your indexed folders.
+
+<Tip>
+  For the full native desktop experience, run `cd app && npm run tauri dev` instead of the frontend terminal command.
+</Tip>
+
+---
+
+<Card title="Next: Full Installation Guide" icon="arrow-right" href="/getting-started/installation">
+  See detailed installation steps, platform-specific notes, and troubleshooting.
+</Card>

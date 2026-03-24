@@ -97,7 +97,7 @@ export const clarifyAndRewriteSchema = z.object({
     .default(false),
   clarificationQuestion: z
     .string()
-    .optional()
+    .nullish()
     .describe("The clarification question to ask the user, if needed."),
 });
 
@@ -115,7 +115,7 @@ export const intentRouterSchema = z.object({
 
   conversationResponse: z
     .string()
-    .optional()
+    .nullish()
     .describe(
       "The response to return if this is classified as a conversation. Optional.",
     ),

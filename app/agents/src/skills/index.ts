@@ -10,7 +10,7 @@ export { loadSkills, getSkills, getSchemaSkill, buildSkillContext, clearSkillsCa
 export { validateSql, executeSql, formatResultsAsMarkdown, formatResultsAsJson } from "./sqlExecutor";
 
 // Tools
-export { CurrentDateTimeTool, SqlExecuteTool, SemanticSearchTool, HybridSearchTool, createSkillTools } from "./tools";
+export { CurrentDateTimeTool, SqlExecuteTool, SemanticSearchTool, HybridSearchTool, WebSearchTool, createSkillTools } from "./tools";
 
 // Prompts
 export { skillPlannerPrompt, skillSqlGeneratorPrompt, skillReasoningPrompt, skillFinalAnswerPrompt, buildAvailableSkillsDescription } from "./prompts";

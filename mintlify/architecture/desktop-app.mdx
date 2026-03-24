@@ -1,0 +1,736 @@
+---
+title: "Desktop Application"
+description: "The Tauri wrapper that manages processes, system tray, IPC, and auto-updates."
+---
+
+## Overview
+
+The Desktop Application (`app/src-tauri`) is a Tauri 2 wrapper around the Next.js frontend, providing:
+
+- **Process Management**: Launches and monitors daemon and agents
+- **System Tray**: Background operation with quick actions
+- **IPC Commands**: Bridge between frontend and native OS
+- **Auto-Updates**: Velopack integration for seamless updates
+- **Windows Service**: Integration with SearchEngineDaemon
+
+<Info>
+  **Binary Location**: `%LOCALAPPDATA%\memento\current\memento.exe`  
+  **Framework**: Tauri 2 + Rust + WebView2
+</Info>
+
+---
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph Tauri App["Tauri Desktop App"]
+        Main["main.rs<br/>(Velopack Bootstrap)"]
+        Lib["lib.rs<br/>(App Logic)"]
+        IPC["IPC Commands<br/>(Rust Functions)"]
+        Tray["System Tray"]
+    </graph>
+    
+    subgraph Managed Processes
+        Daemon["memento-daemon.exe"]
+        Agents["memento-agents.exe"]
+        Service["Windows Service"]
+    end
+    
+    subgraph Frontend
+        Next["Next.js App<br/>(WebView)"]
+    end
+    
+    Main --> Lib
+    Lib --> Daemon
+    Lib --> Agents
+    Lib --> Service
+    Lib --> IPC
+    Lib --> Tray
+    IPC --> Next
+    Next --> IPC
+    
+    style Tauri App fill:#0A0A0A,stroke:#525252,color:#fff
+    style Managed Processes fill:#0A0A0A,stroke:#525252,color:#fff
+    style Frontend fill:#0A0A0A,stroke:#525252,color:#fff
+```
+
+---
+
+## Core Components
+
+### 1. Main Entry Point
+
+The `main.rs` file initializes Velopack FIRST, then Tauri.
+
+<CodeGroup>
+
+```rust main.rs
+
+fn main() {
+    // CRITICAL: Velopack MUST be first
+    match velopack::init() {
+        Ok(true) => {
+            // Normal app startup
+            tauri_app_lib::run()
+        }
+        Ok(false) => {
+            // Update hook executed, exit
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Velopack init failed: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
+```
+
+```rust Why This Order Matters
+// WRONG - will break updates
+fn main() {
+    tauri_app_lib::run();  // ❌ App starts before update check
+    velopack::init().ok();
+}
+
+// CORRECT - update hooks run first
+fn main() {
+    match velopack::init() {  // ✅ Updates handled first
+        Ok(true) => tauri_app_lib::run(),
+        Ok(false) => std::process::exit(0),
+        Err(_) => std::process::exit(1),
+    }
+}
+```
+
+</CodeGroup>
+
+<Warning>
+  **Critical**: If Velopack is not initialized first, update hooks won't run, and updates will fail silently.
+</Warning>
+
+---
+
+### 2. Process Management
+
+The `lib.rs` file launches and monitors background processes.
+
+<Tabs>
+  <Tab title="Daemon Launching">
+    ```rust
+    use std::process::{Command, Stdio};
+    use std::path::PathBuf;
+    
+    pub async fn start_daemon(app: &AppHandle) -> Result<Child, String> {
+        let daemon_path = find_daemon_binary(app)?;
+        
+        let child = Command::new(&daemon_path)
+            .args(&["--port", "7070"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to start daemon: {}", e))?;
+        
+        // Monitor process health
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                if !is_daemon_healthy().await {
+                    eprintln!("Daemon unhealthy, restarting...");
+                    restart_daemon().await.ok();
+                }
+            }
+        });
+        
+        Ok(child)
+    }
+    ```
+    
+    **Binary Search Paths**:
+    1. `./binaries/memento-daemon.exe` (dev mode)
+    2. `./resources/memento-daemon.exe` (packaged)
+    3. `%LOCALAPPDATA%\memento\current\memento-daemon.exe`
+  </Tab>
+  
+  <Tab title="Service Integration">
+    ```rust
+    use std::process::Command;
+    
+    pub async fn install_service(app: &AppHandle) -> Result<(), String> {
+        let helper_path = find_service_helper(app)?;
+        let daemon_path = find_daemon_binary(app)?;
+        
+        // Request UAC elevation
+        let output = Command::new(&helper_path)
+            .args(&[
+                "install",
+                "--daemon-path", daemon_path.to_str().unwrap()
+            ])
+            .output()
+            .map_err(|e| format!("Service install failed: {}", e))?;
+        
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+        
+        Ok(())
+    }
+    
+    pub fn start_service() -> Result<(), String> {
+        let output = Command::new("sc")
+            .args(&["start", "SearchEngineDaemon"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Port File Management">
+    ```rust
+    use std::fs;
+    use std::time::{Duration, Instant};
+    
+    pub struct PortFileManager {
+        last_refresh: Instant,
+        cached_url: Option<String>,
+    }
+    
+    impl PortFileManager {
+        pub async fn get_daemon_url(&mut self) -> Result<String, String> {
+            // Refresh every 30 seconds
+            if self.last_refresh.elapsed() > Duration::from_secs(30) {
+                self.cached_url = Some(self.read_port_file().await?);
+                self.last_refresh = Instant::now();
+            }
+            
+            self.cached_url.clone()
+                .ok_or_else(|| "No daemon URL cached".to_string())
+        }
+        
+        async fn read_port_file(&self) -> Result<String, String> {
+            let port_file = PathBuf::from(
+                r"C:\ProgramData\memento\ports\daemon.port"
+            );
+            
+            let port = fs::read_to_string(&port_file)
+                .map_err(|e| format!("Port file read error: {}", e))?;
+            
+            Ok(format!("http://localhost:{}", port.trim()))
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### 3. IPC Commands
+
+Tauri commands expose native functionality to the frontend.
+
+<CodeGroup>
+
+```rust IPC Command Definitions
+use tauri::command;
+
+#[command]
+async fn get_daemon_url(state: State<'_, AppState>) -> Result<String, String> {
+    state.port_manager.lock().await.get_daemon_url().await
+}
+
+#[command]
+async fn open_data_folder() -> Result<(), String> {
+    let path = get_app_data_dir()?;
+    opener::open(&path).map_err(|e| e.to_string())
+}
+
+#[command]
+async fn get_device_id() -> Result<String, String> {
+    crate::device::get_device_fingerprint()
+}
+
+#[command]
+async fn check_service_status() -> Result<ServiceStatus, String> {
+    let output = Command::new("sc")
+        .args(&["query", "SearchEngineDaemon"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    Ok(ServiceStatus {
+        installed: stdout.contains("SERVICE_NAME"),
+        running: stdout.contains("RUNNING"),
+    })
+}
+
+#[command]
+async fn restart_daemon(app: AppHandle) -> Result<(), String> {
+    stop_daemon().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    start_daemon(&app).await?;
+    Ok(())
+}
+```
+
+```typescript Frontend Usage
+import { invoke } from '@tauri-apps/api/core';
+
+// Get daemon URL
+const daemonUrl = await invoke<string>('get_daemon_url');
+
+// Open data folder in Explorer
+await invoke('open_data_folder');
+
+// Get device fingerprint
+const deviceId = await invoke<string>('get_device_id');
+
+// Check Windows Service status
+const status = await invoke<ServiceStatus>('check_service_status');
+console.log(`Service installed: ${status.installed}, running: ${status.running}`);
+
+// Restart daemon
+await invoke('restart_daemon');
+```
+
+</CodeGroup>
+
+---
+
+### 4. System Tray
+
+Provides quick actions even when window is closed.
+
+<CodeGroup>
+
+```rust System Tray Setup
+use tauri::{
+    CustomMenuItem, SystemTray, SystemTrayMenu,
+    SystemTrayMenuItem, SystemTrayEvent
+};
+
+pub fn create_system_tray() -> SystemTray {
+    let open = CustomMenuItem::new("open".to_string(), "Open Memento");
+    let pause = CustomMenuItem::new("pause".to_string(), "Pause Capture");
+    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
+    
+    let tray_menu = SystemTrayMenu::new()
+        .add_item(open)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(pause)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(quit);
+    
+    SystemTray::new().with_menu(tray_menu)
+}
+
+pub fn handle_system_tray_event(app: &AppHandle, event: SystemTrayEvent) {
+    match event {
+        SystemTrayEvent::MenuItemClick { id, .. } => {
+            match id.as_str() {
+                "open" => {
+                    let window = app.get_window("main").unwrap();
+                    window.show().unwrap();
+                    window.set_focus().unwrap();
+                }
+                "pause" => {
+                    toggle_capture_pause(app);
+                }
+                "quit" => {
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+```
+
+```rust Dynamic Tray Updates
+pub async fn toggle_capture_pause(app: &AppHandle) {
+    let daemon_url = get_daemon_url(app).await.unwrap();
+    let client = reqwest::Client::new();
+    
+    // Check current status
+    let status: CaptureStatus = client
+        .get(format!("{}/capture/status", daemon_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    
+    // Toggle
+    if status.paused {
+        client.post(format!("{}/capture/resume", daemon_url))
+            .send()
+            .await
+            .unwrap();
+        
+        update_tray_item(app, "pause", "Pause Capture");
+    } else {
+        client.post(format!("{}/capture/pause", daemon_url))
+            .send()
+            .await
+            .unwrap();
+        
+        update_tray_item(app, "pause", "Resume Capture");
+    }
+}
+```
+
+</CodeGroup>
+
+**Tray Icon States**:
+- **Normal**: Blue icon (capturing)
+- **Paused**: Gray icon (capture paused)
+- **Error**: Red icon (daemon unavailable)
+
+---
+
+### 5. OAuth Integration
+
+Handles Google OAuth flow for AI Gateway authentication.
+
+<CodeGroup>
+
+```rust OAuth Handler (oauth.rs)
+use tiny_http::{Server, Response, StatusCode};
+use url::Url;
+
+pub async fn start_oauth_server() -> Result<OAuthTokens, String> {
+    let server = Server::http("127.0.0.1:0").unwrap();
+    let port = server.server_addr().port();
+    
+    // Open browser to OAuth URL
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?\
+         client_id={}&\
+         redirect_uri=http://localhost:{}&\
+         response_type=code&\
+         scope=openid%20email%20profile",
+        std::env::var("GOOGLE_CLIENT_ID").unwrap(),
+        port
+    );
+    
+    opener::open(&auth_url).ok();
+    
+    // Wait for callback
+    let request = server.recv().unwrap();
+    let url = Url::parse(&format!("http://localhost{}", request.url())).unwrap();
+    
+    let code = url.query_pairs()
+        .find(|(key, _)| key == "code")
+        .map(|(_, value)| value.to_string())
+        .ok_or("No auth code in callback")?;
+    
+    // Exchange code for tokens
+    let tokens = exchange_code_for_tokens(&code).await?;
+    
+    // Send success page
+    let response = Response::from_string("Authentication successful! You can close this window.")
+        .with_status_code(StatusCode::from(200));
+    request.respond(response).ok();
+    
+    Ok(tokens)
+}
+```
+
+```typescript Frontend OAuth Trigger
+export async function signInWithGoogle() {
+  try {
+    // Tauri will open OAuth flow and return tokens
+    const tokens = await invoke<OAuthTokens>('start_oauth_flow');
+    
+    // Store tokens
+    localStorage.setItem('access_token', tokens.access_token);
+    localStorage.setItem('refresh_token', tokens.refresh_token);
+    
+    // Update UI
+    window.location.href = '/dashboard';
+  } catch (error) {
+    console.error('OAuth failed:', error);
+    alert('Sign in failed. Please try again.');
+  }
+}
+```
+
+</CodeGroup>
+
+---
+
+### 6. Auto-Updates
+
+Velopack integration for seamless binary updates.
+
+<Tabs>
+  <Tab title="Update Check">
+    ```rust
+    use velopack::*;
+    
+    pub async fn check_for_updates() -> Result<Option<UpdateInfo>, String> {
+        let manager = UpdateManager::new(
+            "https://github.com/pavan/memento-ai/releases"
+        ).map_err(|e| e.to_string())?;
+        
+        let update_info = manager
+            .check_for_updates()
+            .await
+            .map_err(|e| e.to_string())?;
+        
+        if let Some(info) = &update_info {
+            println!("Update available: v{}", info.target_version);
+        }
+        
+        Ok(update_info)
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Download & Apply">
+    ```rust
+    pub async fn download_and_install_update(
+        update_info: &UpdateInfo
+    ) -> Result<(), String> {
+        let manager = UpdateManager::new( /* ... */ )?;
+        
+        // Stop daemon service before updating its binary
+        stop_service()?;
+        
+        // Download delta patch
+        manager
+            .download_updates(update_info)
+            .await
+            .map_err(|e| e.to_string())?;
+        
+        // Apply and restart
+        manager
+            .apply_updates_and_restart(update_info)
+            .map_err(|e| e.to_string())?;
+        
+        // This line never executes (app restarts)
+        unreachable!()
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Automatic Checks">
+    ```rust
+    pub fn start_update_checker(app: AppHandle) {
+        tokio::spawn(async move {
+            loop {
+                // Check every 6 hours
+                tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+                
+                match check_for_updates().await {
+                    Ok(Some(update)) => {
+                        // Notify user
+                        emit_update_available(&app, update);
+                    }
+                    Ok(None) => {
+                        println!("No updates available");
+                    }
+                    Err(e) => {
+                        eprintln!("Update check failed: {}", e);
+                    }
+                }
+            }
+        });
+    }
+    
+    fn emit_update_available(app: &AppHandle, update: UpdateInfo) {
+        app.emit_all("update-available", update).ok();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Configuration
+
+### tauri.conf.json
+
+```json
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:3000",
+    "distDir": "../frontend/out"
+  },
+  "package": {
+    "productName": "Memento AI",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "open": true
+      },
+      "fs": {
+        "scope": ["$APPDATA/Memento/**"]
+      },
+      "http": {
+        "scope": ["http://localhost:7070/*", "http://localhost:4180/*"]
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["nsis"],
+      "identifier": "ai.memento.app",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/icon.ico"
+      ],
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    },
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:7070 http://localhost:4180"
+    },
+    "systemTray": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "windows": [
+      {
+        "title": "Memento AI",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Building
+
+### Development
+
+```powershell
+cd app
+npm run tauri dev
+```
+
+**What happens**:
+1. Starts Next.js dev server (`npm run dev`)
+2. Launches Tauri in dev mode
+3. WebView loads `http://localhost:3000`
+4. Hot reload enabled
+
+### Production Build
+
+```powershell
+cd app
+npm run tauri build
+```
+
+**Output**:
+```
+app/src-tauri/target/release/
+├── memento.exe              # Tauri executable
+└── bundle/
+    └── nsis/
+        └── memento_1.0.0_x64-setup.exe  # Installer
+```
+
+### Velopack Release
+
+```powershell
+.\scripts\build-release.ps1 -Version "1.0.0"
+```
+
+**Output**:
+```
+velopack-output/
+├── Setup.exe                 # Full installer
+├── RELEASES                 # Version manifest
+├── memento-1.0.0-full.nupkg # Full package
+└── releases.win.json        # Metadata
+```
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="App won't start" icon="circle-xmark">
+    **Check WebView2 runtime**:
+    ```powershell
+    Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    ```
+    
+    If missing, download from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+  </Accordion>
+  
+  <Accordion title="IPC command fails" icon="ban">
+    **Check Tauri allowlist** in `tauri.conf.json`:
+    ```json
+    {
+      "tauri": {
+        "allowlist": {
+          "shell": { "open": true }  // Required for opener::open()
+        }
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Update fails" icon="download">
+    **Common causes**:
+    1. Daemon service didn't stop (check Event Viewer)
+    2. Binary in use by another process
+    3. Insufficient permissions
+    
+    **Fix**: Manually stop service:
+    ```powershell
+    sc stop SearchEngineDaemon
+    taskkill /F /IM memento-daemon.exe
+    ```
+  </Accordion>
+  
+  <Accordion title="System tray missing" icon="tray">
+    **Windows 11**: Check notification settings
+    ```
+    Settings > Personalization > Taskbar > 
+    Show hidden icons > Turn on "Memento AI"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Windows Service" icon="gear" href="/advanced/windows-service">
+    Deep dive into service architecture.
+  </Card>
+  <Card title="Auto-Updates" icon="download" href="/advanced/auto-updates">
+    Learn about Velopack updates.
+  </Card>
+  <Card title="Building" icon="hammer" href="/deployment/building">
+    Complete build guide.
+  </Card>
+  <Card title="Distribution" icon="box" href="/deployment/distribution">
+    Release and distribution process.
+  </Card>
+</CardGroup>

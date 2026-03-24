@@ -9,9 +9,11 @@ import {
 import {
   SqlExecuteInputSchema,
   SemanticSearchInputSchema,
+  WebSearchInputSchema,
   CurrentDateTimeInputSchema,
   SqlExecuteInput,
   SemanticSearchInput,
+  WebSearchInput,
   CurrentDateTimeInput,
 } from "./types";
 import {
@@ -22,9 +24,17 @@ import {
 } from "./sqlExecutor";
 import { getConfig } from "../config/config";
 import { getHybridSearchUrl, getSemanticSearchUrl } from "../config/daemon";
-import { getLogger, logSectionLine, logSeparator } from "../utils/logger";
+import { getLogger } from "../utils/logger";
+import { logToolCall } from "../utils/tokenTracker";
 import { runWithSpan } from "../telemetry/tracing";
 import axios from "axios";
+import {
+  getCacheManager,
+  logCacheHit,
+  logCacheMiss,
+  logCacheStore,
+  summarizeInput,
+} from "../utils/cache";
 
 type CurrentDateTimeOutput = {
   localIso: string;
@@ -59,6 +69,17 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
       },
       async () => {
         const logger = await getLogger();
+        const cacheManager = getCacheManager();
+        const cacheKey = { sql: input.sql };
+        const inputSummary = summarizeInput(cacheKey);
+
+        // Check cache first
+        const cachedResult = cacheManager.get<ToolResult<any>>("sql_execute", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("sql_execute").getStats();
+          await logCacheHit("sql_execute", inputSummary, stats);
+          return cachedResult;
+        }
 
         // Pre-validate
         const validation = validateSql(input.sql);
@@ -67,54 +88,35 @@ export class SqlExecuteTool implements Tool<SqlExecuteInput, any> {
           return toolFailure(`Invalid SQL: ${validation.error}`);
         }
 
-        logger.info(
-          { stepId: context.stepId, sql: input.sql },
-          "Executing SQL query",
-        );
-        logSeparator(logger, "TOOL START | sql_execute", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
-        logSectionLine(logger, "CALLED TOOL sql_execute", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-          sql: input.sql,
-        });
+        // Log cache miss
+        const missStats = cacheManager.getCache("sql_execute").getStats();
+        await logCacheMiss("sql_execute", inputSummary, missStats);
 
+        const startTime = Date.now();
         const result = await executeSql(input);
 
         if (!result.success) {
-          logSectionLine(logger, "RESULT TOOL sql_execute", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-            success: false,
-            error: result.error,
-            executionTimeMs: result.executionTimeMs,
-          });
+          await logToolCall(context.requestId, "sql_execute", 0, result.executionTimeMs ?? 0);
           return toolFailure(result.error || "SQL execution failed", {
             executionTimeMs: result.executionTimeMs,
           });
         }
 
-        logSectionLine(logger, "RESULT TOOL sql_execute", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-          success: true,
-          rowCount: result.rowCount,
-          columns: result.columns,
-          executionTimeMs: result.executionTimeMs,
-        });
-        logSeparator(logger, "TOOL END | sql_execute", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
+        await logToolCall(context.requestId, "sql_execute", result.rowCount ?? 0, result.executionTimeMs ?? 0);
 
-        return toolSuccess(formatResultsAsJson(result), {
+        const toolResult = toolSuccess(formatResultsAsJson(result), {
           source: "sql_execute",
           rowCount: result.rowCount,
           executionTimeMs: result.executionTimeMs,
           columns: result.columns,
         });
+
+        // Cache successful results
+        cacheManager.set("sql_execute", cacheKey, toolResult);
+        const valueSize = JSON.stringify(toolResult).length * 2;
+        await logCacheStore("sql_execute", inputSummary, valueSize);
+
+        return toolResult;
       },
     );
   }
@@ -144,23 +146,28 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
       async () => {
         const logger = await getLogger();
         const config = await getConfig();
-
-        logger.info(
-          { stepId: context.stepId, query: input.query, limit: input.limit },
-          "Executing semantic search",
-        );
-        logSeparator(logger, "TOOL START | semantic_search", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
-        logSectionLine(logger, "CALLED TOOL semantic_search", {
-          requestId: context.requestId,
-          stepId: context.stepId,
+        const cacheManager = getCacheManager();
+        const cacheKey = {
           query: input.query,
-          limit: input.limit || 20,
+          limit: input.limit ?? 20,
           offset: input.offset ?? 0,
           filters: input.filters,
-        });
+        };
+        const inputSummary = summarizeInput(cacheKey);
+
+        // Check cache first
+        const cachedResult = cacheManager.get<ToolResult<any>>("semantic_search", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("semantic_search").getStats();
+          await logCacheHit("semantic_search", inputSummary, stats);
+          return cachedResult;
+        }
+
+        // Log cache miss
+        const missStats = cacheManager.getCache("semantic_search").getStats();
+        await logCacheMiss("semantic_search", inputSummary, missStats);
+
+        const startTime = Date.now();
 
         try {
           const semanticEndpoint = await getSemanticSearchUrl();
@@ -185,12 +192,7 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
 
 
           if (data.success === false) {
-            logSectionLine(logger, "RESULT TOOL semantic_search", {
-              requestId: context.requestId,
-              stepId: context.stepId,
-              success: false,
-              error: data.error,
-            });
+            await logToolCall(context.requestId, "semantic_search", 0, Date.now() - startTime);
             return toolFailure(data.error || "Semantic search failed");
           }
 
@@ -200,22 +202,9 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
               ? data
               : [];
 
-          logger.info(
-            { resultCount: results.length },
-            "Semantic search completed",
-          );
-          logSectionLine(logger, "RESULT TOOL semantic_search", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-            success: true,
-            resultCount: results.length,
-          });
-          logSeparator(logger, "TOOL END | semantic_search", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-          });
+          await logToolCall(context.requestId, "semantic_search", results.length, Date.now() - startTime);
 
-          return toolSuccess(
+          const toolResult = toolSuccess(
             {
               success: true,
               data: results,
@@ -229,16 +218,17 @@ export class SemanticSearchTool implements Tool<SemanticSearchInput, any> {
               resultCount: results.length,
             },
           );
+
+          // Cache successful results
+          cacheManager.set("semantic_search", cacheKey, toolResult);
+          const valueSize = JSON.stringify(toolResult).length * 2;
+          await logCacheStore("semantic_search", inputSummary, valueSize);
+
+          return toolResult;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
-          logger.error({ error: errorMessage }, "Semantic search failed");
-          logSectionLine(logger, "RESULT TOOL semantic_search", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-            success: false,
-            error: errorMessage,
-          });
+          await logToolCall(context.requestId, "semantic_search", 0, Date.now() - startTime);
           return toolFailure(`Semantic search error: ${errorMessage}`);
         }
       },
@@ -276,28 +266,29 @@ export class HybridSearchTool implements Tool<
       async () => {
         const logger = await getLogger();
         const config = await getConfig();
-
-        logger.info(
-          {
-            stepId: context.stepId,
-            query: input.query,
-            keywords: input.keywords,
-          },
-          "Executing hybrid search",
-        );
-        logSeparator(logger, "TOOL START | hybrid_search", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
-        logSectionLine(logger, "CALLED TOOL hybrid_search", {
-          requestId: context.requestId,
-          stepId: context.stepId,
+        const cacheManager = getCacheManager();
+        const cacheKey = {
           query: input.query,
           keywords: input.keywords,
-          limit: input.limit || 20,
+          limit: input.limit ?? 20,
           offset: input.offset ?? 0,
           filters: input.filters,
-        });
+        };
+        const inputSummary = summarizeInput(cacheKey);
+
+        // Check cache first
+        const cachedResult = cacheManager.get<ToolResult<any>>("hybrid_search", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("hybrid_search").getStats();
+          await logCacheHit("hybrid_search", inputSummary, stats);
+          return cachedResult;
+        }
+
+        // Log cache miss
+        const missStats = cacheManager.getCache("hybrid_search").getStats();
+        await logCacheMiss("hybrid_search", inputSummary, missStats);
+
+        const startTime = Date.now();
 
         try {
           const hybridEndpoint = await getHybridSearchUrl();
@@ -322,12 +313,7 @@ export class HybridSearchTool implements Tool<
           const data = response.data;
 
           if (data.success === false) {
-            logSectionLine(logger, "RESULT TOOL hybrid_search", {
-              requestId: context.requestId,
-              stepId: context.stepId,
-              success: false,
-              error: data.error,
-            });
+            await logToolCall(context.requestId, "hybrid_search", 0, Date.now() - startTime);
             return toolFailure(data.error || "Hybrid search failed");
           }
 
@@ -337,18 +323,9 @@ export class HybridSearchTool implements Tool<
               ? data
               : [];
 
-          logSectionLine(logger, "RESULT TOOL hybrid_search", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-            success: true,
-            resultCount: results.length,
-          });
-          logSeparator(logger, "TOOL END | hybrid_search", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-          });
+          await logToolCall(context.requestId, "hybrid_search", results.length, Date.now() - startTime);
 
-          return toolSuccess(
+          const toolResult = toolSuccess(
             {
               success: true,
               data: results,
@@ -363,17 +340,127 @@ export class HybridSearchTool implements Tool<
               resultCount: results.length,
             },
           );
+
+          // Cache successful results
+          cacheManager.set("hybrid_search", cacheKey, toolResult);
+          const valueSize = JSON.stringify(toolResult).length * 2;
+          await logCacheStore("hybrid_search", inputSummary, valueSize);
+
+          return toolResult;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
-          logger.error({ error: errorMessage }, "Hybrid search failed");
-          logSectionLine(logger, "RESULT TOOL hybrid_search", {
-            requestId: context.requestId,
-            stepId: context.stepId,
-            success: false,
-            error: errorMessage,
-          });
+          await logToolCall(context.requestId, "hybrid_search", 0, Date.now() - startTime);
           return toolFailure(`Hybrid search error: ${errorMessage}`);
+        }
+      },
+    );
+  }
+}
+
+/**
+ * Web Search Tool
+ * Executes public web search via the ai-gateway.
+ * 
+ * Use ONLY when:
+ * - User explicitly asks for web search or external research
+ * - External/current information genuinely required (not in screen history)
+ * 
+ * Default to local search for personal queries and workspace questions.
+ */
+export class WebSearchTool implements Tool<WebSearchInput, any> {
+  name = "web_search";
+  description =
+    "Search the public web for external or current information. Use ONLY when external data is genuinely needed or user explicitly asks. Default to local search for personal queries.";
+  inputSchema = WebSearchInputSchema;
+
+  async execute(
+    input: WebSearchInput,
+    context: ToolContext,
+  ): Promise<ToolResult<any>> {
+    return runWithSpan(
+      "agent.tool.web_search",
+      {
+        request_id: context.requestId,
+        step_id: context.stepId,
+        query: input.query,
+      },
+      async () => {
+        const logger = await getLogger();
+        const config = await getConfig();
+        const cacheManager = getCacheManager();
+        const cacheKey = {
+          query: input.query,
+          limit: input.limit ?? 5,
+        };
+        const inputSummary = summarizeInput(cacheKey);
+
+        const cachedResult = cacheManager.get<ToolResult<any>>("web_search", cacheKey);
+        if (cachedResult) {
+          const stats = cacheManager.getCache("web_search").getStats();
+          await logCacheHit("web_search", inputSummary, stats);
+          return cachedResult;
+        }
+
+        const missStats = cacheManager.getCache("web_search").getStats();
+        await logCacheMiss("web_search", inputSummary, missStats);
+
+        const startTime = Date.now();
+
+        try {
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+          };
+
+          if (context.authHeaders?.authorization) {
+            headers["Authorization"] = context.authHeaders.authorization;
+          }
+          if (context.authHeaders?.deviceId) {
+            headers["X-Device-ID"] = context.authHeaders.deviceId;
+          }
+
+          const response = await axios.post(
+            `${config.aiGateway.baseUrl}/v1/search`,
+            {
+              query: input.query,
+              limit: input.limit ?? 5,
+            },
+            {
+              timeout: Math.min(context.timeout, config.aiGateway.timeoutMs),
+              headers,
+            },
+          );
+
+          const payload = response.data?.data;
+          const results = Array.isArray(payload?.results) ? payload.results : [];
+
+          await logToolCall(context.requestId, "web_search", results.length, Date.now() - startTime);
+
+          const toolResult = toolSuccess(
+            {
+              success: true,
+              data: results,
+              metadata: {
+                resultCount: results.length,
+                query: input.query,
+              },
+            },
+            {
+              source: "web_search",
+              resultCount: results.length,
+            },
+          );
+
+          cacheManager.set("web_search", cacheKey, toolResult);
+          const valueSize = JSON.stringify(toolResult).length * 2;
+          await logCacheStore("web_search", inputSummary, valueSize);
+
+          return toolResult;
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          await logToolCall(context.requestId, "web_search", 0, Date.now() - startTime);
+          return toolFailure(`Web search error: ${errorMessage}`);
         }
       },
     );
@@ -401,7 +488,6 @@ export class CurrentDateTimeTool implements Tool<CurrentDateTimeInput, CurrentDa
         step_id: context.stepId,
       },
       async () => {
-        const logger = await getLogger();
         const now = new Date();
 
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
@@ -418,25 +504,7 @@ export class CurrentDateTimeTool implements Tool<CurrentDateTimeInput, CurrentDa
           unixMs: now.getTime(),
         };
 
-        logSeparator(logger, "TOOL START | current_datetime", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
-        logSectionLine(logger, "CALLED TOOL current_datetime", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
-        logSectionLine(logger, "RESULT TOOL current_datetime", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-          timezone: payload.timezone,
-          localDate: payload.localDate,
-          localTime: payload.localTime,
-        });
-        logSeparator(logger, "TOOL END | current_datetime", {
-          requestId: context.requestId,
-          stepId: context.stepId,
-        });
+        await logToolCall(context.requestId, "current_datetime", 1, 0);
 
         return toolSuccess(payload, {
           source: "current_datetime",
@@ -458,5 +526,6 @@ export function createSkillTools(): Tool[] {
     new SqlExecuteTool(),
     new SemanticSearchTool(),
     new HybridSearchTool(),
+    new WebSearchTool(),
   ];
 }

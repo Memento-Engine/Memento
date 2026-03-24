@@ -1,7 +1,12 @@
 import { OnboardingContext } from "@/contexts/onBoardingContext";
+import { invoke } from "@tauri-apps/api/core";
 import React, { useEffect, useState } from "react";
-import { checkModelsStatus } from "@/api/models";
-import { waitForDaemonHealthy } from "@/api/base";
+
+interface LocalModelsStatus {
+  embedding_exists: boolean;
+  cross_encoder_exists: boolean;
+  models_path: string;
+}
 
 export default function OnboardingProvider({
   children,
@@ -14,42 +19,22 @@ export default function OnboardingProvider({
 
   /**
    * Onboarding is complete if model files exist.
-   * We check via the daemon API which verifies the actual model directories.
+   * We check the shared models directory directly so onboarding does not depend
+   * on the daemon already being up.
    */
   async function isOnboardingCompleted(): Promise<boolean> {
-    const maxAttempts = 4;
+    try {
+      const status = await invoke<LocalModelsStatus>("get_local_models_status");
+      const completed = status.embedding_exists && status.cross_encoder_exists;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const status = await checkModelsStatus();
-        console.log("Model status from daemon:", status);
-        // Models are ready if status is "ready" or "downloaded_not_loaded"
-        const completed =
-          status.status === "ready" || status.status === "downloaded_not_loaded";
-        console.log(
-          "Model status:",
-          status.status,
-          "Onboarding completed:",
-          completed,
-        );
-        return completed;
-      } catch (error) {
-        console.log(
-          `Could not check model status (attempt ${attempt}/${maxAttempts}):`,
-          error,
-        );
+      console.log("Local model status:", status);
+      console.log("Onboarding completed:", completed, "Path:", status.models_path);
 
-        if (attempt < maxAttempts) {
-          try {
-            await waitForDaemonHealthy(5000);
-          } catch {
-            // Daemon is still starting; retry loop will continue.
-          }
-        }
-      }
+      return completed;
+    } catch (error) {
+      console.log("Could not check local model status:", error);
+      return false;
     }
-
-    return false;
   }
 
   useEffect(() => {

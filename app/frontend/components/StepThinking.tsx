@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
   Search,
+  Globe,
   Check,
   X,
   Loader2,
@@ -85,6 +86,8 @@ function getStepIcon(step: ThinkingStep, isActive: boolean, hasCompleted: boolea
         return <Search className={iconClass} />;
       case "hybrid":
         return <Search className={iconClass} />;
+      case "webSearch":
+        return <Globe className={iconClass} />;
       case "readMore":
         return <BookOpen className={iconClass} />;
       case "thinking":
@@ -299,7 +302,7 @@ export function StepThinking({ steps }: Props) {
                             </motion.div>
                           )}
 
-                          {/* Results with app icons */}
+                          {/* Results - split by source type */}
                           {normalizedResults.length > 0 && (
                             <motion.div
                               layout
@@ -310,56 +313,103 @@ export function StepThinking({ steps }: Props) {
                             >
                               <div className="max-h-60 divide-y divide-border/50 overflow-y-auto">
                                 <AnimatePresence initial={false}>
-                                  {visibleResults.map((result: any, i: number) => (
-                                    <motion.div
-                                      layout
-                                      key={`${result.app_name}-${result.captured_at}-${i}`}
-                                      initial={{ opacity: 0, height: 0 }}
-                                      animate={{ opacity: 1, height: "auto" }}
-                                      exit={{ opacity: 0, height: 0 }}
-                                      transition={{ duration: 0.2 }}
-                                      onClick={() => {
-                                        setReferenceMeta({
-                                          app_name: result.app_name,
-                                          browser_url: result.browser_url,
-                                          captured_at: result.captured_at,
-                                          chunk_id: result.chunk_id,
-                                          image_path: result.image_path,
-                                          text_content: "",
-                                          text_json: undefined,
-                                          window_height: 0,
-                                          window_title: result.window_name,
-                                          window_width: 0,
-                                          window_x: 0,
-                                          window_y: 0,
-                                        });
-                                      }}
-                                      className="flex cursor-pointer items-center justify-between px-2.5 py-2 transition-colors hover:bg-muted/30"
-                                    >
-                                      <div className="flex items-center gap-2.5 overflow-hidden">
-                                        <AppIconDisplay
-                                          appName={result.app_name}
-                                          browserUrl={result.browser_url}
-                                        />
-                                        <span className="truncate text-[11px] text-foreground/70">
-                                          {result.app_name}
-                                          {result.window_name && (
-                                            <>
-                                              <span className="mx-1 text-muted-foreground/50">
-                                                ·
+                                  {visibleResults.map((result: any, i: number) => {
+                                    const isWebResult = result.sourceType === "web" || result.chunk_id < 0;
+                                    
+                                    if (isWebResult) {
+                                      // Web result - Globe icon, clickable URL, snippet
+                                      return (
+                                        <motion.a
+                                          layout
+                                          key={`web-${result.url}-${i}`}
+                                          href={result.url || result.browser_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          initial={{ opacity: 0, height: 0 }}
+                                          animate={{ opacity: 1, height: "auto" }}
+                                          exit={{ opacity: 0, height: 0 }}
+                                          transition={{ duration: 0.2 }}
+                                          className="block px-2.5 py-2 transition-colors hover:bg-blue-500/10 border-l-2 border-blue-500/30"
+                                        >
+                                          <div className="flex items-start gap-2.5">
+                                            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-500/10 border border-blue-500/20">
+                                              <Globe className="h-3 w-3 text-blue-500" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2">
+                                                <span className="truncate text-[11px] font-medium text-foreground/90">
+                                                  {result.title || result.window_name || "Web result"}
+                                                </span>
+                                                <span className="shrink-0 text-[9px] text-blue-500/70 font-medium uppercase tracking-wide">
+                                                  Web
+                                                </span>
+                                              </div>
+                                              {result.snippet && (
+                                                <p className="mt-0.5 text-[10px] text-muted-foreground line-clamp-2">
+                                                  {result.snippet}
+                                                </p>
+                                              )}
+                                              <span className="text-[9px] text-muted-foreground/60 truncate block mt-0.5">
+                                                {result.url || result.browser_url}
                                               </span>
-                                              <span className="text-muted-foreground">
-                                                {result.window_name}
-                                              </span>
-                                            </>
-                                          )}
+                                            </div>
+                                          </div>
+                                        </motion.a>
+                                      );
+                                    }
+                                    
+                                    // Memory result - existing behavior
+                                    return (
+                                      <motion.div
+                                        layout
+                                        key={`${result.app_name}-${result.captured_at}-${i}`}
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: "auto" }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        transition={{ duration: 0.2 }}
+                                        onClick={() => {
+                                          setReferenceMeta({
+                                            app_name: result.app_name,
+                                            browser_url: result.browser_url,
+                                            captured_at: result.captured_at,
+                                            chunk_id: result.chunk_id,
+                                            image_path: result.image_path,
+                                            text_content: "",
+                                            text_json: undefined,
+                                            window_height: 0,
+                                            window_title: result.window_name,
+                                            window_width: 0,
+                                            window_x: 0,
+                                            window_y: 0,
+                                          });
+                                        }}
+                                        className="flex cursor-pointer items-center justify-between px-2.5 py-2 transition-colors hover:bg-muted/30"
+                                      >
+                                        <div className="flex items-center gap-2.5 overflow-hidden">
+                                          <AppIconDisplay
+                                            appName={result.app_name}
+                                            browserUrl={result.browser_url}
+                                          />
+                                          <span className="truncate text-[11px] text-foreground/70">
+                                            {result.app_name}
+                                            {result.window_name && (
+                                              <>
+                                                <span className="mx-1 text-muted-foreground/50">
+                                                  ·
+                                                </span>
+                                                <span className="text-muted-foreground">
+                                                  {result.window_name}
+                                                </span>
+                                              </>
+                                            )}
+                                          </span>
+                                        </div>
+                                        <span className="ml-3 shrink-0 text-[10px] text-muted-foreground/60">
+                                          {renderDate(result.captured_at)}
                                         </span>
-                                      </div>
-                                      <span className="ml-3 shrink-0 text-[10px] text-muted-foreground/60">
-                                        {renderDate(result.captured_at)}
-                                      </span>
-                                    </motion.div>
-                                  ))}
+                                      </motion.div>
+                                    );
+                                  })}
                                 </AnimatePresence>
 
                                 {/* Toggle Button for Expand / Collapse */}

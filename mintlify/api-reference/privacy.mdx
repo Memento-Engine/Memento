@@ -1,0 +1,417 @@
+---
+title: "Privacy API"
+description: "Manage privacy exclusion rules to prevent capturing sensitive content."
+api: "GET /privacy/masked"
+---
+
+## Overview
+
+The Privacy API allows you to configure exclusion rules that prevent Memento AI from capturing specific websites or applications.
+
+<Info>
+  **Base URL**: `http://localhost:7070`  
+  **Retroactive**: Privacy rules can retroactively delete existing data.
+</Info>
+
+---
+
+## List Masked Items
+
+Get all configured exclusion rules.
+
+<RequestExample>
+
+```bash cURL
+curl http://localhost:7070/privacy/masked
+```
+
+```typescript TypeScript
+const maskedItems = await fetch('http://localhost:7070/privacy/masked')
+  .then(r => r.json());
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "masked_items": [
+    {
+      "id": 1,
+      "name": "mail.google.com",
+      "item_type": "web",
+      "created_at": 1711234567
+    },
+    {
+      "id": 2,
+      "name": "KeePass",
+      "item_type": "app",
+      "created_at": 1711234580
+    },
+    {
+      "id": 3,
+      "name": "bank.com",
+      "item_type": "web",
+      "created_at": 1711234590
+    }
+  ]
+}
+```
+
+</ResponseExample>
+
+<ResponseField name="masked_items" type="array">
+  Array of exclusion rules
+  
+  <Expandable>
+    <ResponseField name="id" type="number">
+      Unique identifier
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Domain (for web) or app name (for app)
+    </ResponseField>
+    <ResponseField name="item_type" type="string">
+      `"web"` or `"app"`
+    </ResponseField>
+    <ResponseField name="created_at" type="number">
+      Unix timestamp when rule was created
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Add Masked Item
+
+Add a new exclusion rule.
+
+<ParamField body="name" type="string" required>
+  Domain (e.g., `"mail.google.com"`) or app name (e.g., `"Signal.exe"`)
+</ParamField>
+
+<ParamField body="item_type" type="string" required>
+  Type of exclusion: `"web"` or `"app"`
+</ParamField>
+
+<RequestExample>
+
+```bash cURL - Block Website
+curl -X POST http://localhost:7070/privacy/masked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "facebook.com",
+    "item_type": "web"
+  }'
+```
+
+```bash cURL - Block App
+curl -X POST http://localhost:7070/privacy/masked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Telegram.exe",
+    "item_type": "app"
+  }'
+```
+
+```typescript TypeScript
+// Block banking website
+await fetch('http://localhost:7070/privacy/masked', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    name: 'bank.com',
+    item_type: 'web'
+  })
+});
+
+// Block password manager
+await fetch('http://localhost:7070/privacy/masked', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    name: 'KeePass.exe',
+    item_type: 'app'
+  })
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 201 Created
+{
+  "id": 4,
+  "name": "facebook.com",
+  "item_type": "web",
+  "created_at": 1711234600,
+  "message": "Masked item added successfully"
+}
+```
+
+```json 409 Conflict
+{
+  "error": "Item already masked",
+  "existing_id": 2
+}
+```
+
+</ResponseExample>
+
+<Warning>
+  **Proactive Only**: Adding a masked item prevents future captures but does NOT delete existing data. Use `/privacy/refresh` to retroactively remove data.
+</Warning>
+
+---
+
+## Remove Masked Item
+
+Remove an exclusion rule (allows future captures).
+
+<ParamField path="id" type="number" required>
+  ID of the masked item to remove
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X DELETE http://localhost:7070/privacy/masked/4
+```
+
+```typescript TypeScript
+await fetch('http://localhost:7070/privacy/masked/4', {
+  method: 'DELETE'
+});
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "message": "Masked item removed successfully",
+  "id": 4
+}
+```
+
+```json 404 Not Found
+{
+  "error": "Masked item not found"
+}
+```
+
+</ResponseExample>
+
+<Note>
+  Removing a masked item only affects future captures. Existing data remains unless you run `/privacy/refresh`.
+</Note>
+
+---
+
+## Refresh Privacy Rules
+
+Retroactively apply privacy rules to existing data.
+
+<Warning>
+  **Destructive Operation**: This will PERMANENTLY DELETE frames and chunks matching masked items. Cannot be undone.
+</Warning>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST http://localhost:7070/privacy/refresh
+```
+
+```typescript TypeScript
+const result = await fetch('http://localhost:7070/privacy/refresh', {
+  method: 'POST'
+}).then(r => r.json());
+
+console.log(`Deleted ${result.deleted_frames} frames`);
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 Success
+{
+  "deleted_frames": 342,
+  "deleted_chunks": 1026,
+  "freed_space_mb": 127,
+  "processed_rules": [
+    {
+      "name": "mail.google.com",
+      "type": "web",
+      "frames_deleted": 150
+    },
+    {
+      "name": "KeePass.exe",
+      "type": "app",
+      "frames_deleted": 192
+    }
+  ],
+  "message": "Privacy refresh completed"
+}
+```
+
+</ResponseExample>
+
+---
+
+## Common Use Cases
+
+### Financial Services
+
+```typescript
+const financialDomains = [
+  'bank.com',
+  'paypal.com',
+  'stripe.com',
+  'mint.com'
+];
+
+for (const domain of financialDomains) {
+  await fetch('http://localhost:7070/privacy/masked', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: domain,
+      item_type: 'web'
+    })
+  });
+}
+
+// Retroactively clean up
+await fetch('http://localhost:7070/privacy/refresh', { method: 'POST' });
+```
+
+### Communication Apps
+
+```typescript
+const privateApps = [
+  'Signal.exe',
+  'Telegram.exe',
+  'WhatsApp.exe',
+  'Discord.exe'
+];
+
+for (const app of privateApps) {
+  await fetch('http://localhost:7070/privacy/masked', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: app,
+      item_type: 'app'
+    })
+  });
+}
+```
+
+### Email Providers
+
+```typescript
+const emailDomains = [
+  'mail.google.com',
+  'outlook.com',
+  'protonmail.com'
+];
+
+for (const domain of emailDomains) {
+  await fetch('http://localhost:7070/privacy/masked', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: domain,
+      item_type: 'web'
+    })
+  });
+}
+```
+
+---
+
+## Matching Rules
+
+### Web Matching
+
+Domain matching is **substring-based**:
+
+- `"google.com"` matches:
+  - `mail.google.com`
+  - `docs.google.com`
+  - `https://google.com/search`
+  
+- `"mail.google"` matches:
+  - `mail.google.com`
+  - `mail.google.co.uk`
+
+<Tip>
+  Use specific subdomains (`mail.google.com`) to avoid over-blocking.
+</Tip>
+
+### App Matching
+
+App name matching is **case-insensitive exact match**:
+
+- `"Signal.exe"` matches:
+  - `Signal.exe`
+  - `signal.exe`
+  - `SIGNAL.EXE`
+
+- Does NOT match:
+  - `SignalDesktop.exe`
+  - `Signal-1.0.exe`
+
+<Tip>
+  Use Process Explorer or Task Manager to find exact app names.
+</Tip>
+
+---
+
+## Best Practices
+
+<Card title="Be Specific" icon="bullseye">
+  Use specific domains/apps to avoid blocking too much. For example, use `mail.google.com` instead of `google.com`.
+</Card>
+
+<Card title="Test Before Refresh" icon="flask">
+  Add masked items and test future captures before running `/privacy/refresh` to ensure rules work as expected.
+</Card>
+
+<Card title="Export Before Cleanup" icon="download">
+  Consider backing up your database before running `/privacy/refresh`:
+  ```bash
+  copy %APPDATA%\Memento\data\memento.db memento-backup.db
+  ```
+</Card>
+
+<Card title="Regular Audits" icon="calendar">
+  Periodically review your masked items to ensure they're still relevant:
+  ```typescript
+  const items = await fetch('http://localhost:7070/privacy/masked')
+    .then(r => r.json());
+  console.log(items.masked_items);
+  ```
+</Card>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Capture Control" icon="camera" href="/api-reference/capture">
+    Pause capture during sensitive activities.
+  </Card>
+  <Card title="Privacy Setup Guide" icon="shield" href="/getting-started/privacy-setup">
+    Step-by-step privacy configuration.
+  </Card>
+  <Card title="Data Flow" icon="diagram-project" href="/architecture/data-flow">
+    Understand how privacy filtering works.
+  </Card>
+  <Card title="Database Schema" icon="database" href="/architecture/database-schema">
+    Learn about the masked_items table.
+  </Card>
+</CardGroup>

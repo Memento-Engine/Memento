@@ -20,6 +20,7 @@ import {
   appendTextChunk,
   appendErrorMessage,
   updateSources,
+  updateFollowups,
   ensureAssistantMessage,
 } from "@/lib/messageUtils";
 import { getAgentBaseUrl } from "@/api/base";
@@ -126,11 +127,8 @@ export function useStreaming(
       const { chunk } = event.data;
 
       if (!chunk) {
-        console.warn("Received empty text chunk");
         return;
       }
-
-      console.log(`✅ Text chunk received: ${chunk.length} chars`);
 
       setMessages((prev) => {
         try {
@@ -146,7 +144,7 @@ export function useStreaming(
 
   const handleCompleteEvent = useCallback(
     (event: CompleteEvent) => {
-      const { success = true, message, metadata } = event.data;
+      const { success = true, message, metadata, followups } = event.data;
 
       console.log(`✅ Execution complete - success: ${success}`);
 
@@ -164,6 +162,17 @@ export function useStreaming(
               return ensureAssistantMessage(prev, message);
             } catch (error) {
               console.error("Error handling completion message:", error);
+              return prev;
+            }
+          });
+        }
+
+        if (Array.isArray(followups) && followups.length > 0) {
+          setMessages((prev) => {
+            try {
+              return updateFollowups(prev, followups);
+            } catch (error) {
+              console.error("Error handling completion followups:", error);
               return prev;
             }
           });

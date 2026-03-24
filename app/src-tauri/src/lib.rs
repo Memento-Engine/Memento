@@ -177,13 +177,6 @@ fn stop_embedded_agent_server(state: &AgentServerState) {
     }
 }
 
-/// Get the base directory for memento (user-local)
-fn get_base_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .expect("Cannot find local data directory")
-        .join("memento")
-}
-
 /// Get the shared directory for memento (accessible by service and user apps)
 /// Windows: Always %PROGRAMDATA%\memento (both dev and production)
 /// This ensures Windows Service and user apps access the same data
@@ -205,6 +198,61 @@ const PREFERRED_DAEMON_PORT: u16 = 7070;
 fn get_log_dir() -> PathBuf {
     let log_mode = if cfg!(debug_assertions) { "dev" } else { "production" };
     get_shared_dir().join("logs").join(log_mode)
+}
+
+fn get_models_dir() -> PathBuf {
+    get_shared_dir().join("data").join("models")
+}
+
+fn has_model_dir_with_prefix(models_dir: &std::path::Path, prefixes: &[&str]) -> bool {
+    let entries = match std::fs::read_dir(models_dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+
+        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn embedding_model_exists() -> bool {
+    has_model_dir_with_prefix(
+        &get_models_dir(),
+        &[
+            "models--Qdrant--all-MiniLM-L6-v2-onnx",
+            "fast-all-MiniLM-L6-v2",
+        ],
+    )
+}
+
+fn cross_encoder_model_exists() -> bool {
+    has_model_dir_with_prefix(
+        &get_models_dir(),
+        &[
+            "models--jinaai--jina-reranker-v1-turbo-en",
+            "fast-jina-reranker-v1-turbo-en",
+        ],
+    )
+}
+
+#[derive(serde::Serialize)]
+struct LocalModelsStatus {
+    embedding_exists: bool,
+    cross_encoder_exists: bool,
+    models_path: String,
 }
 
 /// Set up file and console logging
@@ -590,6 +638,17 @@ fn get_daemon_url() -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+fn get_local_models_status() -> Result<LocalModelsStatus, String> {
+    let models_dir = get_models_dir();
+
+    Ok(LocalModelsStatus {
+        embedding_exists: embedding_model_exists(),
+        cross_encoder_exists: cross_encoder_model_exists(),
+        models_path: models_dir.to_string_lossy().to_string(),
+    })
+}
+
 /// Core update check logic - shared by both user-triggered and background checks
 fn check_for_updates_core() -> Result<Option<String>, String> {
     debug!("Update URL: {}", build_info::UPDATE_URL);
@@ -880,6 +939,7 @@ pub fn run() {
             apply_update,
             get_service_status,
             get_daemon_url,
+            get_local_models_status,
             get_app_icon::get_app_icon_ipc,
             get_device_id::generate_auth_headers,
             oauth::start_oauth_flow,
