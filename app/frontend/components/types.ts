@@ -59,15 +59,18 @@ export const citationSchema = z.object({
 });
 
 export const citationsSchema = z.array(citationSchema);
+export const followupsSchema = z.array(z.string()).max(3);
 
 export type Citation = z.infer<typeof citationSchema>;
 export type Citations = z.infer<typeof citationsSchema>;
+export type Followups = z.infer<typeof followupsSchema>;
 
 const dataSchemas = {
   thinking: thinkingSchema,
   searchMode: messageSearchModeSchema,
   citations: citationsSchema, // plural
   sources: sourcesPayloadSchema,
+  followups: followupsSchema,
 };
 
 export type MyDataPart = {

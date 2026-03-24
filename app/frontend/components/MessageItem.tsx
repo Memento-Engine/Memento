@@ -230,6 +230,41 @@ function MessageItem({
     return null;
   };
 
+  const renderFollowups = (): React.ReactElement => {
+    if (message.role !== "assistant") {
+      return <></>;
+    }
+
+    const followups = message.parts
+      .filter((part) => part.type === "data-followups")
+      .flatMap((part) => (Array.isArray(part.data) ? part.data : []))
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (followups.length === 0) {
+      return <></>;
+    }
+
+    return (
+      <div className="mt-4 rounded-xl border border-border/60 bg-muted/20 p-3">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Suggested Follow-ups
+        </div>
+        <div className="flex flex-col gap-2">
+          {followups.map((item, idx) => (
+            <div
+              key={`${message.id}-followup-${idx}`}
+              className="rounded-lg bg-background/60 px-3 py-2 text-sm text-foreground"
+            >
+              {item}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const renderImageGrid = (): React.ReactElement => {
     if (
       message.role === "assistant" &&
@@ -276,6 +311,8 @@ function MessageItem({
           }
           return null;
         })}
+
+        {renderFollowups()}
 
         {/* Message actions for user messages */}
         {message.role === "user" && showControls && (

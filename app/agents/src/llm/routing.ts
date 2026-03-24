@@ -2,10 +2,16 @@ import { getConfig } from "../config/config";
 import { AgentError, ErrorCode, RateLimitError } from "../types/errors";
 import { runWithSpan } from "../telemetry/tracing";
 import { getLogger } from "../utils/logger";
-import { logLlmCall, logError, recordTokenUsage } from "../utils/tokenTracker";
+import {
+  logLlmCall,
+  logError,
+  recordTokenUsage,
+  getRequestSearchMode,
+} from "../utils/tokenTracker";
 import {
   CLASSIFIER_BUDGETS,
   CHAT_CONTEXT_BUDGETS,
+  PLANNER_BUDGETS,
   REACT_BUDGETS,
   FINAL_LLM_BUDGETS,
 } from "../config/tokenBudgets";
@@ -23,7 +29,8 @@ export type LlmRole =
 // Map roles to token budgets and tracking stages
 type TokenStage = "chatContext" | "classifier" | "planner" | "react" | "finalLlm" | "total";
 
-function getRoleBudget(role: LlmRole): number {
+function getRoleBudget(role: LlmRole, requestId: string): number {
+  const searchMode = getRequestSearchMode(requestId);
   switch (role) {
     case "summarizer":
       return CHAT_CONTEXT_BUDGETS.totalMaxTokens;
@@ -32,12 +39,16 @@ function getRoleBudget(role: LlmRole): number {
     case "router":
       return CLASSIFIER_BUDGETS.totalInputMaxTokens;
     case "planner":
-      return REACT_BUDGETS.node1.totalMaxStandard;
+      return PLANNER_BUDGETS.totalInputMaxTokens;
     case "executor":
     case "query_builder":
-      return REACT_BUDGETS.node1.totalMaxAccurate; // worst case
+      return searchMode === "accurateSearch"
+        ? REACT_BUDGETS.node1.totalMaxAccurate
+        : REACT_BUDGETS.node1.totalMaxStandard;
     case "final":
-      return FINAL_LLM_BUDGETS.totalInputStandard;
+      return searchMode === "accurateSearch"
+        ? FINAL_LLM_BUDGETS.totalInputAccurate
+        : FINAL_LLM_BUDGETS.totalInputStandard;
     default:
       return 65536;
   }
@@ -351,7 +362,7 @@ export async function invokeRoleLlm({
         const responseData = result.data;
         const usage = extractTokenUsage(responseData);
         const durationMs = Date.now() - startTime;
-        const budget = getRoleBudget(role);
+        const budget = getRoleBudget(role, requestId);
         const stage = getRoleStage(role);
         
         // Log with token tracking
@@ -550,7 +561,7 @@ export async function invokeRoleLlmStreaming({
         }
 
         const durationMs = Date.now() - startTime;
-        const budget = getRoleBudget(role);
+        const budget = getRoleBudget(role, requestId);
         const stage = getRoleStage(role);
         
         // Log with token tracking (estimate tokens from content length)

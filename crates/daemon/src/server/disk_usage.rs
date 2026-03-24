@@ -126,14 +126,14 @@ pub fn count_files(path: &PathBuf) -> io::Result<u64> {
     Ok(count)
 }
 
-/// Get the base directory for memento
+/// Get the base directory for memento (shared dir where all data actually lives)
 pub fn get_base_dir() -> PathBuf {
-    app_core::config::base_dir()
+    app_core::config::shared_dir()
 }
 
-/// Get the memories (screenshots) directory
+/// Get the memories directory (shared_dir/data/memories)
 pub fn get_memories_dir() -> PathBuf {
-    app_core::config::screenshots_dir()
+    app_core::config::memories_dir()
 }
 
 /// Get the logs directory

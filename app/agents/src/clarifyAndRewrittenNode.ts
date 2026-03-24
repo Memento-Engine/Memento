@@ -52,7 +52,7 @@ export async function clarifyAndRewrittenNode(
       return {
         ...state,
         isClarificationNeeded: parsedData.data.isClarificationNeeded,
-        clarificationQuestion: parsedData.data.clarificationQuestion,
+        clarificationQuestion: parsedData.data.clarificationQuestion ?? undefined,
         rewrittenQuery: parsedData.data.rewrittenQuery,
       };
     } catch (err: unknown) {

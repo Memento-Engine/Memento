@@ -6,6 +6,13 @@
  */
 
 import { getLogger } from "./logger";
+import {
+  CHAT_CONTEXT_BUDGETS,
+  CLASSIFIER_BUDGETS,
+  PLANNER_BUDGETS,
+  REACT_BUDGETS,
+  FINAL_LLM_BUDGETS,
+} from "../config/tokenBudgets";
 
 // ANSI color codes for terminal output
 const colors = {
@@ -42,6 +49,7 @@ interface RequestTokens {
   stages: Map<TokenStage, StageUsage>;
   llmCalls: number;
   startTime: number;
+  searchMode: "search" | "accurateSearch";
 }
 
 // Per-request token tracking
@@ -55,7 +63,71 @@ export function initTokenTracker(requestId: string): void {
     stages: new Map(),
     llmCalls: 0,
     startTime: Date.now(),
+    searchMode: "search",
   });
+}
+
+/**
+ * Initialize token tracking for a request with search mode budget profile.
+ */
+export function initTokenTrackerWithMode(
+  requestId: string,
+  searchMode: "search" | "accurateSearch" = "search",
+): void {
+  requestTokens.set(requestId, {
+    stages: new Map(),
+    llmCalls: 0,
+    startTime: Date.now(),
+    searchMode,
+  });
+}
+
+/**
+ * Get search mode for an active request.
+ */
+export function getRequestSearchMode(
+  requestId: string,
+): "search" | "accurateSearch" {
+  return requestTokens.get(requestId)?.searchMode ?? "search";
+}
+
+/**
+ * Get allocated budget for a stage based on search mode.
+ */
+export function getAllocatedBudgetForStage(
+  stage: TokenStage,
+  searchMode: "search" | "accurateSearch",
+): number {
+  switch (stage) {
+    case "chatContext":
+      return CHAT_CONTEXT_BUDGETS.totalMaxTokens;
+    case "classifier":
+      return CLASSIFIER_BUDGETS.totalInputMaxTokens;
+    case "planner":
+      return PLANNER_BUDGETS.totalInputMaxTokens;
+    case "react":
+      return searchMode === "accurateSearch"
+        ? REACT_BUDGETS.node1.totalMaxAccurate
+        : REACT_BUDGETS.node1.totalMaxStandard;
+    case "finalLlm":
+      return searchMode === "accurateSearch"
+        ? FINAL_LLM_BUDGETS.totalInputAccurate
+        : FINAL_LLM_BUDGETS.totalInputStandard;
+    case "total":
+      return (
+        CHAT_CONTEXT_BUDGETS.totalMaxTokens +
+        CLASSIFIER_BUDGETS.totalInputMaxTokens +
+        PLANNER_BUDGETS.totalInputMaxTokens +
+        (searchMode === "accurateSearch"
+          ? REACT_BUDGETS.node1.totalMaxAccurate
+          : REACT_BUDGETS.node1.totalMaxStandard) +
+        (searchMode === "accurateSearch"
+          ? FINAL_LLM_BUDGETS.totalInputAccurate
+          : FINAL_LLM_BUDGETS.totalInputStandard)
+      );
+    default:
+      return 0;
+  }
 }
 
 /**
@@ -98,6 +170,13 @@ function formatTokens(used: number, budget: number): string {
   return `${color}${used.toLocaleString()}${colors.reset}/${budget.toLocaleString()} (${color}${percent}%${colors.reset})`;
 }
 
+function formatPercentStatus(used: number, budget: number): { percent: number; label: string; color: string } {
+  const percent = budget > 0 ? Math.round((used / budget) * 100) : 0;
+  const color = percent > 100 ? colors.red : getPercentColor(percent);
+  const label = percent > 100 ? `${percent}% (exceeded)` : `${percent}%`;
+  return { percent, label, color };
+}
+
 /**
  * Log stage entry with token budget info
  */
@@ -129,16 +208,19 @@ export async function logLlmCall(
 ): Promise<void> {
   const logger = await getLogger();
   const total = inputTokens + outputTokens;
+  const usage = formatPercentStatus(total, budget);
   
   const line = [
     `${colors.magenta}[LLM]${colors.reset}`,
     `${colors.bold}${role}${colors.reset}`,
-    `in=${formatTokens(inputTokens, budget)}`,
-    `out=${colors.white}${outputTokens}${colors.reset}`,
+    `consumed=${usage.color}${total.toLocaleString()}${colors.reset}`,
+    `allocated=${colors.white}${budget.toLocaleString()}${colors.reset}`,
+    `usage=${usage.color}${usage.label}${colors.reset}`,
+    `${colors.dim}(in=${inputTokens.toLocaleString()} out=${outputTokens.toLocaleString()})${colors.reset}`,
     `${colors.dim}${durationMs}ms${colors.reset}`,
   ].join(" ");
   
-  logger.info({ requestId, role, inputTokens, outputTokens, budget, durationMs }, line);
+  logger.info({ requestId, role, inputTokens, outputTokens, consumedTokens: total, budget, usagePercent: usage.percent, durationMs }, line);
 }
 
 /**
@@ -167,12 +249,12 @@ export async function logStageEnd(
   details?: Record<string, unknown>
 ): Promise<void> {
   const logger = await getLogger();
-  const percent = budget > 0 ? Math.round((inputTokens / budget) * 100) : 0;
-  const color = getPercentColor(percent);
+  const consumed = inputTokens + outputTokens;
+  const usage = formatPercentStatus(consumed, budget);
   
-  const line = `${colors.cyan}[${stage}]${colors.reset} ${color}done${colors.reset} tokens=${formatTokens(inputTokens, budget)} out=${outputTokens}`;
+  const line = `${colors.cyan}[${stage}]${colors.reset} ${usage.color}done${colors.reset} consumed=${consumed.toLocaleString()} allocated=${budget.toLocaleString()} usage=${usage.label}`;
   
-  logger.info({ requestId, stage, inputTokens, outputTokens, budget, percent, ...details }, line);
+  logger.info({ requestId, stage, inputTokens, outputTokens, consumedTokens: consumed, budget, usagePercent: usage.percent, ...details }, line);
 }
 
 /**
@@ -248,20 +330,36 @@ export async function logFinalQuerySummary(requestId: string, durationMs: number
   
   const totalTokens = totalInput + totalOutput;
   const lastStageTokens = lastStageInput + lastStageOutput;
+  const searchMode = tracker.searchMode;
+  const totalAllocated = getAllocatedBudgetForStage("total", searchMode);
+  const finalAllocated = getAllocatedBudgetForStage("finalLlm", searchMode);
+  const totalUsage = formatPercentStatus(totalTokens, totalAllocated);
+  const finalUsage = formatPercentStatus(lastStageTokens, finalAllocated);
   
   // Determine color based on total consumption
   const totalColor = totalTokens <= 8000 ? colors.green : totalTokens <= 12000 ? colors.yellow : colors.red;
   
-  const header = `${colors.cyan}${colors.bold}╔════════════════════════════════════════╗${colors.reset}`;
-  const title = `${colors.cyan}${colors.bold}║  QUERY COMPLETE - TOKEN SUMMARY${colors.reset}${' '.repeat(4)}${colors.cyan}║${colors.reset}`;
-  const sep = `${colors.cyan}${colors.bold}╠════════════════════════════════════════╣${colors.reset}`;
+  const header = `${colors.cyan}${colors.bold}╔════════════════════════════════════════════════════════════╗${colors.reset}`;
+  const title = `${colors.cyan}${colors.bold}║  QUERY COMPLETE - TOKEN SUMMARY${colors.reset}${' '.repeat(24)}${colors.cyan}║${colors.reset}`;
+  const sep = `${colors.cyan}${colors.bold}╠════════════════════════════════════════════════════════════╣${colors.reset}`;
   
-  const totalLine = `${colors.cyan}║${colors.reset} Total Tokens Consumed: ${totalColor}${colors.bold}${totalTokens.toLocaleString()}${colors.reset}${' '.repeat(Math.max(0, 15 - String(totalTokens).length))} ${colors.cyan}║${colors.reset}`;
-  const lastLine = `${colors.cyan}║${colors.reset} Final LLM Stage:       ${colors.blue}${lastStageTokens.toLocaleString()}${colors.reset}${' '.repeat(Math.max(0, 15 - String(lastStageTokens).length))} ${colors.cyan}║${colors.reset}`;
-  const durationLine = `${colors.cyan}║${colors.reset} Request Duration:      ${colors.white}${durationMs}ms${colors.reset}${' '.repeat(Math.max(0, 18 - String(durationMs).length))} ${colors.cyan}║${colors.reset}`;
-  const llmCallsLine = `${colors.cyan}║${colors.reset} LLM Calls Made:        ${colors.magenta}${tracker.llmCalls}${colors.reset}${' '.repeat(Math.max(0, 19 - String(tracker.llmCalls).length))} ${colors.cyan}║${colors.reset}`;
+  const modeLine = `${colors.cyan}║${colors.reset} Search Mode: ${colors.white}${searchMode}${colors.reset}${' '.repeat(43 - searchMode.length)}${colors.cyan}║${colors.reset}`;
+  const totalLine = `${colors.cyan}║${colors.reset} Total: consumed ${totalColor}${colors.bold}${totalTokens.toLocaleString()}${colors.reset}, allocated ${colors.white}${totalAllocated.toLocaleString()}${colors.reset}, ${totalUsage.color}${totalUsage.label}${colors.reset}${' '.repeat(3)}${colors.cyan}║${colors.reset}`;
+  const lastLine = `${colors.cyan}║${colors.reset} Final LLM: consumed ${colors.blue}${lastStageTokens.toLocaleString()}${colors.reset}, allocated ${colors.white}${finalAllocated.toLocaleString()}${colors.reset}, ${finalUsage.color}${finalUsage.label}${colors.reset}${' '.repeat(3)}${colors.cyan}║${colors.reset}`;
+  const durationLine = `${colors.cyan}║${colors.reset} Request Duration: ${colors.white}${durationMs}ms${colors.reset}${' '.repeat(Math.max(0, 37 - String(durationMs).length))}${colors.cyan}║${colors.reset}`;
+  const llmCallsLine = `${colors.cyan}║${colors.reset} LLM Calls Made: ${colors.magenta}${tracker.llmCalls}${colors.reset}${' '.repeat(Math.max(0, 42 - String(tracker.llmCalls).length))}${colors.cyan}║${colors.reset}`;
+
+  const stageBreakdownHeader = `${colors.cyan}${colors.bold}╠══════════════════════════ Stage Breakdown ═════════════════╣${colors.reset}`;
+  const stageOrder: TokenStage[] = ["chatContext", "classifier", "planner", "react", "finalLlm"];
+  const stageLines = stageOrder.map((stage) => {
+    const usage = tracker.stages.get(stage);
+    const consumed = usage ? usage.inputTokens + usage.outputTokens : 0;
+    const allocated = getAllocatedBudgetForStage(stage, searchMode);
+    const status = formatPercentStatus(consumed, allocated);
+    return `${colors.cyan}║${colors.reset} ${stage}: consumed ${consumed.toLocaleString()}, allocated ${allocated.toLocaleString()}, ${status.color}${status.label}${colors.reset}`;
+  });
   
-  const footer = `${colors.cyan}${colors.bold}╚════════════════════════════════════════╝${colors.reset}`;
+  const footer = `${colors.cyan}${colors.bold}╚════════════════════════════════════════════════════════════╝${colors.reset}`;
   
   logger.info(
     { 
@@ -269,9 +367,26 @@ export async function logFinalQuerySummary(requestId: string, durationMs: number
       totalTokens,
       lastStageTokens,
       durationMs,
-      llmCalls: tracker.llmCalls
+      llmCalls: tracker.llmCalls,
+      searchMode,
+      totalAllocated,
+      finalAllocated,
+      totalUsagePercent: totalUsage.percent,
+      finalUsagePercent: finalUsage.percent
     },
-    [header, title, sep, totalLine, lastLine, durationLine, llmCallsLine, footer].join("\n")
+    [
+      header,
+      title,
+      sep,
+      modeLine,
+      totalLine,
+      lastLine,
+      durationLine,
+      llmCallsLine,
+      stageBreakdownHeader,
+      ...stageLines,
+      footer,
+    ].join("\n")
   );
   
   // Cleanup

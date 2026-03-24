@@ -23,7 +23,7 @@ import {
   cleanupEventQueue,
 } from "./utils/eventQueue";
 import {
-  initTokenTracker,
+  initTokenTrackerWithMode,
   logRequestSummary,
   logFinalQuerySummary,
   cleanupTokenTracker,
@@ -352,8 +352,8 @@ async function startServer() {
               // Initialize event queue with stream writer for real-time streaming
               initializeEventQueue(requestId, streamWriter);
               
-              // Initialize token tracking for this request
-              initTokenTracker(requestId);
+              // Initialize token tracking for this request with search-mode budget profile
+              initTokenTrackerWithMode(requestId, mode);
 
               // Execute agent graph with event queue for streaming
               let result: any;
@@ -518,7 +518,10 @@ async function startServer() {
                 requestId, 
                 duration, 
                 sourceCount: sources.length,
-                hasSources: sources.length > 0 
+                hasSources: sources.length > 0,
+                followupCount: Array.isArray((result as any)?.finalFollowups)
+                  ? (result as any).finalFollowups.length
+                  : 0,
               });
 
               res.write(
@@ -532,6 +535,9 @@ async function startServer() {
                       timestamp: formatLocalTimestamp(),
                     },
                     sources: sources.length > 0 ? sources : undefined,
+                    followups: Array.isArray((result as any)?.finalFollowups)
+                      ? (result as any).finalFollowups.slice(0, 3)
+                      : undefined,
                   },
                   timestamp: formatLocalTimestamp(),
                 }) + "\n",

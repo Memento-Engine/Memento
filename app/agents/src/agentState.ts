@@ -75,6 +75,7 @@ export const AgentState = Annotation.Root({
 
   // ── Final result ─────────────────────────────────────
   finalResult: Annotation<string | undefined>(),
+  finalFollowups: Annotation<string[] | undefined>(),
 });
 
 export type AgentStateType = typeof AgentState.State;

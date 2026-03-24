@@ -80,6 +80,7 @@ export function createStepEvent(
 export function createCompletionEvent(
   content: string,
   stepId: string = "final",
+  followups?: string[],
 ): CompletionEvent {
   const event: CompletionEvent = {
     type: "complete",
@@ -89,6 +90,7 @@ export function createCompletionEvent(
       title: "Final Response",
       status: "final",
       message: content,
+      followups,
       timestamp: new Date().toISOString(),
     },
     timestamp: new Date().toISOString(),

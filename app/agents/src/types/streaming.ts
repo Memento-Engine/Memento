@@ -100,6 +100,7 @@ export type CompletionEventData = {
   stepType?: StreamStepType;
   title?: string;
   message?: string;
+  followups?: string[];
   metadata?: {
     requestId?: string;
     duration?: number;

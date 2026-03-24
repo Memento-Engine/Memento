@@ -140,6 +140,55 @@ ${recentChat ? `## Recent Conversation\n${recentChat}\n\nMatch the conversationa
 Respond in natural language. Do not output JSON.`;
 }
 
+function buildFollowups(
+  goal: string,
+  stepResults: Record<string, StepResult>,
+): string[] {
+  const results = Object.values(stepResults);
+  if (results.length === 0) return [];
+
+  const totalEvidence = results.reduce(
+    (sum, r) => sum + (r.evidenceChunkIds?.length ?? 0),
+    0,
+  );
+  const hasFindings = totalEvidence > 0;
+  if (!hasFindings) return [];
+
+  const hasUncertainty = results.some(
+    (r) => r.status !== "complete" || r.confidence !== "high" || r.gaps.length > 0,
+  );
+  const isSimpleFactual =
+    !hasUncertainty &&
+    totalEvidence <= 2 &&
+    results.length <= 2 &&
+    results.every((r) => r.status === "complete" && r.confidence === "high");
+
+  // Never generate followups for simple factual answers.
+  if (isSimpleFactual) return [];
+
+  const allGaps = results.flatMap((r) => r.gaps).filter(Boolean);
+  const firstGap = allGaps[0];
+  const searches = results.flatMap((r) => r.searchesPerformed ?? []);
+  const firstSearchQuery = searches.find((s) => s.query?.trim())?.query?.trim();
+
+  const candidates: string[] = [];
+
+  if (firstGap) {
+    candidates.push(`Want me to run a focused follow-up for this gap: ${firstGap}?`);
+  }
+
+  if (firstSearchQuery) {
+    candidates.push(`Want me to dig deeper into "${firstSearchQuery}" and pull more detailed chunks?`);
+  }
+
+  candidates.push("Want this broken down as a timeline by app and time?");
+  candidates.push("Want me to narrow this to a specific app or time range?");
+
+  // Deduplicate and cap at 3.
+  const unique = Array.from(new Set(candidates.map((c) => c.trim()))).filter(Boolean);
+  return unique.slice(0, 3);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN NODE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -268,11 +317,20 @@ export async function finalAnswerNodeV2(
           sourceCount: searchResults.length,
         });
 
-        emitCompletion(rawResponse, state.requestId);
+        const followups = buildFollowups(goal, stepResults);
+        if (followups.length > 0) {
+          logger.info("Generated followups", {
+            count: followups.length,
+            followups,
+          });
+        }
+
+        emitCompletion(rawResponse, state.requestId, "final", followups.length > 0 ? followups : undefined);
 
         return {
           ...state,
           finalResult: rawResponse,
+          finalFollowups: followups.length > 0 ? followups : undefined,
           endTime: Date.now(),
           llmCalls: (state.llmCalls ?? 0) + 1,
         };

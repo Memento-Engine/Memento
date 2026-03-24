@@ -182,11 +182,25 @@ export async function classifierAndRouterNode(
       "gpt",
     ].some((term) => normalizedGoal.includes(term));
 
-    if (output.route === "chat" && (!hasConversationResponse || looksLikePersonalMemoryQuery)) {
+    if (output.route === "chat" && !hasConversationResponse) {
+      logger.info("Classifier override: routing to clarification", {
+        reason: "chat route without conversationResponse",
+      });
+
+      return {
+        rewrittenQuery: output.rewrittenQuery || state.goal,
+        route: "chat",
+        isClarificationNeeded: true,
+        clarificationQuestion: "Do you want me to explain the previous answer in simpler words, or search your activity history for more details?",
+        conversationResponse: undefined,
+        isConversation: false,
+        isNeedPlanning: false,
+      };
+    }
+
+    if (output.route === "chat" && looksLikePersonalMemoryQuery) {
       logger.info("Classifier override: routing to search", {
-        reason: !hasConversationResponse
-          ? "chat route without conversationResponse"
-          : "personal memory query should be grounded in search",
+        reason: "personal memory query should be grounded in search",
       });
 
       return {
