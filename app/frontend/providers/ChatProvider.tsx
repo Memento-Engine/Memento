@@ -62,6 +62,13 @@ export default function ChatProvider({ children }: ChatProviderProps) {
 
         parts.push({ type: "text" as const, text: row.content });
 
+        if ((row.followups ?? []).length > 0) {
+          parts.push({
+            type: "data-followups",
+            data: row.followups.slice(0, 3),
+          });
+        }
+
         if (row.sources.length > 0) {
           parts.push({
             type: "data-sources",

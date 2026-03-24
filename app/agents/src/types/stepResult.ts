@@ -6,10 +6,16 @@ import { SEARCH_MODE_CONFIG } from "../config/tokenBudgets";
 // ~50 tokens per item, auto-generated from metadata
 
 export const EvidenceItemSchema = z.object({
-  /** Chunk ID for citation [[chunk_N]] */
+  /** Chunk ID for citation [[chunk_N]] (positive = memory, negative = web) */
   chunk_id: z.number(),
   /** Brief description: app + window + preview (~50 tokens) */
   whatItIsAbout: z.string(),
+  /** Source type: memory (screen capture) or web (external search) */
+  source_type: z.enum(["memory", "web"]).default("memory"),
+  /** URL for web sources */
+  url: z.string().optional(),
+  /** Display title for web sources */
+  title: z.string().optional(),
 });
 
 export type EvidenceItem = z.infer<typeof EvidenceItemSchema>;
@@ -52,7 +58,7 @@ export const StepResultSchema = z.object({
   stepId: z.string(),
   goal: z.string(),
   status: z.enum(["complete", "partial", "empty"]),
-  summary: z.string(),
+  summary: z.string().describe('One-line summary of what you concluded from this step (max ~300 tokens)'),
   /** Chunk IDs for evidence (used for [[chunk_N]] citations) */
   evidenceChunkIds: z.array(z.number()),
   /** Evidence items with descriptions (~50 tokens each) */

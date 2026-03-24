@@ -115,6 +115,7 @@ type InvokeRoleParams = {
   spanName: string;
   spanAttributes?: SpanAttributes;
   authHeaders?: AuthHeaders;
+  maxTokens?: number;
 };
 
 type InvokeStreamingParams = InvokeRoleParams & {
@@ -282,6 +283,7 @@ export async function invokeRoleLlm({
   spanName,
   spanAttributes = {},
   authHeaders = {},
+  maxTokens,
 }: InvokeRoleParams): Promise<{
   response: any;
   modelName: string;
@@ -332,7 +334,7 @@ export async function invokeRoleLlm({
             body: JSON.stringify({
               messages,
               temperature: 0,
-              max_tokens: 65536,
+              max_tokens: maxTokens ?? 65536,
               user_id: config.aiGateway.userId,
               role,
               use_premium_credits: usePremiumCredits,

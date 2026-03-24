@@ -56,11 +56,7 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
         stepGoal: `Find relevant information for: ${state.rewrittenQuery ?? state.goal}`,
         intent: state.rewrittenQuery ?? state.goal,
         dependsOn: [],
-        expectedOutput: {
-          type: "table",
-          variableName: "search_results",
-          description: `Search results for: ${state.goal}`,
-        },
+     
       },
       {
         id: "step2",
@@ -68,11 +64,6 @@ function simpleSearchPlan(state: AgentStateType): AgentStateType {
         stepGoal: "Synthesize final answer",
         intent: `Answer: ${state.goal}`,
         dependsOn: ["step1"],
-        expectedOutput: {
-          type: "value",
-          variableName: "final_answer",
-          description: "Final answer",
-        },
       },
     ],
   };

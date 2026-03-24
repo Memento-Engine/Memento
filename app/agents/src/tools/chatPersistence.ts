@@ -15,6 +15,7 @@ interface SaveMessagePayload {
   role: "user" | "assistant";
   content: string;
   thinking_steps: ThinkingStep[];
+  followups: string[];
   sources: MessageSourceInput[];
 }
 
@@ -44,6 +45,7 @@ export async function saveMessage(
   content: string,
   sources: MessageSourceInput[],
   thinkingSteps: ThinkingStep[] = [],
+  followups: string[] = [],
 ): Promise<number | null> {
   const logger = await getLogger();
 
@@ -55,13 +57,14 @@ export async function saveMessage(
         role,
         content,
         thinking_steps: thinkingSteps,
+        followups,
         sources,
       } satisfies SaveMessagePayload,
       { timeout: 10000, headers: { "Content-Type": "application/json" } },
     );
 
     if (response.data?.success) {
-      logger.info({ messageId: response.data.message_id, sessionId, role, sourceCount: sources.length, thinkingStepCount: thinkingSteps.length }, "Message saved to DB");
+      logger.info({ messageId: response.data.message_id, sessionId, role, sourceCount: sources.length, thinkingStepCount: thinkingSteps.length, followupCount: followups.length }, "Message saved to DB");
       return response.data.message_id;
     }
 

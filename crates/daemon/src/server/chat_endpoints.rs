@@ -16,6 +16,8 @@ pub struct SaveMessageRequest {
     pub content: String,
     #[serde(default)]
     pub thinking_steps: Vec<Value>,
+    #[serde(default)]
+    pub followups: Vec<String>,
     /// Chunk references — (chunk_id, usage_type, step_id)
     #[serde(default)]
     pub sources: Vec<MessageSourceInput>,
@@ -56,6 +58,7 @@ pub struct MessageRow {
     pub content: String,
     pub created_at: String,
     pub thinking_steps: Vec<Value>,
+    pub followups: Vec<String>,
     pub sources: Vec<MessageSourceRecord>,
 }
 
@@ -185,11 +188,24 @@ pub async fn save_message(
         }
     };
 
+    let followups_json = if payload.followups.is_empty() {
+        None
+    } else {
+        match serde_json::to_string(&payload.followups) {
+            Ok(json) => Some(json),
+            Err(e) => {
+                error!("Failed to serialize followups: {:?}", e);
+                return (StatusCode::BAD_REQUEST, "Invalid followups payload").into_response();
+            }
+        }
+    };
+
     match state.db.save_message(
         &payload.session_id,
         &payload.role,
         &payload.content,
         thinking_steps_json.as_deref(),
+        followups_json.as_deref(),
     ).await {
         Ok(message_id) => {
             // Save sources if any
@@ -204,7 +220,7 @@ pub async fn save_message(
                 }
             }
 
-            info!(message_id, session_id = %payload.session_id, role = %payload.role, source_count = payload.sources.len(), thinking_step_count = payload.thinking_steps.len(), "Message saved");
+            info!(message_id, session_id = %payload.session_id, role = %payload.role, source_count = payload.sources.len(), thinking_step_count = payload.thinking_steps.len(), followup_count = payload.followups.len(), "Message saved");
             (StatusCode::OK, Json(SaveMessageResponse { success: true, message_id })).into_response()
         }
         Err(e) => {
@@ -298,13 +314,23 @@ pub async fn get_messages(
         Ok(rows) => {
             let mut messages = Vec::with_capacity(rows.len());
 
-            for (id, role, content, created_at, thinking_steps_json) in rows {
+            for (id, role, content, created_at, thinking_steps_json, followups_json) in rows {
                 let thinking_steps = thinking_steps_json
                     .as_deref()
                     .map(|json| serde_json::from_str::<Vec<Value>>(json))
                     .transpose()
                     .unwrap_or_else(|e| {
                         error!("Failed to parse thinking steps for message {}: {:?}", id, e);
+                        Some(Vec::new())
+                    })
+                    .unwrap_or_default();
+
+                let followups = followups_json
+                    .as_deref()
+                    .map(|json| serde_json::from_str::<Vec<String>>(json))
+                    .transpose()
+                    .unwrap_or_else(|e| {
+                        error!("Failed to parse followups for message {}: {:?}", id, e);
                         Some(Vec::new())
                     })
                     .unwrap_or_default();
@@ -340,7 +366,7 @@ pub async fn get_messages(
                     }
                 };
 
-                messages.push(MessageRow { id, role, content, created_at, thinking_steps, sources });
+                messages.push(MessageRow { id, role, content, created_at, thinking_steps, followups, sources });
             }
 
             (StatusCode::OK, Json(GetMessagesResponse { success: true, messages })).into_response()

@@ -1,7 +1,13 @@
 "use client";
 
 import type { ChatStatus } from "ai";
-import { RefreshCwIcon, Share2, ThumbsDown, ThumbsUp } from "lucide-react";
+import {
+  CornerDownRight,
+  RefreshCwIcon,
+  Share2,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import React, { useCallback, useState } from "react";
 import { RenderMarkdown } from "./RenderMarkdown";
 import { CopyButton } from "./CopyButton";
@@ -25,6 +31,7 @@ export type MessageItemProps = {
   status: ChatStatus;
   onRegenerate?: (messageId: string) => void;
   onEdit?: (messageId: string, newText: string) => void;
+  onFollowupClick?: (query: string) => void;
 };
 
 const CONTENT_TYPE = {
@@ -38,6 +45,7 @@ function MessageItem({
   status,
   onRegenerate,
   onEdit,
+  onFollowupClick,
 }: MessageItemProps): React.ReactElement {
   const { assistantStatus, searchQueries, sourceReview } = useChatContext();
   const { setReferenceMeta, setSourceList } = useReferenceContext();
@@ -122,24 +130,13 @@ function MessageItem({
     return (
       <div key={`${message.id}-${partIndex}`} className="w-full">
         {message.role === "user" ? (
-    <div className="flex w-full justify-end mb-4">
-  <div className="bg-secondary text-secondary-foreground px-4 py-2 rounded-2xl inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
-    
-    {/* {messageSearchMode && (
-      <div className="mb-3">
-        <span className="inline-flex items-center gap-1.5 rounded-md bg-background/50 px-2 py-1 text-xs font-medium text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-          {messageSearchMode === "accurateSearch" ? "Accurate Search" : "Search"}
-        </span>
-      </div>
-    )} */}
-
-    <div className="select-text text-[15px] whitespace-pre-wrap leading-relaxed break-words">
-      {part.text}
-    </div>
-
-  </div>
-</div>
+          <div className="flex w-full justify-end mb-4">
+            <div className="bg-secondary text-secondary-foreground px-3 py-1 rounded-lg inline-block max-w-[85%] sm:max-w-[75%] shadow-sm">
+              <div className="select-text text-[14px] whitespace-pre-wrap leading-relaxed break-words">
+                {part.text}
+              </div>
+            </div>
+          </div>
         ) : (
           <RenderMarkdown
             sourceMap={sourceMap}
@@ -247,18 +244,21 @@ function MessageItem({
     }
 
     return (
-      <div className="mt-4 rounded-xl border border-border/60 bg-muted/20 p-3">
-        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Suggested Follow-ups
+      <div className="mt-6 pt-4 border-t border-border/40">
+        <div className="mb-3 text-sm font-medium text-foreground">
+          Follow-ups
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
           {followups.map((item, idx) => (
-            <div
+            <button
               key={`${message.id}-followup-${idx}`}
-              className="rounded-lg bg-background/60 px-3 py-2 text-sm text-foreground"
+              type="button"
+              onClick={() => onFollowupClick?.(item)}
+              className="flex items-start gap-2 py-2 text-sm text-muted-foreground text-left hover:text-foreground transition-colors cursor-pointer group"
             >
-              {item}
-            </div>
+              <CornerDownRight className="h-4 w-4 mt-0.5 flex-shrink-0 opacity-60 group-hover:opacity-100" />
+              <span>{item}</span>
+            </button>
           ))}
         </div>
       </div>

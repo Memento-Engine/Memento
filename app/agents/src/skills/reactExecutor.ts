@@ -530,6 +530,11 @@ Pause to reason about what you've found so far.
 
 ### done
 Conclude the step. Provide a summary of what you found and any gaps.
+Summary requirements:
+- Must be a brief user-facing conclusion against the step goal
+- Maximum ~300 tokens
+- Mention what was found and what is still unknown (if any)
+- Never mention internal execution details (turns, limits, timeouts, parser, engine internals)
 \`\`\`json
 {"action": "done", "thought": "Found sufficient evidence", "summary": "Found 3 VS Code sessions between 2-6pm working on Rust daemon code", "confidence": "high", "gaps": []}
 \`\`\`
@@ -788,6 +793,7 @@ export async function executeReActLoop(
             text_content: chunkRow.text_content as string | undefined,
             browser_url: chunkRow.browser_url as string | undefined,
           }),
+          source_type: "memory" as const,
         });
       }
       
@@ -797,15 +803,22 @@ export async function executeReActLoop(
         const webRow = row as Record<string, unknown>;
         evidenceItems.push({
           chunk_id: -(webIdx++),
-          whatItIsAbout: `Web: ${webRow.title ?? webRow.url ?? "Web result"} - ${(webRow.snippet as string || "").slice(0, 100)}`,
+          whatItIsAbout: `${webRow.title ?? webRow.url ?? "Web result"} - ${(webRow.snippet as string || "").slice(0, 100)}`,
+          source_type: "web" as const,
+          url: webRow.url as string | undefined,
+          title: webRow.title as string | undefined,
         });
       }
+
+      const finalSummary = action.summary && action.summary.trim().length > 0
+        ? action.summary.trim()
+        : (action.thought?.trim() || `No concise conclusion was provided for this step goal: ${currentPlanStep.stepGoal}.`);
 
       const stepResult: StepResult = {
         stepId: currentPlanStep.id,
         goal: currentPlanStep.stepGoal,
         status: evidenceIds.length > 0 || supplementalEvidence.size > 0 ? (action.confidence === "high" ? "complete" : "partial") : "empty",
-        summary: action.summary ?? "No summary provided",
+        summary: finalSummary,
         evidenceChunkIds: evidenceIds,
         evidence: evidenceItems,
         gaps: action.gaps ?? [],
@@ -1022,19 +1035,45 @@ export async function executeReActLoop(
 
   const evidenceIds = Array.from(allChunkIds.keys());
 
-  const evidenceItems = [
-    ...Array.from(allChunkIds.values() as IterableIterator<EvidenceItem>),
-    ...Array.from(supplementalEvidence.values() as IterableIterator<EvidenceItem>)
-  ];
+  const evidenceItems: EvidenceItem[] = [];
+
+  for (const [chunkId, row] of allChunkIds.entries()) {
+    const chunkRow = row as Record<string, unknown>;
+    evidenceItems.push({
+      chunk_id: chunkId,
+      whatItIsAbout: buildEvidenceDescription({
+        app_name: chunkRow.app_name as string | undefined,
+        window_name: chunkRow.window_name as string | undefined,
+        window_title: chunkRow.window_title as string | undefined,
+        text_content: chunkRow.text_content as string | undefined,
+        browser_url: chunkRow.browser_url as string | undefined,
+      }),
+      source_type: "memory" as const,
+    });
+  }
+
+  let webIdx = 1;
+  for (const row of supplementalEvidence.values()) {
+    const webRow = row as Record<string, unknown>;
+    evidenceItems.push({
+      chunk_id: -(webIdx++),
+      whatItIsAbout: `${webRow.title ?? webRow.url ?? "Web result"} - ${(webRow.snippet as string || "").slice(0, 100)}`,
+      source_type: "web" as const,
+      url: webRow.url as string | undefined,
+      title: webRow.title as string | undefined,
+    });
+  }
+
+  const fallbackSummary = `No explicit done summary was produced for this step goal: ${currentPlanStep.stepGoal}.`;
 
   const stepResult: StepResult = {
     stepId: currentPlanStep.id,
     goal: currentPlanStep.stepGoal,
     status: evidenceIds.length > 0 || supplementalEvidence.size > 0 ? "partial" : "empty",
-    summary: "Max turns reached. " + (evidenceIds.length > 0 || supplementalEvidence.size > 0 ? `Found ${evidenceIds.length + supplementalEvidence.size} potentially relevant result${evidenceIds.length + supplementalEvidence.size === 1 ? "" : "s"}.` : "No relevant results found."),
+    summary: fallbackSummary,
     evidenceChunkIds: Array.from(allChunkIds.keys()),
     evidence: evidenceItems,
-    gaps: ["Step terminated early — turn limit reached"],
+    gaps: [],
     searchesPerformed,
     chunksRead: Array.from(chunksRead),
     confidence: "low",

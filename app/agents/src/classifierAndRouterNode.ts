@@ -183,18 +183,18 @@ export async function classifierAndRouterNode(
     ].some((term) => normalizedGoal.includes(term));
 
     if (output.route === "chat" && !hasConversationResponse) {
-      logger.info("Classifier override: routing to clarification", {
-        reason: "chat route without conversationResponse",
+      logger.info("Classifier override: routing to search", {
+        reason: "chat route without conversationResponse — falling back to search for grounded answer",
       });
 
       return {
         rewrittenQuery: output.rewrittenQuery || state.goal,
-        route: "chat",
-        isClarificationNeeded: true,
-        clarificationQuestion: "Do you want me to explain the previous answer in simpler words, or search your activity history for more details?",
+        route: "search",
+        isClarificationNeeded: false,
+        clarificationQuestion: undefined,
         conversationResponse: undefined,
         isConversation: false,
-        isNeedPlanning: false,
+        isNeedPlanning: true,
       };
     }
 

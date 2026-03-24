@@ -10,9 +10,13 @@ import {
   emitTextChunk,
 } from "../utils/eventQueue";
 import { runWithSpan } from "../telemetry/tracing";
-import { invokeRoleLlmStreaming } from "../llm/routing";
+import { invokeRoleLlmStreaming, truncateToApproxTokens } from "../llm/routing";
 import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
 import { StepResult } from "../types/stepResult";
+import { SafeJsonParser } from "../utils/parser";
+
+const FOLLOWUPS_TAG_START = "<FOLLOWUPS_JSON>";
+const FOLLOWUPS_TAG_END = "</FOLLOWUPS_JSON>";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CITATION EXTRACTION
@@ -43,19 +47,35 @@ function extractCitedChunkIds(text: string): number[] {
  */
 function formatStepBriefs(stepResults: Record<string, StepResult>): string {
   const entries = Object.entries(stepResults);
-  if (entries.length === 0) return "No step results available.";
+  if (entries.length === 0) return "No search results available.";
 
   const parts: string[] = [];
 
-  for (const [stepId, result] of entries) {
-    parts.push(`### ${stepId}`);
-    parts.push(`**Goal:** ${result.goal}`);
-    parts.push(`**Status:** ${result.status} (${result.confidence} confidence)`);
-    parts.push(`**Summary:** ${result.summary}`);
-    parts.push(`**Evidence:**\n\`\`\`json\n${JSON.stringify(result.evidence, null, 2)}\n\`\`\``);
+  for (const [_stepId, result] of entries) {
+    const evidence = Array.isArray(result.evidence) ? result.evidence : [];
+    const memoryEvidence = evidence.filter((e) => (e.source_type ?? "memory") === "memory");
+    const webEvidence = evidence.filter((e) => e.source_type === "web");
 
-    if (result.gaps.length > 0) {
-      parts.push(`**Gaps:** ${result.gaps.join("; ")}`);
+    // Don't expose internal step IDs to the LLM
+    parts.push(`### Search: ${result.goal}`);
+    parts.push(`**Found:** ${result.evidenceChunkIds.length + webEvidence.length} result(s)`);
+    parts.push(`**Summary:** ${result.summary}`);
+    // if (memoryEvidence.length > 0) {
+    //   parts.push(`**Memory Citations:** ${memoryEvidence.map((e) => `[[chunk_${e.chunk_id}]]`).join(" ")}`);
+    // }
+    if (webEvidence.length > 0) {
+      parts.push(`**Web Citations:** ${webEvidence.map((e) => `[[web_${Math.abs(Number(e.chunk_id) || 0)}]]`).join(" ")}`);
+    }
+    parts.push(`**Evidence:**\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``);
+
+    // Only show gaps that are user-relevant, not internal status messages
+    const userRelevantGaps = result.gaps.filter(g =>
+      !g.includes("turn limit") &&
+      !g.includes("terminated early") &&
+      !g.includes("Max turns")
+    );
+    if (userRelevantGaps.length > 0) {
+      parts.push(`**Additional notes:** ${userRelevantGaps.join("; ")}`);
     }
 
     parts.push("");
@@ -78,15 +98,42 @@ function collectAllChunkIds(stepResults: Record<string, StepResult>): number[] {
     if (Array.isArray(result.evidence)) {
       for (const row of result.evidence as Record<string, unknown>[]) {
         const chunkId = (row?.chunk_id ?? row?.id);
-        if (typeof chunkId === "number") ids.add(chunkId);
+        if (typeof chunkId === "number" && chunkId > 0) ids.add(chunkId);
       }
     }
     // Include explicitly-read chunks
     for (const id of result.chunksRead ?? []) {
-      ids.add(id);
+      if (id > 0) ids.add(id);
     }
   }
   return Array.from(ids);
+}
+
+function collectWebEvidence(stepResults: Record<string, StepResult>) {
+  const byWebId = new Map<number, { chunkId: number; title: string; url: string; snippet: string; capturedAt: string }>();
+
+  for (const result of Object.values(stepResults)) {
+    if (!Array.isArray(result.evidence)) continue;
+
+    for (const item of result.evidence as any[]) {
+      const sourceType = item?.source_type;
+      const chunkId = Number(item?.chunk_id);
+      if (sourceType !== "web" || !Number.isFinite(chunkId) || chunkId >= 0) continue;
+
+      const webId = Math.abs(chunkId);
+      if (byWebId.has(webId)) continue;
+
+      byWebId.set(webId, {
+        chunkId,
+        title: (item?.title as string) ?? "Web result",
+        url: (item?.url as string) ?? "",
+        snippet: (item?.whatItIsAbout as string) ?? "",
+        capturedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  return Array.from(byWebId.values());
 }
 
 /**
@@ -121,72 +168,105 @@ ${rewrittenQuery ?? goal}
 ${stepBriefs}
 
 ## Citation Rules
-- Cite evidence using chunk_ids: [[chunk_42]]
-- Multiple sources: [[chunk_42][chunk_45]]
-- Only cite chunks mentioned in step results
-- If evidence is from web search and has no chunk_id, do not invent chunk citations
-- If a step found nothing, say so honestly
+- For memory evidence, cite using [[chunk_42]]
+- For web evidence, cite using [[web_1]] (web id is abs(chunk_id) where web evidence uses negative chunk_id in evidence)
+- Multiple sources: [[chunk_42][chunk_45]][[web_1][web_2]] (each citation in separate brackets)
+- The source type is in evidence item field "source_type"
+- Never cite anything other than [[chunk_N]] or [[web_N]]
+- If no results were found, say so honestly
+- Limit citations to 3-5 most relevant chunks per statement, not every chunk
 
 ## Response Guidelines
-- Synthesize information from all steps
+- Synthesize information from all search results
 - Be specific about what was found (apps, time ranges, activities)
-- Acknowledge gaps if any step reported them
-- Never fabricate information not in the step summaries
+- NEVER mention internal system details like "steps", "turns", "limits", or "timeouts"
+- NEVER say things like "ran out of time" or "step terminated" — these are internal
+- Never fabricate information not in the evidence
 - Keep response concise and directly useful
 - Use natural conversational language
 
+## Follow-up Generation
+- After the answer, append a follow-up block using this exact format:
+${FOLLOWUPS_TAG_START}
+{"followups":["question 1","question 2","question 3"]}
+${FOLLOWUPS_TAG_END}
+- The answer must come first, and the follow-up block must come last
+- Return 0 to 3 follow-up questions
+- Follow-ups must be short, natural, actionable next searches
+- Follow-ups must not repeat the answer
+- Follow-ups must not mention steps, chunks, confidence, citations, or system details
+- Follow-ups should be useful narrowing or expansion options by app, person, topic, time range, or format
+- Total follow-up text should stay under about 50 tokens
+- If no strong next step exists, return an empty array
+
 ${recentChat ? `## Recent Conversation\n${recentChat}\n\nMatch the conversational tone above.` : ""}
 
-Respond in natural language. Do not output JSON.`;
+Respond with the answer in natural language, then append the follow-up block exactly as specified.`;
 }
 
-function buildFollowups(
-  goal: string,
-  stepResults: Record<string, StepResult>,
-): string[] {
-  const results = Object.values(stepResults);
-  if (results.length === 0) return [];
+function estimateApproxTokens(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) return 0;
+  return Math.ceil(normalized.length / 4);
+}
 
-  const totalEvidence = results.reduce(
-    (sum, r) => sum + (r.evidenceChunkIds?.length ?? 0),
-    0,
+function normalizeFollowups(parsed: unknown): string[] {
+  const rawFollowups =
+    parsed && typeof parsed === "object" && Array.isArray((parsed as { followups?: unknown[] }).followups)
+      ? (parsed as { followups: unknown[] }).followups
+      : [];
+
+  const unique = Array.from(
+    new Set(
+      rawFollowups
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean)
+        .map((value) => truncateToApproxTokens(value, 16).trim()),
+    ),
   );
-  const hasFindings = totalEvidence > 0;
-  if (!hasFindings) return [];
 
-  const hasUncertainty = results.some(
-    (r) => r.status !== "complete" || r.confidence !== "high" || r.gaps.length > 0,
-  );
-  const isSimpleFactual =
-    !hasUncertainty &&
-    totalEvidence <= 2 &&
-    results.length <= 2 &&
-    results.every((r) => r.status === "complete" && r.confidence === "high");
+  const capped: string[] = [];
+  let usedTokens = 0;
 
-  // Never generate followups for simple factual answers.
-  if (isSimpleFactual) return [];
+  for (const followup of unique.slice(0, 3)) {
+    const remainingTokens = 50 - usedTokens;
+    if (remainingTokens <= 0) break;
 
-  const allGaps = results.flatMap((r) => r.gaps).filter(Boolean);
-  const firstGap = allGaps[0];
-  const searches = results.flatMap((r) => r.searchesPerformed ?? []);
-  const firstSearchQuery = searches.find((s) => s.query?.trim())?.query?.trim();
+    const bounded = truncateToApproxTokens(followup, Math.min(16, remainingTokens)).trim();
+    if (!bounded) continue;
 
-  const candidates: string[] = [];
+    const estimatedTokens = estimateApproxTokens(bounded);
+    if (usedTokens + estimatedTokens > 50) break;
 
-  if (firstGap) {
-    candidates.push(`Want me to run a focused follow-up for this gap: ${firstGap}?`);
+    capped.push(bounded);
+    usedTokens += estimatedTokens;
   }
 
-  if (firstSearchQuery) {
-    candidates.push(`Want me to dig deeper into "${firstSearchQuery}" and pull more detailed chunks?`);
+  return capped;
+}
+
+async function extractAnswerAndFollowups(rawResponse: string): Promise<{ answer: string; followups: string[] }> {
+  const startIndex = rawResponse.indexOf(FOLLOWUPS_TAG_START);
+  const endIndex = rawResponse.indexOf(FOLLOWUPS_TAG_END);
+
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    return { answer: rawResponse.trim(), followups: [] };
   }
 
-  candidates.push("Want this broken down as a timeline by app and time?");
-  candidates.push("Want me to narrow this to a specific app or time range?");
+  const answer = rawResponse.slice(0, startIndex).trim();
+  const followupsPayload = rawResponse
+    .slice(startIndex + FOLLOWUPS_TAG_START.length, endIndex)
+    .trim();
 
-  // Deduplicate and cap at 3.
-  const unique = Array.from(new Set(candidates.map((c) => c.trim()))).filter(Boolean);
-  return unique.slice(0, 3);
+  try {
+    const parsed = await SafeJsonParser.parseContent(followupsPayload);
+    return {
+      answer,
+      followups: normalizeFollowups(parsed),
+    };
+  } catch {
+    return { answer, followups: [] };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -209,7 +289,10 @@ export async function finalAnswerNodeV2(
       });
 
       const stepResults = (state.stepResults ?? {}) as Record<string, StepResult>;
-      const { goal } = state;
+      const { goal, rewrittenQuery } = state;
+
+
+      console.log("Rewritten Query in final llm call:\n", rewrittenQuery);
 
       // Check if we have any results
       const allChunkIds = collectAllChunkIds(stepResults);
@@ -217,20 +300,36 @@ export async function finalAnswerNodeV2(
       try {
         // Fetch sources for UI panel
         const searchResults = await getSearchResultsByChunkIds(allChunkIds, state.requestId);
+        const webEvidence = collectWebEvidence(stepResults);
+
+        const memorySources = searchResults.map(s => ({
+          chunkId: s.chunk_id,
+          appName: s.app_name,
+          windowTitle: s.window_name,
+          capturedAt: s.captured_at,
+          browserUrl: s.browser_url,
+          textContent: s.text_content,
+          textJson: s.text_json,
+          imagePath: s.image_path,
+          sourceType: "memory" as const,
+        }));
+
+        const webSources = webEvidence.map(w => ({
+          chunkId: w.chunkId,
+          appName: "Web",
+          windowTitle: w.title,
+          capturedAt: w.capturedAt,
+          browserUrl: w.url,
+          textContent: w.snippet,
+          textJson: null,
+          imagePath: "",
+          sourceType: "web" as const,
+        }));
 
         // Emit sources for UI
         emitSources(state.requestId, {
           includeImages: false,
-          sources: searchResults.map(s => ({
-            chunkId: s.chunk_id,
-            appName: s.app_name,
-            windowTitle: s.window_name,
-            capturedAt: s.captured_at,
-            browserUrl: s.browser_url,
-            textContent: s.text_content,
-            textJson: s.text_json,
-            imagePath: s.image_path,
-          })),
+          sources: [...memorySources, ...webSources],
         });
         const stepBriefs = formatStepBriefs(stepResults);
 
@@ -254,12 +353,15 @@ export async function finalAnswerNodeV2(
         })}`;
 
         const prompt = buildFinalPrompt(
-          goal,
+          rewrittenQuery ?? goal,
           state.rewrittenQuery,
           stepBriefs,
           recentChat,
           currentDateTime,
         );
+
+        console.log("Final LLM prompt:\n");
+        console.dir(prompt, { depth: null, colors: true });
 
         console.log("Final CuSTOME LLM prompt:", JSON.stringify(prompt, null, 2));
 
@@ -277,7 +379,7 @@ export async function finalAnswerNodeV2(
           status: "completed",
         });
 
-        // Stream final answer
+        // Single final LLM call: answer plus followup payload in the same response.
         const llmResult = await invokeRoleLlmStreaming({
           role: "final",
           prompt: [
@@ -287,8 +389,9 @@ export async function finalAnswerNodeV2(
           requestId: state.requestId,
           spanName: "agent.node.final_answer.llm",
           spanAttributes: { node: "finalAnswer" },
-          onChunk: (chunk: string) => {
-            emitTextChunk(chunk, state.requestId);
+          onChunk: (_chunk: string) => {
+            // Buffer until the full response is available so the followup payload
+            // is not streamed into the visible answer text.
           },
           authHeaders: state.authHeaders,
         });
@@ -309,15 +412,18 @@ export async function finalAnswerNodeV2(
 
         if (!rawResponse) throw new Error("Final answer is empty");
 
+        const { answer: finalAnswer, followups } = await extractAnswerAndFollowups(rawResponse);
+        if (!finalAnswer) throw new Error("Parsed final answer is empty");
+
+        emitTextChunk(finalAnswer, state.requestId);
 
         const durationMs = Date.now() - startMs;
         logger.info("Final answer generated", {
-          resultLength: rawResponse.length,
+          resultLength: finalAnswer.length,
           durationMs,
           sourceCount: searchResults.length,
         });
 
-        const followups = buildFollowups(goal, stepResults);
         if (followups.length > 0) {
           logger.info("Generated followups", {
             count: followups.length,
@@ -325,11 +431,11 @@ export async function finalAnswerNodeV2(
           });
         }
 
-        emitCompletion(rawResponse, state.requestId, "final", followups.length > 0 ? followups : undefined);
+        emitCompletion(finalAnswer, state.requestId, "final", followups.length > 0 ? followups : undefined);
 
         return {
           ...state,
-          finalResult: rawResponse,
+          finalResult: finalAnswer,
           finalFollowups: followups.length > 0 ? followups : undefined,
           endTime: Date.now(),
           llmCalls: (state.llmCalls ?? 0) + 1,

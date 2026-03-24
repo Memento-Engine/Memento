@@ -88,6 +88,7 @@ export const sourceSchema = z.object({
   appName: z.string().default(""),
   windowTitle: z.string().default(""),
   capturedAt: z.string().default(""),
+  sourceType: SourceTypeEnum.optional(),
   browserUrl: z.string().default(""),
   textContent: z.string().default(""),
   textJson: z.string().optional().nullable(),

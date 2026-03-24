@@ -503,6 +503,9 @@ async function startServer() {
                     finalResult,
                     sources,
                     persistedThinkingSteps,
+                    Array.isArray((result as any)?.finalFollowups)
+                      ? (result as any).finalFollowups.slice(0, 3)
+                      : [],
                   );
                   logger.info("Persisted message to DB", { sourceCount: sources.length, sessionId });
                 }

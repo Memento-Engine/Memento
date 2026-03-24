@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import ChatInput from "./ChatInput";
 import type { SearchMode } from "./types";
@@ -22,8 +22,9 @@ function Thread(): React.ReactElement {
     assistantStatus,
   } = useChatContext();
   const conversationRef = useRef<StickToBottomContext | null>(null);
-  const lastSubmittedMessageRef = useRef<HTMLDivElement | null>(null);
-  const lastAnchoredUserMessageIdRef = useRef<string | null>(null);
+  const latestUserMessageRef = useRef<HTMLDivElement | null>(null);
+  const topPinFrameRef = useRef<number | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
 
   const handleSend = useCallback(
@@ -48,22 +49,19 @@ function Thread(): React.ReactElement {
   const lastMessage = messages[messages.length - 1];
   const showPendingBubble =
     lastMessage?.role === "user" && assistantStatus === "LocalPending";
+  const latestUserMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
+  const shouldPinLatestUserMessage =
+    isGenerating && latestUserMessage !== undefined;
 
-  useLayoutEffect(() => {
-    if (lastMessage?.role !== "user") {
-      return;
-    }
-
-    if (lastAnchoredUserMessageIdRef.current === lastMessage.id) {
-      return;
-    }
-
+  const pinLatestUserMessageToTop = useCallback(() => {
     const scrollElement = conversationRef.current?.scrollRef.current;
     const contentElement = conversationRef.current?.contentRef.current;
-    const anchorElement = lastSubmittedMessageRef.current;
+    const anchorElement = latestUserMessageRef.current;
 
     if (!scrollElement || !contentElement || !anchorElement) {
-      return;
+      return false;
     }
 
     const scrollRect = scrollElement.getBoundingClientRect();
@@ -71,17 +69,80 @@ function Thread(): React.ReactElement {
     const topPadding = Number.parseFloat(
       window.getComputedStyle(contentElement).paddingTop || "0",
     );
+    const targetTop =
+      scrollElement.scrollTop + (anchorRect.top - scrollRect.top) - topPadding;
 
     scrollElement.scrollTo({
-      top:
-        scrollElement.scrollTop +
-        (anchorRect.top - scrollRect.top) -
-        topPadding,
+      top: Math.max(targetTop, 0),
       behavior: "auto",
     });
 
-    lastAnchoredUserMessageIdRef.current = lastMessage.id;
-  }, [lastMessage]);
+    return true;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (topPinFrameRef.current !== null) {
+      window.cancelAnimationFrame(topPinFrameRef.current);
+      topPinFrameRef.current = null;
+    }
+
+    if (!shouldPinLatestUserMessage) {
+      return;
+    }
+
+    if (!pinLatestUserMessageToTop()) {
+      return;
+    }
+
+    topPinFrameRef.current = window.requestAnimationFrame(() => {
+      topPinFrameRef.current = null;
+      pinLatestUserMessageToTop();
+    });
+  }, [latestUserMessage, pinLatestUserMessageToTop, shouldPinLatestUserMessage]);
+
+  useEffect(() => {
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = null;
+
+    if (!shouldPinLatestUserMessage) {
+      return;
+    }
+
+    const contentElement = conversationRef.current?.contentRef.current;
+
+    if (!contentElement) {
+      return;
+    }
+
+    resizeObserverRef.current = new ResizeObserver(() => {
+      if (topPinFrameRef.current !== null) {
+        window.cancelAnimationFrame(topPinFrameRef.current);
+      }
+
+      topPinFrameRef.current = window.requestAnimationFrame(() => {
+        topPinFrameRef.current = null;
+        pinLatestUserMessageToTop();
+      });
+    });
+
+    resizeObserverRef.current.observe(contentElement);
+
+    return () => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+    };
+  }, [pinLatestUserMessageToTop, shouldPinLatestUserMessage]);
+
+  useEffect(
+    () => () => {
+      resizeObserverRef.current?.disconnect();
+
+      if (topPinFrameRef.current !== null) {
+        window.cancelAnimationFrame(topPinFrameRef.current);
+      }
+    },
+    [],
+  );
 
   return (
     <div className="flex flex-col w-full h-full pt-4 bg-base overflow-hidden">
@@ -92,14 +153,15 @@ function Thread(): React.ReactElement {
               key={m.id}
               className="flex flex-col gap-4"
               ref={
-                m.id === lastMessage?.id && m.role === "user"
-                  ? lastSubmittedMessageRef
+                m.id === latestUserMessage?.id
+                  ? latestUserMessageRef
                   : null
               }
             >
               <MessageItem
                 onEdit={handleEdit}
                 onRegenerate={handleRegenerate}
+                onFollowupClick={(query) => handleSend(query, "search")}
                 message={m}
                 isFirstMessage={index === 0}
                 isLastMessage={index === messages.length - 1}

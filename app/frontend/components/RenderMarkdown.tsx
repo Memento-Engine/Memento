@@ -14,6 +14,7 @@ import "katex/dist/katex.min.css";
 
 import { MermaidError } from "@/components/MermaidError";
 import { SourceBadge } from "./SourceBadge";
+import { WebCitationBadge } from "./WebCitationBadge";
 import { SourceRecord } from "./types";
 import { resolveImageSrc } from "@/lib/imageSrc";
 
@@ -86,24 +87,37 @@ const normalizeLatex = (input: string): string => {
 function preprocessCitations(text: string) {
   // Handle citation formats:
   // Single: [[chunk_42]]
-  // Multiple: [[chunk_1][chunk_2]]
+  // Multiple: [[chunk_1]][[chunk_2]] or [[web_1]][[chunk_2]]
 
-  // Match anything between [[ and ]]
-  return text.replace(
+  // Backward compatibility: old nested format [[chunk_1][chunk_2]]
+  const nestedNormalized = text.replace(
     /\[\[([^\[\]]+(?:\]\[[^\[\]]+)*)\]\]/g,
     (match, content) => {
-      // content will be like "chunk_374][chunk_421" or just "chunk_42"
-      // Split by ][ to get individual IDs
-      const ids = content
+      const ids = String(content)
         .split("][")
         .map((id: string) => id.trim())
-        .filter(Boolean);
+        .filter(Boolean)
+        .filter((id: string) => /^chunk_\d+$/.test(id) || /^web_\d+$/.test(id));
 
       if (ids.length === 0) {
         return match;
       }
 
-      return `[${ids.join(",")}](memory://${ids.join(",")})`;
+      return ids.map((id) => `[[${id}]]`).join("");
+    },
+  );
+
+  // Match anything between [[ and ]]
+  return nestedNormalized.replace(
+    /\[\[(chunk_\d+|web_\d+)\]\]/g,
+    (match, id) => {
+      const normalized = String(id).trim();
+      if (!normalized) {
+        return match;
+      }
+
+      const protocol = normalized.startsWith("web_") ? "web" : "memory";
+      return `[${normalized}](${protocol}://${normalized})`;
     },
   );
 }
@@ -213,6 +227,27 @@ function RenderMarkdownComponent({
             </span>
           );
         }
+
+        // WEB LINK
+        if (href?.startsWith("web://")) {
+          const webRef = href.replace("web://", "").trim();
+          const parts = webRef.split("_");
+          const webId = Number(parts.length > 1 ? parts[1] : parts[0]);
+          const source = sourceMap.get(-webId);
+
+          return (
+            <span className="inline-flex flex-wrap items-center gap-1 align-middle">
+              <WebCitationBadge
+                id={webId}
+                title={source?.windowTitle}
+                url={source?.browserUrl}
+                snippet={source?.textContent}
+                capturedAt={source?.capturedAt}
+              />
+            </span>
+          );
+        }
+
         // NORMAL LINK
         return (
           <a

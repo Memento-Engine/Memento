@@ -107,6 +107,8 @@ export async function plannerNodeV2(
 
 
 
+            console.log("Planner prompt", { prompt });
+
             const llmResult = await invokeRoleLlm({
               role: "planner",
               prompt,

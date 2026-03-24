@@ -98,24 +98,7 @@ const SearchStepSchema = z.object({
         "Reference prior step outputs by name when needed: " +
         "'Use semantic search to find browser activity during {{session_times}}'",
     ),
-  suggestedSkill: z
-    .string()
-    .nullish()
-    .describe(
-      "Suggested skill to use (e.g. 'semantic-search', 'fts-search', 'hybrid-search', 'temporal-query', 'aggregation-digest')",
-    ),
-  suggestedTool: z
-    .enum(["sql_execute", "semantic_search", "search", "web_search"])
-    .nullish()
-    .describe("Suggested tool to execute this step"),
   dependsOn: z.array(z.string()).default([]),
-  // Legacy fields for executor compatibility
-  expectedOutput: StepOutputSchema.nullish().describe(
-    "Expected output structure for extraction",
-  ),
-  searchHints: SearchHintSchema.nullish().describe(
-    "Soft hints for query builder",
-  ),
 });
 
 const ReasonStepSchema = z.object({
@@ -132,10 +115,7 @@ const ReasonStepSchema = z.object({
     .string()
     .describe("What reasoning / computation to perform on dependency data"),
   dependsOn: z.array(z.string()).default([]),
-  // Legacy field for executor compatibility
-  expectedOutput: StepOutputSchema.nullish().describe(
-    "Expected output structure for extraction",
-  ),
+
 });
 
 const FinalStepSchema = z.object({
@@ -144,10 +124,7 @@ const FinalStepSchema = z.object({
   stepGoal: z.string().describe("What this final step should accomplish"),
   intent: z.string().describe("How to synthesize the final answer"),
   dependsOn: z.array(z.string()).default([]),
-  // Legacy field for executor compatibility
-  expectedOutput: StepOutputSchema.nullish().describe(
-    "Expected output structure for extraction",
-  ),
+
 });
 
 // ── Discriminated Union ──────────────────────────────────
