@@ -236,7 +236,7 @@ function LeftSidebar(): React.ReactElement {
           type="button"
           onClick={toggleSidebar}
           aria-label="Open sidebar"
-          className="fixed left-3 top-3 z-50 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border/60 bg-background/95 text-foreground shadow-lg backdrop-blur-md transition-all hover:bg-muted hover:shadow-xl active:scale-95 supports-[backdrop-filter]:bg-background/80"
+          className="fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border/50 bg-background/95 text-foreground shadow-md backdrop-blur-sm transition-all duration-200 hover:bg-accent hover:border-border active:scale-95 supports-[backdrop-filter]:bg-background/90"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -251,8 +251,9 @@ function LeftSidebar(): React.ReactElement {
       >
         <SidebarHeader
           className={cn(
-            "flex items-center py-3",
-            isCollapsed ? "justify-center px-0" : "px-3 justify-between",
+            "flex items-center border-b border-border/50",
+            isCollapsed ? "justify-center px-0 py-4" : "px-4 py-4 justify-between",
+            isMobile && "border-border/30"
           )}
         >
           <div
@@ -276,7 +277,7 @@ function LeftSidebar(): React.ReactElement {
                   type="button"
                   onClick={() => setOpenMobile(false)}
                   aria-label="Close sidebar"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -291,7 +292,10 @@ function LeftSidebar(): React.ReactElement {
           </div>
         </SidebarHeader>
 
-        <SidebarContent className="custom-scrollbar flex-1 overflow-y-auto px-3 py-4 group-data-[collapsible=icon]:px-2">
+        <SidebarContent className={cn(
+          "custom-scrollbar flex-1 overflow-y-auto py-4 group-data-[collapsible=icon]:px-2",
+          isMobile ? "px-3" : "px-3"
+        )}>
           <SidebarMenu>
             <SidebarMenuItem
               onClick={goToHome}
@@ -468,13 +472,21 @@ function LeftSidebar(): React.ReactElement {
         </SidebarContent>
 
         {/* Premium Credits Display */}
-        <div className={cn("px-3 pb-2", isCollapsed && "px-2")}>
+        <div className={cn(
+          "border-t border-border/50 pt-3",
+          isCollapsed ? "px-2 pb-2" : "px-4 pb-3",
+          isMobile && "border-border/30"
+        )}>
           <PremiumCredits collapsed={isCollapsed} />
         </div>
 
         <SidebarFooter
           onClick={handleFooterClick}
-          className={cn("px-3 pb-3", isCollapsed && "px-2")}
+          className={cn(
+            "border-t border-border/50",
+            isCollapsed ? "px-2 pb-3 pt-3" : "px-4 pb-4 pt-3",
+            isMobile && "border-border/30"
+          )}
         >
           <SidebarMenu>
             <SidebarMenuItem>
