@@ -14,6 +14,7 @@ import { invokeRoleLlmStreaming, truncateToApproxTokens } from "../llm/routing";
 import { getSearchResultsByChunkIds } from "../tools/getSearchResultsByChunkIds";
 import { StepResult } from "../types/stepResult";
 import { SafeJsonParser } from "../utils/parser";
+import { formatLocalDateTimeForPrompt } from "../utils/time";
 
 const FOLLOWUPS_TAG_START = "<FOLLOWUPS_JSON>";
 const FOLLOWUPS_TAG_END = "</FOLLOWUPS_JSON>";
@@ -339,18 +340,8 @@ export async function finalAnswerNodeV2(
 
         const recentChat = formatRecentChat(state.chatHistory ?? [], 3);
 
-        // Get current date/time for temporal grounding
-        const now = new Date();
-        const currentDateTime = `${now.toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        })} at ${now.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZoneName: "short",
-        })}`;
+        // Get current local date/time for temporal grounding
+        const currentDateTime = formatLocalDateTimeForPrompt();
 
         const prompt = buildFinalPrompt(
           rewrittenQuery ?? goal,

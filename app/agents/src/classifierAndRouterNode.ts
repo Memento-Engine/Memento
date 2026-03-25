@@ -17,6 +17,7 @@ import { invokeRoleLlm } from "./llm/routing";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { SafeJsonParser } from "./utils/parser";
 import { z } from "zod";
+import { formatLocalDate } from "./utils/time";
 import {
   CLASSIFIER_BUDGETS,
   truncateToTokenBudget,
@@ -102,7 +103,7 @@ export async function classifierAndRouterNode(
   
   logger.info("Starting classifier and router");
   
-  const currentDate = new Date().toLocaleDateString("en-CA");
+  const currentDate = formatLocalDate();
   const budgets = CLASSIFIER_BUDGETS;
   
   // Use chatContext from Chat Context Manager, or fallback to raw history

@@ -734,7 +734,7 @@ fn check_for_updates() -> Result<Option<String>, String> {
     }
 }
 
-/// Stop service and wait for it to fully stop
+/// Stop service and wait for it to fully stop (synchronous version)
 fn stop_service_and_wait_internal() -> bool {
     // Send stop command
     let _ = Command::new("sc")
@@ -769,10 +769,64 @@ fn stop_service_and_wait_internal() -> bool {
     true
 }
 
+/// Stop service and wait for it to fully stop (async version for non-blocking updates)
+async fn stop_service_and_wait_async() -> bool {
+    // Send stop command
+    let _ = tokio::process::Command::new("sc")
+        .args(["stop", SERVICE_NAME])
+        .status()
+        .await;
+    
+    // Poll until stopped or timeout
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        
+        let output = tokio::process::Command::new("sc")
+            .args(["query", SERVICE_NAME])
+            .output()
+            .await;
+        
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.contains("STOPPED") {
+                    return true;
+                }
+            }
+            Err(_) => return true,
+        }
+    }
+    
+    // Timeout - force kill
+    let _ = tokio::process::Command::new("taskkill")
+        .args(["/F", "/IM", "memento-daemon.exe"])
+        .status()
+        .await;
+    
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    true
+}
+
+/// Progress event payload for update operations
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+    stage: String,    // "downloading", "stopping-service", "applying", etc.
+    percent: i32,     // 0-100
+    message: String,
+}
+
 /// Download and apply an update (will restart the app)
+/// This is async and emits progress events to keep the UI responsive
 #[tauri::command]
-fn apply_update() -> Result<(), String> {
+async fn apply_update(app_handle: AppHandle) -> Result<(), String> {
     info!("Starting update application (current: {})", build_info::VERSION);
+    
+    // Emit initial progress
+    let _ = app_handle.emit("update-progress", UpdateProgress {
+        stage: "initializing".to_string(),
+        percent: 0,
+        message: "Preparing update...".to_string(),
+    });
     
     debug!("Update URL: {}", build_info::UPDATE_URL);
     
@@ -786,6 +840,12 @@ fn apply_update() -> Result<(), String> {
         })?;
     
     info!("Checking for updates before applying...");
+    let _ = app_handle.emit("update-progress", UpdateProgress {
+        stage: "checking".to_string(),
+        percent: 5,
+        message: "Verifying update availability...".to_string(),
+    });
+    
     let update_check = um.check_for_updates()
         .map_err(|e| {
             let msg = format!("Failed to check for updates: {:?}", e);
@@ -805,9 +865,31 @@ fn apply_update() -> Result<(), String> {
         }
     };
     
-    // Download the update (no progress callback)
+    // Download the update with progress tracking
     info!("Downloading update...");
-    um.download_updates(&update_info, None)
+    let _ = app_handle.emit("update-progress", UpdateProgress {
+        stage: "downloading".to_string(),
+        percent: 10,
+        message: "Downloading update...".to_string(),
+    });
+    
+    // Create a channel for progress updates
+    let (tx, rx) = std::sync::mpsc::channel::<i16>();
+    
+    // Spawn a thread to forward progress to frontend
+    let app_handle_progress = app_handle.clone();
+    thread::spawn(move || {
+        while let Ok(percent) = rx.recv() {
+            let download_percent = 10 + (percent as i32 * 50 / 100); // 10-60%
+            let _ = app_handle_progress.emit("update-progress", UpdateProgress {
+                stage: "downloading".to_string(),
+                percent: download_percent,
+                message: format!("Downloading update... {}%", percent),
+            });
+        }
+    });
+    
+    um.download_updates(&update_info, Some(tx))
         .map_err(|e| {
             let msg = format!("Failed to download update: {:?}", e);
             error!("{}", msg);
@@ -818,13 +900,25 @@ fn apply_update() -> Result<(), String> {
     
     // CRITICAL: Stop the service before applying update
     info!("Stopping service before applying update...");
-    if !stop_service_and_wait_internal() {
+    let _ = app_handle.emit("update-progress", UpdateProgress {
+        stage: "stopping-service".to_string(),
+        percent: 65,
+        message: "Stopping background service...".to_string(),
+    });
+    
+    if !stop_service_and_wait_async().await {
         let msg = "Failed to stop service before update";
         error!("{}", msg);
         sentry::capture_message(msg, sentry::Level::Error);
         return Err(msg.to_string());
     }
     info!("Service stopped, applying update...");
+    
+    let _ = app_handle.emit("update-progress", UpdateProgress {
+        stage: "applying".to_string(),
+        percent: 80,
+        message: "Applying update...".to_string(),
+    });
     
     // Apply update and restart
     um.apply_updates_and_restart(&update_info)
@@ -835,6 +929,11 @@ fn apply_update() -> Result<(), String> {
             msg
         })?;
     
+    let _ = app_handle.emit("update-progress", UpdateProgress {
+        stage: "restarting".to_string(),
+        percent: 100,
+        message: "Restarting application...".to_string(),
+    });
     info!("Update applied, restarting...");
     Ok(())
 }

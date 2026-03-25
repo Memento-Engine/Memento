@@ -4,6 +4,7 @@ import { invokeRoleLlm } from "./llm/routing";
 import { clarifyAndRewritePrompt } from "./prompts/clarifyAndRewritePrompt";
 import { SafeJsonParser } from "./utils/parser";
 import { clarifyAndRewriteSchema } from "./types/agent";
+import { formatLocalDate } from "./utils/time";
 
 export async function clarifyAndRewrittenNode(
   state: AgentStateType,
@@ -15,7 +16,7 @@ export async function clarifyAndRewrittenNode(
 
   logger.info("Starting clarification and query rewriting node.");
   const MAX_TRIES = 1;
-  const currentDate = new Date().toLocaleDateString("en-CA");
+  const currentDate = formatLocalDate();
 
   const prompt = await clarifyAndRewritePrompt.invoke({
     userQuery: state.goal,

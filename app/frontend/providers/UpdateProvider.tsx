@@ -1,6 +1,6 @@
 "use client";
 
-import { UpdateContext } from "@/contexts/updateContext";
+import { UpdateContext, UpdateProgress } from "@/contexts/updateContext";
 import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
@@ -23,6 +23,7 @@ export default function UpdateProvider({
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
 
   // Check for updates manually
@@ -59,12 +60,18 @@ export default function UpdateProvider({
 
     try {
       setIsApplyingUpdate(true);
+      setUpdateProgress({
+        stage: "starting",
+        percent: 0,
+        message: "Starting update...",
+      });
       console.log(`[Update] Applying update to version ${availableVersion}...`);
       await invoke("apply_update");
       // App will restart, so we won't reach here normally
     } catch (err) {
       console.error("[Update] Failed to apply update:", err);
       setIsApplyingUpdate(false);
+      setUpdateProgress(null);
     }
   }, [availableVersion]);
 
@@ -95,9 +102,41 @@ export default function UpdateProvider({
       } catch (err) {
         console.error("[Update] Failed to setup update listener:", err);
       }
-    };
+    }
 
     setupListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  // Listen for update progress events
+  useEffect(() => {
+    // Skip in development/web mode
+    if (!isDesktopProductionMode()) {
+      return;
+    }
+
+    let unlisten: UnlistenFn | null = null;
+
+    const setupProgressListener = async () => {
+      try {
+        unlisten = await listen<UpdateProgress>(
+          "update-progress",
+          (event) => {
+            console.log(`[Update] Progress: ${event.payload.stage} - ${event.payload.percent}%`);
+            setUpdateProgress(event.payload);
+          }
+        );
+      } catch (err) {
+        console.error("[Update] Failed to setup progress listener:", err);
+      }
+    };
+
+    setupProgressListener();
 
     return () => {
       if (unlisten) {
@@ -135,6 +174,7 @@ export default function UpdateProvider({
         availableVersion,
         isCheckingUpdate,
         isApplyingUpdate,
+        updateProgress,
         checkForUpdates,
         applyUpdate,
         dismissUpdate,
