@@ -1,7 +1,7 @@
 # Memento AI
 
 <video width="100%" controls muted loop>
-  <source src="docs/memento-oss.mp4" type="video/mp4">
+  <source src="https://github.com/Memento-Engine/Memento/raw/main/docs/memento-oss.mp4" type="video/mp4">
 </video>
 
 **Memento AI** is a local-first, privacy-preserving personal AI search engine. It continuously captures your screen activity, indexes it locally, and lets you search your own memory using natural language — without uploading your data to any cloud.
