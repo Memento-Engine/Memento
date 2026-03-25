@@ -1,124 +1,165 @@
 # Memento AI
 
-Memento AI is a personal AI-powered search engine designed to help you browse and retrieve your own memories. It runs locally on your machine, stores all data on your hard drive, and only sends minimal, relevant context to a cloud LLM when required.
+<video width="100%" controls muted loop>
+  <source src="docs/memento-oss.mp4" type="video/mp4">
+</video>
+
+**Memento AI** is a local-first, privacy-preserving personal AI search engine. It continuously captures your screen activity, indexes it locally, and lets you search your own memory using natural language — without uploading your data to any cloud.
 
 ---
 
-## Overview
+## What It Does
 
-Memento AI transforms your personal data into an intelligent, searchable memory system.
+Instead of manually hunting through files, tabs, and notes, you ask:
 
-Instead of manually navigating through files, notes, documents, logs, or past conversations, you can ask natural language questions such as:
+- *"When did I design the booking system schema?"*
+- *"What authentication library was I looking at last Tuesday?"*
+- *"Show me everything I read about multi-threading this week."*
 
-- "When did I design the booking system schema?"
-- "Show me notes related to multi-threading."
-- "What were my ideas about subscription architecture?"
-
-Memento AI retrieves the most relevant information from your local data and generates a contextual response.
+Memento AI searches your local screen history using hybrid semantic + keyword retrieval, runs a multi-step agentic pipeline to reason over the results, and streams a cited answer back to you in seconds.
 
 ---
 
-## Core Principles
+## Tech Stack
 
-### 1. Local-First Architecture
-
-Memento AI is built with a strong privacy-first and local-first philosophy.
-
-**Stored locally:**
-- Raw data (files, notes, documents, logs)
-- Indexed content
-- Embeddings (if generated locally)
-- Vector store / search database
-- Memory metadata
-
-All core data remains on your local hard drive.
-
-### 2. Minimal Cloud Exposure
-
-When cloud LLM integration is enabled:
-
-- Only your query
-- Only the top relevant retrieved memory chunks
-
-are sent to the cloud model.
-
-Your full database, full files, or complete memory store are never transmitted.
+| Layer | Technology |
+|---|---|
+| Desktop shell | Tauri v2 (Rust) |
+| Frontend | Next.js 16, React 19, Tailwind CSS v4 |
+| Agent pipeline | Node.js 20, LangGraph, Express 5 |
+| AI Gateway | Node.js (ESM), Express 5, Drizzle ORM, PostgreSQL |
+| Core / Daemon | Rust 2021, SQLite + sqlite-vec, Windows APIs |
+| Packaging | Velopack |
 
 ---
 
 ## Architecture
 
-### Step 1: Local Data Ingestion
+```
+Screen Activity
+      │ (Rust daemon — continuous capture + OCR + embedding)
+      ▼
+Local SQLite DB
+  ├── frames        (app, window, url, timestamp)
+  ├── chunks        (OCR text segments)
+  ├── chunks_fts    (FTS5 keyword index)
+  └── vec_chunks    (384-dim vector embeddings)
+      │
+      ▼
+Agent Pipeline  (LangGraph StateGraph)
+  ① Chat Context Manager   → bounded conversation window (≤1500 tokens)
+  ② Classifier & Router    → rewrite query + route (chat / search / mixed)
+  ③ Planner                → generate multi-step search DAG
+  ④ Executor               → run steps in parallel (ReAct loop per step)
+     └─ Tools: sql · semantic · hybrid · webSearch · readMore
+  ⑤ Final Answer           → synthesize + stream cited answer + follow-ups
+      │
+      ▼
+Frontend (Tauri desktop app)
+  SSE streaming: step events → text chunks → source cards → follow-up questions
+```
 
-- Indexes files and structured/unstructured content.
-- Extracts text and metadata.
-- Stores processed data locally.
-
-### Step 2: Local Search & Retrieval
-
-- Hybrid search (semantic + keyword).
-- Retrieves the most relevant chunks based on your query.
-- Performs ranking locally before any external call.
-
-### Step 3: Context Filtering
-
-- Selects only high-confidence relevant snippets.
-- Prepares a minimal context window.
-
-### Step 4: Optional LLM Augmentation
-
-- Sends filtered context + query to cloud LLM.
-- Generates structured or conversational output.
-- Returns result to the local application.
-
----
-
-## Privacy Model
-
-Memento AI does not:
-
-- Upload your entire dataset.
-- Sync your memory to external servers.
-- Store your data in remote databases.
-
-Cloud LLM usage is:
-- Explicit
-- Minimal
-- Context-restricted
-
-You remain in control of your data at all times.
+For the full pipeline breakdown, see [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md).
 
 ---
 
-## Use Cases
+## Core Principles
 
-- Personal knowledge management
-- Research recall
-- Project history search
-- Development notes tracking
-- Architecture decision lookup
-- Memory augmentation for long-term projects
+### Privacy-First
+
+- All screen data is stored **only on your local hard drive**
+- No raw data, embeddings, or full database contents are ever sent to the cloud
+- When a cloud LLM is used, only your query and the top relevant text snippets are forwarded — nothing else
+
+### Local Performance
+
+- FTS5 keyword search and vector similarity search run entirely on-device
+- The Rust daemon handles screen capture, OCR, and embedding generation locally
+- The agent can answer many queries without any cloud LLM call at all (chat route)
+
+### Two Search Modes
+
+| Mode | Speed | Depth |
+|---|---|---|
+| `search` | Fast | Up to 4 ReAct turns, 3 searches, 10 results/search |
+| `accurateSearch` | Thorough | Up to 8 ReAct turns, 7 searches, 20 results/search |
 
 ---
 
 ## Key Features
 
-- Local semantic search
-- Query-based memory retrieval
-- Minimal cloud interaction
-- Fast indexing
-- Context-aware answers
-- Fully offline retrieval mode (without LLM)
+- **Continuous screen memory** — captures what you see, indexes it automatically
+- **Hybrid search** — combines FTS5 keyword matching with semantic vector search
+- **Agentic reasoning** — multi-step planner + ReAct executor for complex queries
+- **Streaming answers** — responses stream token-by-token with inline source citations
+- **Web search fallback** — optionally augments local memory with live web results
+- **Conversation-aware** — understands follow-up questions using a sliding context window
+- **Privacy by default** — fully offline retrieval mode; cloud LLM is opt-in
 
 ---
 
-## Design Goals
+## Use Cases
 
-- Privacy by default
-- Local performance
-- Minimal cloud dependency
-- Transparent data flow
-- Extensible architecture
+- Search what you were working on at a specific time
+- Recall documentation you read but didn't bookmark
+- Trace back to where you first encountered a concept or error
+- Summarize your activity on a project over a time range
+- Find a specific code snippet you saw in someone else's repo
+- Answer "what did I do last week?" with evidence
+
+---
+
+## Getting Started
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full setup instructions including prerequisites, environment configuration, and how to run each service in development.
+
+**Quick start (Windows):**
+
+```powershell
+git clone <repo-url>
+cd search_engine
+.\setup-hooks.ps1          # install deps + git hooks
+cd ai-gateway
+cp .env.example .env       # fill in OPENROUTER_API_KEY + JWT secrets
+npm run dev                # start AI gateway on :4180
+# in another terminal:
+cd app
+npm run tauri:dev          # start agents + frontend + Tauri desktop app
+```
+
+---
+
+## Repository Layout
+
+```
+search_engine/
+├── app/
+│   ├── agents/        ← LangGraph agent server (Node.js)
+│   ├── frontend/      ← Next.js UI (static export for Tauri)
+│   └── src-tauri/     ← Tauri desktop shell (Rust)
+├── ai-gateway/        ← LLM proxy / rate limiter / credit tracker
+├── crates/
+│   ├── core/          ← Core Rust library (SQLite, OCR, embeddings)
+│   ├── daemon/        ← Screen capture daemon binary
+│   └── service-helper/← Windows service management helper
+├── shared/            ← Shared TypeScript types and utilities
+├── migrations/        ← Local SQLite schema migrations
+├── docs/
+│   └── AGENT_ARCHITECTURE.md ← Detailed agentic pipeline documentation
+├── scripts/
+│   └── build-release.ps1     ← Full Velopack release build
+└── CONTRIBUTING.md    ← Setup, dev workflow, and contribution guide
+```
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Prerequisites, setup, dev workflow, git conventions |
+| [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md) | Full agentic pipeline, RAG system, tools, skills, token budgets |
+| [ai-gateway/README.md](ai-gateway/README.md) | AI gateway deployment and configuration |
 
 ---
 
@@ -126,18 +167,16 @@ You remain in control of your data at all times.
 
 Your memories are yours.
 
-Memento AI acts as an intelligent layer on top of your local data — not a cloud storage service.
-
-It helps you remember, retrieve, and reason over your own information without giving up control.
+Memento AI is an intelligent retrieval layer over your own local data — not a cloud sync service. It helps you remember, search, and reason over your information without giving up control.
 
 ---
 
 ## Status
 
-This project is under active development. Contributions and feedback are welcome.
+Active development. Contributions and feedback welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## License
 
-Specify your license here.
+See [LICENSE](LICENSE).
